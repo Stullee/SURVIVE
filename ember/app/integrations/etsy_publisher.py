@@ -276,10 +276,15 @@ class Publisher:
             for approval_id in [] if undos else self._approved(scope, "etsy_listing", "etsy_listings"):
                 outcome = self._one(shop, scope, approval_id)
                 done.append((approval_id, outcome))
+                if outcome == connectors.HALTED:
+                    return done  # 0.37.3: the kill switch came on: the rest waits
                 if outcome == "waiting_limit":
                     break  # the rest waits for tomorrow too, in order
             for approval_id in self._approved(scope, "etsy_edit", "etsy_edits", undos):  # changes: no daily limit
-                done.append((approval_id, self._change(shop, scope, approval_id)))
+                outcome = self._change(shop, scope, approval_id)
+                done.append((approval_id, outcome))
+                if outcome == connectors.HALTED:
+                    break  # 0.37.3: the kill switch came on: the rest waits
             return done
         finally:
             self._lock.release()
@@ -310,6 +315,8 @@ class Publisher:
             started = conn.execute("SELECT 1 FROM etsy_listings WHERE approval_id = ?", (approval_id,)).fetchone()
             if row is None or row["status"] not in APPROVED or started is not None:
                 return "skipped"  # cancelled or decided meanwhile
+            if connectors.halted(conn):
+                return connectors.HALTED  # 0.37.3: the kill switch came on while this round ran
             if created_today(conn, self.clock, scope) >= self.settings.etsy_listings_per_day:
                 return "waiting_limit"
             title = ""
@@ -462,6 +469,8 @@ class Publisher:
             started = conn.execute("SELECT 1 FROM etsy_edits WHERE approval_id = ?", (approval_id,)).fetchone()
             if row is None or row["status"] not in APPROVED or started is not None:
                 return "skipped"  # cancelled or decided meanwhile
+            if connectors.halted(conn):
+                return connectors.HALTED  # 0.37.3: the kill switch came on while this round ran
             try:
                 listing_id = int(json.loads(row["action"])["listing_id"])
             except (ValueError, KeyError, TypeError):
@@ -492,6 +501,8 @@ class Publisher:
             ).fetchone()
             if row is None or carried is None:
                 return None  # the owner's own decision
+            if row["status"] not in APPROVED or connectors.halted(conn):
+                return None  # 0.37.3: _change makes nothing now (taken back, or the kill switch is on): Etsy isn't read
             try:
                 edit = approved_edit(row)
                 before = current_listing(conn, scope, edit.listing_id)

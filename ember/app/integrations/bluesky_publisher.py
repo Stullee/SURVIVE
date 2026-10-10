@@ -224,10 +224,15 @@ class Publisher:
             for approval_id in due:
                 outcome = self._one(account, scope, approval_id)
                 done.append((approval_id, outcome))
+                if outcome == connectors.HALTED:
+                    return done  # 0.37.3: the kill switch came on: the rest waits
                 if outcome == "waiting_limit":
                     break  # the rest waits for tomorrow too, in order
             for approval_id in undoing:
-                done.append((approval_id, self._delete(account, scope, approval_id)))
+                outcome = self._delete(account, scope, approval_id)
+                done.append((approval_id, outcome))
+                if outcome == connectors.HALTED:
+                    break
             return done
         finally:
             self._lock.release()
@@ -327,6 +332,8 @@ class Publisher:
             row = self._due(conn, approval_id)
             if row is None:
                 return "skipped"
+            if connectors.halted(conn):
+                return connectors.HALTED  # 0.37.3: the kill switch came on while this round ran
             if created_today(conn, self.clock, scope) >= self.settings.bluesky_posts_per_day:
                 return "waiting_limit"
         problem = ""
@@ -342,6 +349,8 @@ class Publisher:
             row = self._due(conn, approval_id)
             if row is None:
                 return "skipped"
+            if connectors.halted(conn):
+                return connectors.HALTED  # 0.37.3: pressed while its pictures were made
             if not problem:
                 try:
                     fixed = self._link(conn, scope, post.link, stamp)
@@ -474,6 +483,8 @@ class Publisher:
             row = conn.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
             if row is None or row["status"] not in ("approved", "approved_with_changes"):
                 return "skipped"
+            if connectors.halted(conn):
+                return connectors.HALTED  # 0.37.3: an Undo neither, once the kill switch is on
             try:
                 rkey = str(json.loads(row["action"])["rkey"])
             except (ValueError, KeyError, TypeError):
