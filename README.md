@@ -249,6 +249,15 @@ before any unlock acts (on Resume after 8 days paused, an unlock approved an
 8-day-old reply), and a veto window that a pause interrupted gets its whole 12
 hours again once Ember runs.
 
+0.37.4: near the bottom of the balance the research model's check can no longer
+cost more than is left above the last will's reserve. While a research model is
+checked, each research question is asked of it too: the same web search, but the
+guard kept back only its worst case and needed only that left. In a test, after a
+check that cost $0.45, the next went ahead holding $0.49 with $2.93 left above
+the reserve, where research needs 5 times $0.675 (the codebase analysis of
+0.37.0, section 5). Now the check is judged as research, and research and the
+check count what either cost on their model.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
