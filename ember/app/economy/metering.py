@@ -129,7 +129,8 @@ RESEARCH_PURPOSES = (RESEARCH, RESEARCH_CHECK)
 # with its hold just above the last will's reserve, booked at what live call #423 used, cost $1.89 on a $1.00 balance,
 # and Ember died $0.89 below zero without a last will (the owner's Anthropic account paid the rest). A workshop or
 # research call is admitted only while what is left above that reserve is SERVER_TOOL_ROOM times its hold, or the most
-# such a call cost of its hold in the last WORKSHOP_TAIL_DAYS if that is more (server_tool_room).
+# such a call cost of its hold in the last WORKSHOP_TAIL_DAYS if that is more (server_tool_room). 0.37.2 (analysis
+# 0.37.0, 3.4): its whole hold, not the part of it a workshop run holds of the day (0.33.0, MeteredModel.money_rooms).
 # 0.37.3 (analysis 0.37.0): the research model's check too. It held only its worst case and needed only that left above
 # the reserve, though a search can cost several times its worst case (live research did): near the bottom of the
 # balance a check whose quote fit could still end Ember below zero without its last will.
@@ -479,7 +480,11 @@ def workshop_reservation(
     the $1.50 cap per run, which the same run would have broken the daily cap with. 0.33.0: a run holds at most what
     the day has left (MeteredModel.reservation's room), and at least its worst case: live, a $2.76 hold refused every
     run once the day's spending passed about $3 (four refusals in two days, two cycles of a book's edits lost), while
-    each of those runs was priced below what was left. A run that costs more than it held is booked as it happens."""
+    each of those runs was priced below what was left. A run that costs more than it held is booked as it happens.
+    0.37.2: what the day has left, not the balance (MeteredModel.money_rooms): the room it was clamped to held a fifth
+    of the balance above the last will's reserve, so near the bottom the hold shrank with it and five times it always
+    fit; a run that cost $3.21 holding $0.62 left Ember dead at -$0.08 without its last will. The balance still needs
+    SERVER_TOOL_ROOM times the whole hold."""
     return max(quote, usd_cap_to_micros(settings.workshop_run_cap_usd), _tail_hold(db, clock, simulated, model))
 
 
@@ -725,8 +730,9 @@ class MeteredModel:
     def reservation(self, request: Mapping[str, Any], purpose: str = "work", room: int | None = None) -> int:
         """0.15.0: what the guard would hold of the daily cap and the balance for ``request`` as a ``purpose`` call now
         (reads only): its worst case, a workshop call's at least its cap per run and what recent runs cost
-        (workshop_reservation). 0.33.0: with ``room`` (what is left of the day and the balance), a workshop call
-        holds no more than that, and never less than its worst case. Raises Unpriceable."""
+        (workshop_reservation). 0.33.0: with ``room`` (0.37.2: what is left of the day, money_rooms), a workshop call
+        holds no more than that, and never less than its worst case; the balance still counts its whole hold.
+        Raises Unpriceable."""
         quote = self.quote(request, purpose)
         held = self._held(purpose, str(request.get("model") or ""), quote)
         return held if room is None or purpose != WORKSHOP else max(quote, min(held, room))
@@ -881,6 +887,28 @@ class MeteredModel:
         counts expected costs, the rest worst cases. 0.15.0: in a maintenance cycle every call's own room is also the
         cycle cap's, and until EVENT_RESERVE_HOUR a scheduled cycle's calls leave the event reserve (``_money_refusal``
         says how). ``allowance``: what the call may go over the caps by (a reflection's, ``_allowance``)."""
+        own, day, balance = self._rooms(cycle_id, purpose, keep, keep_money, allowance)
+        return own, min(day, balance)
+
+    def money_rooms(self, cycle_id: int, purpose: str = "work", keep: int = 0) -> tuple[int, int]:
+        """0.37.2: the money room of ``rooms`` in its two parts: (the room under the daily cap, less the event reserve
+        and ``keep`` as ``rooms`` counts them; the room of the balance, keeping the last-will reserve, less ``keep``,
+        for a workshop or research call at most what is left above that reserve divided by server_tool_room). A
+        workshop run holds no more of the day than the first (0.33.0), and its whole hold has to fit the second:
+        clamped to both, its hold shrank near the bottom of the balance until SERVER_TOOL_ROOM times it always fit."""
+        _, day, balance = self._rooms(cycle_id, purpose, keep)
+        return day, balance
+
+    def _rooms(
+        self,
+        cycle_id: int,
+        purpose: str,
+        keep: int,
+        keep_money: int | None = None,
+        allowance: Allowance | None = None,
+    ) -> tuple[int, int, int]:
+        """``rooms``, its money room in the two parts of ``money_rooms``: (the room under the call's own cap, under the
+        daily cap, of the balance)."""
         over = allowance or Allowance()
         keep_money = keep if keep_money is None else keep_money
         status = self.life.evaluate()
@@ -890,7 +918,7 @@ class MeteredModel:
                 "SELECT cap_micros, trigger, burn_mode FROM cycles WHERE id = ?", (cycle_id,)
             ).fetchone()
         if cycle is None:
-            return 0, 0
+            return 0, 0, 0
         every = cycle["burn_mode"] == burn.MAINTENANCE  # 0.15.0: its cap bounds every call in it
         spent, reserved = self.books.cycle_spend(cycle_id, outside_cap=False, every_purpose=every)
         pending = self.books.pending(scope)
@@ -910,17 +938,16 @@ class MeteredModel:
             own_cap = min(own_cap, cycle_room)
         in_cap = keep if in_cycle_cap else 0  # a workshop run's own cap isn't the reflection's
         outside = held if purpose in OUTSIDE_CYCLE_CAP else 0  # they count their worst case against the reserve
-        money = min(
-            daily_cap - outside - today - pending - keep_money + over.day, status.balance - pending - keep_money
-        )
+        day = daily_cap - outside - today - pending - keep_money + over.day
+        balance = status.balance - pending - keep_money
         reserve = 0
         if purpose != "last_will" and status.last_will_at is None:
             reserve = last_will_reserve(self.settings, self.db, self.life.mode) or 0
-            money = min(money, status.balance - pending - reserve)
+            balance = min(balance, status.balance - pending - reserve)
         if purpose in SERVER_TOOL_PURPOSES:  # 0.23.0: as _money_refusal judges it, SERVER_TOOL_ROOM times the hold
             room = server_tool_room(self.db, self.clock, self.simulated)
-            money = min(money, int(Decimal(status.balance - pending - reserve) / room))
-        return max(0, own_cap - in_cap), max(0, money)
+            balance = min(balance, int(Decimal(status.balance - pending - reserve) / room))
+        return max(0, own_cap - in_cap), max(0, day), max(0, balance)
 
     def reserve(
         self,
@@ -931,7 +958,8 @@ class MeteredModel:
         hold: int | None = None,
     ) -> Reservation:
         """Check and record a call before it is sent. Raises CallRefused after committing the refusal. ``hold``:
-        0.33.0, what a workshop call holds (reservation with its room), never less than its worst case."""
+        0.33.0, what a workshop call holds of the day (reservation with its room), never less than its worst case;
+        0.37.2: SERVER_TOOL_ROOM times its whole hold must still be left above the last will's reserve."""
         if not _PURPOSE.match(purpose):
             raise ValueError("bad purpose name")
         model = str(request.get("model") or "")
@@ -982,16 +1010,19 @@ class MeteredModel:
                 assert plan is not None and price is not None
                 priced = self._estimate(plan, price, search_price, geo, container_price, None)
                 quote = self._estimate(plan, price, search_price, geo, container_price, purpose)
-                estimate = self._held(purpose, plan.model, quote)  # 0.15.0: a workshop call holds more
+                whole = self._held(purpose, plan.model, quote)  # 0.15.0: a workshop call holds more
+                estimate = whole
                 if hold is not None and purpose == WORKSHOP:  # 0.33.0: as much as the day has left
-                    estimate = max(quote, min(estimate, hold))
+                    estimate = max(quote, min(whole, hold))
                 # 0.12.0: the cycle cap counts the expected cost (a reflection may go over the caps: _allowance)
                 expected, allowance = quote, Allowance()
                 if purpose not in OUTSIDE_CYCLE_CAP:
                     expected, miss = self._expected(plan, price, purpose, cycle_id, quote)
                     expected = min(expected, quote)
                     allowance = self._allowance(cycle_id, purpose, miss)
-                refusal, starving = self._money_refusal(cycle, status, purpose, estimate, expected, allowance, priced)
+                refusal, starving = self._money_refusal(
+                    cycle, status, purpose, estimate, expected, allowance, priced, whole
+                )
             if refusal is not None:
                 call_id = None
                 if cycle is not None:
@@ -1129,12 +1160,15 @@ class MeteredModel:
         expected: int,
         allowance: Allowance | None = None,
         priced: int | None = None,
+        whole: int | None = None,
     ) -> tuple[tuple[str, str] | None, bool]:
         """(refusal, is it starvation) for the caps, the balance and the last-will reserve: the cycle cap counts the
         call's ``expected`` cost, the rest its worst case, what it holds (``estimate``), and a reflection may go over
         the caps by its ``allowance`` (``_allowance``). 0.15.0: a workshop run's cap is checked against the request as
         priced (``priced``, without a raised safety factor: that locked the workshop at its cap after one overrun);
-        the factor and what recent runs cost make it hold more of the day instead.
+        the factor and what recent runs cost make it hold more of the day instead. 0.37.2: SERVER_TOOL_ROOM times a
+        workshop or research call's ``whole`` hold must be left above the last will's reserve, however little of it
+        a workshop run holds of the day (0.33.0).
 
         0.15.0: a maintenance cycle's cap bounds every call in it, those outside the cycle cap by their worst case
         (a workshop run, the daily review, a study). Until EVENT_RESERVE_HOUR a scheduled cycle's calls leave the
@@ -1208,10 +1242,14 @@ class MeteredModel:
                 ), opening and settled - estimate < reserve
         if purpose in SERVER_TOOL_PURPOSES:  # 0.21.0: it can cost more than it holds
             room = server_tool_room(self.db, self.clock, self.simulated)
-            needed = int((Decimal(estimate) * room).to_integral_value(rounding=ROUND_CEILING))
+            # 0.37.2 (analysis 0.37.0, 3.4): on its whole hold. A run that held only what the day had left, clamped to
+            # a room that already held a fifth of the balance, fit five times by construction near the bottom: one cost
+            # $3.21 holding $0.62, and Ember died at -$0.08 without its last will.
+            whole = max(estimate, whole or 0)
+            needed = int((Decimal(whole) * room).to_integral_value(rounding=ROUND_CEILING))
             if available - reserve < needed:
                 return (
-                    f"a {purpose} call can cost more than it holds (${micros_to_usd(estimate):.4f}), so it needs"
+                    f"a {purpose} call can cost more than it holds (${micros_to_usd(whole):.4f}), so it needs"
                     f" {room:.1f} times that left above the last will's reserve;"
                     f" ${micros_to_usd(max(available, 0)):.4f} is available{held}",
                     "balance",

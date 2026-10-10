@@ -19,7 +19,8 @@ expire within the hour), and every file is deleted from Anthropic once the run i
 cost $1.84 against $0.35). So a call is refused when its price is above what is left of the cap per run, and it
 holds at least that cap, or what recent runs cost if that is more, of the daily cap and the balance
 (metering.workshop_reservation). A call can still cost more than all of that; the guard books it, refuses further
-workshop calls in the cycle and raises the workshop's estimates.
+workshop calls in the cycle and raises the workshop's estimates. 0.33.0: of the day it holds no more than is left of
+it; 0.37.2: the balance still needs several times its whole hold above the last will's reserve.
 """
 
 from __future__ import annotations
@@ -285,12 +286,16 @@ class Workshop:
         first = request
         done: list[Any] = []
         for attempt in range(1 + MAX_CONTINUATIONS):
-            money = self.meter.rooms(cycle_id, WORKSHOP, keep=keep)[1]
+            # 0.37.2 (analysis 0.37.0, 3.4): what is left of the day and of the balance, apart. 0.33.0 held no more
+            # than both together, and the balance's part is a fifth of what is left above the last will's reserve: near
+            # the bottom the hold shrank to it, and five times the hold always fit.
+            day, balance = self.meter.money_rooms(cycle_id, WORKSHOP, keep=keep)
             try:
                 # 0.15.0: the cap is checked against the request as priced; what the call holds of the day can be more
                 # (0.33.0: no more than the day has left, and never less than its worst case)
                 quote = self.meter.quote(request, WORKSHOP, scaled=False)
-                held = self.meter.reservation(request, WORKSHOP, room=money)
+                whole = self.meter.reservation(request, WORKSHOP)
+                held = self.meter.reservation(request, WORKSHOP, room=day)
             except Unpriceable as exc:
                 run.failure = f"the run can't be priced ({exc})"
                 break
@@ -306,11 +311,17 @@ class Workshop:
                     "times its hold above the last will's reserve" + kept  # 0.23.0: meter.rooms, as the guard
                 )
                 break
-            if held > money:
+            if held > day:  # its worst case at a raised estimate: the price itself fit the room above
                 run.failure = (
-                    f"{going_on} holds ${micros_to_usd(held):.3f} of the day (the workshop's cap per run, or what "
-                    f"recent runs cost), but only ${micros_to_usd(money):.3f} is left (the daily cap, or the balance: "
-                    "a run needs several times its hold above the last will's reserve" + kept
+                    f"{going_on} holds ${micros_to_usd(held):.3f} of the day (its worst case, at the workshop's raised "
+                    f"estimates), but only ${micros_to_usd(day):.3f} is left of it (the daily cap" + kept
+                )
+                break
+            if whole > balance:  # as the guard judges it: SERVER_TOOL_ROOM times the whole hold
+                run.failure = (
+                    f"{going_on} keeps back ${micros_to_usd(whole):.3f} (the workshop's cap per run, or what recent "
+                    f"runs cost), but the balance leaves only ${micros_to_usd(balance):.3f} for it (a run can cost "
+                    "more than it holds, so it needs several times its hold above the last will's reserve" + kept
                 )
                 break
             try:
