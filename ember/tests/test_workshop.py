@@ -392,7 +392,7 @@ class PausingMeter:
     def headroom(self, cycle_id: int, purpose: str, keep: int = 0) -> int:
         return 10**9
 
-    def rooms(self, cycle_id: int, purpose: str, keep: int = 0) -> tuple[int, int]:
+    def money_rooms(self, cycle_id: int, purpose: str, keep: int = 0) -> tuple[int, int]:
         return 10**9, 10**9
 
     def call(self, cycle_id: int, purpose: str, request: dict[str, Any], hold: int | None = None) -> Any:

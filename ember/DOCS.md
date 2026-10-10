@@ -642,7 +642,12 @@ calls in 14 days (what they are known to cost, interrupted ones included),
 under the daily cap and the balance. Since 0.33.0 a run keeps back no more than
 the day has left, and never less than its own worst case: live, a $2.76 hold
 refused every run once the day's spending passed about $3, though each run was
-priced below what was left. **Reset
+priced below what was left. The balance still counts all of it: a run needs 5
+times what it would keep back without the day's limit left above the last
+will's reserve (see [Money](#money)). Until 0.37.2 the day's limit included a
+fifth of the balance, so near the bottom a run kept back that fifth and always
+passed: one that cost $3.21 holding $0.62 would have ended Ember below zero
+without its last will. **Reset
 estimates** doesn't clear those runs; they stop counting after 14 days. A call
 can still cost more than all of this; Ember then books what it cost, makes no
 more workshop calls in that cycle, and raises the workshop's estimates. Runs
@@ -2806,7 +2811,8 @@ bottom of the balance such a call could still cost more than is left, and
 Ember would die below zero without its last will, your Anthropic account
 paying the rest: so a workshop or research call needs 5 times what it keeps
 back (or more, if one ever cost more than that many times its hold) left
-above the last will's reserve (0.21.0). If a call ever costs more than its
+above the last will's reserve (0.21.0); a workshop run's hold counts in full,
+however little of the day is left (0.37.2). If a call ever costs more than its
 worst case, Ember scales up the estimates for that kind of call (planning, a
 work step, the reflection, research, ...) on that model, up to 8 times; the
 other kinds keep theirs. That kind of call makes no more calls in the cycle,
