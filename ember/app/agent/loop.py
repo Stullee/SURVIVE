@@ -538,11 +538,7 @@ class CycleRunner:
 
     def _expire_requests(self) -> None:
         """0.12.0: the requests the owner didn't decide within their type's days expire (news for the agent)."""
-        with self.db.transaction() as conn:
-            expired = store.expire_requests(conn, self.scope, to_iso(self.clock.now()))
-        for r in expired:
-            days = store.REQUEST_DAYS[r["type"]]
-            events.record(self.db, "info", "agent", f"Request #{r['id']} expired: no decision in {days} days")
+        expire_requests(self.db, self.scope, self.clock)
 
     def _fetch_mail(self, cycle_id: int) -> None:
         """New mail before the plan (errors are recorded and shown, and never stop the cycle). 0.15.0: not while a
@@ -2523,6 +2519,18 @@ def _sources(response: dict[str, Any]) -> list[str]:
             if isinstance(item, dict) and isinstance(item.get("url"), str) and item["url"] not in urls:
                 urls.append(item["url"][:300])
     return urls
+
+
+def expire_requests(db: Database, scope: AgentScope, clock: Clock) -> int:
+    """0.12.0: the requests the owner didn't decide within their type's days expire (news for the agent), each said in
+    the System log. 0.37.3: at a cycle's start and, before the owner's unlocks act, in every round of the scheduler
+    (Agent.run_policy). Returns how many expired."""
+    with db.transaction() as conn:
+        expired = store.expire_requests(conn, scope, to_iso(clock.now()))
+    for r in expired:
+        days = store.REQUEST_DAYS[r["type"]]
+        events.record(db, "info", "agent", f"Request #{r['id']} expired: no decision in {days} days")
+    return len(expired)
 
 
 def write_records(conn: Any, scope: AgentScope, cycle_id: int, status: str, note: str | None, now: str) -> None:

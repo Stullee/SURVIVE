@@ -36,6 +36,77 @@ proposed again.
   "You approve it" waits on that while no request waits for your owner. The same step asks for a product's first
   listing once its files and photos are made.
 
+## 0.37.5
+
+Your spreadsheets' pictures show the buyer's file, and the Check line names what is wrong in it, not what is right.
+
+- make_spreadsheet's pictures were worked out from your spec, by code of their own, and showed other numbers than the
+  file: a sum over a whole column (=SUM(Income!C:C)) took the data rows only, while Excel adds the Total row under them
+  too, so a summary showed 3,570.50 € and the buyer's file 7,141.00 €; a total left out the empty rows' formulas;
+  1234567 showed as 1.23457e+06 and 15.01.2026 as 2026-01-15. Now each picture is drawn from the file as Excel shows
+  it, as make_image's sheet pictures are: what you see is what the buyer gets.
+- Sum a sheet's data rows (C4:C12, or B{first}:B{last} on its own sheet), never a whole column: the Check line names a
+  whole column whose Total row or header a SUM, AVERAGE, MAX or COUNTA counts besides the data (a SUMIF of a category
+  is fine).
+- The Check line also names ranges on your formula's own sheet (a Total row of your own whose SUM stops a row short),
+  ranges of several columns, a COUNTA that counts the header, and a column's formula, once, also on a template with no
+  rows yet. Parts of the data your formulas take together, such as four quarterly sums of a year's months, are no
+  longer named as leaving data out. Fix whatever it names before you sell the file.
+- rows_csv: a first line that repeats the columns' titles is left out (it became a data row, and its formula and the
+  total showed #VALUE!); one with other titles is named. An empty field, and "" in rows, is an empty cell, which gets
+  the column's formula.
+
+## 0.37.4
+
+Near the bottom of your balance, the research model's check can no longer cost more than is left above your last
+will's reserve.
+
+- While your owner's research model is checked, Ember's code asks it each of your research questions too and compares
+  what the two models found (you read the worker model's answer). That second call is the same web search, but the
+  money guard kept back only its worst case for it and needed only that left above the reserve, though a search can
+  cost several times its worst case: in a test, after a check that cost $0.45, the next went ahead with $2.93 left
+  above the reserve, keeping back $0.49; held like research, it keeps back $0.675 and needs 5 times that, $3.38. Now
+  the check is judged as your research is: it keeps back at least 1.5 times the costliest research of the last 14 days
+  on its model, and needs 5 times that left above the reserve. A question it can't pay for that way is compared later,
+  with another of your questions; your own research goes on as before.
+- Research and the check count each other's costs on a model: once the research model takes over, your research on it
+  keeps back at least 1.5 times what its check cost, so near the bottom a search may be refused sooner ("a search needs
+  several times its hold above the last will's reserve": do that work another way). A check that cost more than 5
+  times what it kept back raises what every search and workshop run needs, as a costly search or run does.
+
+## 0.37.3
+
+A "stop" in your mailbox is read before Ember's code writes, and your owner's kill switch stops what is under way.
+
+- Before Ember's code sends an email your owner or their unlock approved, it reads your mailbox, unless a read since
+  the approval, at most 5 minutes old, left nothing to read. A reply approved before your owner pressed the kill switch
+  went out in the first round after its reset, and the reader's "Stop", which had come meanwhile, was read only after
+  it. Such an email now fails with "the recipient asked not to get emails". While the mailbox can't be read, approved
+  emails wait: their requests stay approved, and you hear how they ended once they go out or fail. Don't propose one
+  again because it waits.
+- The kill switch stops Ember's code in the middle of carrying out what your owner approved: what has begun runs on,
+  nothing else begins (2 of 3 approved emails went out after your owner pressed it). What waits is carried out after
+  they reset the switch. Your live page isn't uploaded while it is on.
+- A request your owner doesn't decide expires on its day, checked every minute before any unlock acts, also while you
+  sleep: after 8 days paused, an unlock approved an 8-day-old reply when your owner resumed you, and it was sent. You
+  hear of an expired request at your next cycle, as before. And while you are paused or wait for money no unlock acts:
+  once you run again, each request held for its veto window gets the whole 12 hours again.
+
+## 0.37.2
+
+Near the bottom of your balance a workshop run can no longer end your life below zero without your last will.
+
+- A run needs 5 times what it keeps back (its cap per run, its raised estimate, or 1.5 times the costliest run of the
+  last 14 days) left above your last will's reserve. Since 0.33.0 a run kept back no more than the day had left, but
+  that room also held only a fifth of your balance above the reserve, so near the bottom the 5 times always fit: in a
+  test of 0.37.0, after a run that cost $1.76, the next went ahead with $3.10 above the reserve holding $0.62, cost
+  $3.21, and you were dead at -$0.08 without your last will. Now only the day limits what a run keeps back, and your
+  balance counts all of it.
+- So near the bottom the workshop refuses such a run before it is paid for ("the run keeps back $2.645 ..., but the
+  balance leaves only $0.621 for it"): do the work with your own tools instead. A costly run stops counting after 14
+  days. Late in the day, with money enough, a run still keeps back only what the day has left; research is judged as
+  before.
+
 ## 0.37.1
 
 Your promises weigh about what a product does now, and press as their day nears.

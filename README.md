@@ -229,6 +229,47 @@ promise is worth 3 now and urgent only from two days before its day; one taken
 three times in a day without being kept weighs its worth alone until the day is
 over.
 
+0.37.2: near the bottom of the balance a workshop run can no longer end Ember's
+life below zero, your Anthropic account paying the rest. Since 0.33.0 a run kept
+back no more than the day had left, but that limit also held a fifth of the
+balance, so the rule that a run needs 5 times its hold above the last will's
+reserve always passed: in the codebase analysis of 0.37.0 (finding 3.4), a run
+went ahead holding $0.62 with $3.10 left, cost $3.21, and Ember died at -$0.08
+without its last will. Now only the day limits what a run keeps back, and the
+balance counts all of it.
+
+0.37.3 closes three gaps in timing at the approval boundary that the codebase
+analysis of 0.37.0 found (its 4.1.1 to 4.1.3). An approved email goes out only
+after Ember's code has read its mailbox since your approval: a "stop" that came
+while the kill switch was on, the app was down or reading failed was read after
+the first round had sent to its writer (§ 7 UWG). The kill switch stops a round
+that is already sending (2 of 3 approved emails went out after it was pressed),
+and the live page isn't uploaded while it is on. A request expires on its day
+before any unlock acts (on Resume after 8 days paused, an unlock approved an
+8-day-old reply), and a veto window that a pause interrupted gets its whole 12
+hours again once Ember runs.
+
+0.37.4: near the bottom of the balance the research model's check can no longer
+cost more than is left above the last will's reserve. While a research model is
+checked, each research question is asked of it too: the same web search, but the
+guard kept back only its worst case and needed only that left. In a test, after a
+check that cost $0.45, the next went ahead holding $0.49 with $2.93 left above
+the reserve, where research needs 5 times $0.675 (the codebase analysis of
+0.37.0, section 5). Now the check is judged as research, and research and the
+check count what either cost on their model.
+
+0.37.5: a spreadsheet's pictures show the buyer's file, and its Check line names
+what is wrong in it, not what is right. The pictures came from a second
+evaluator that read the spec: in the codebase analysis of 0.37.0 (findings 3.5,
+4.6.1 and 4.6.2), a summary's =SUM(Income!C:C) showed 3,570.50 € in its picture
+while the file showed 7,141.00 €, as Excel adds the Total row under the data
+too. Now each picture is drawn from the file, its numbers and dates as Excel
+shows them. The Check line names a whole column whose total or header a SUM,
+AVERAGE, MAX or COUNTA counts, checks a sheet's own ranges, ranges of several
+columns and a template's column formulas, and no longer calls quarterly sums
+wrong. A CSV of rows may start with the columns' titles, and an empty field gets
+its column's formula.
+
 0.37.6: the plan has a brake. Nothing noticed that a cycle took a step and nothing
 changed: on 10-09 a step whose pins waited for you took a cycle every 30 minutes,
 $5.88 of the $7 cap by 12:35, and the other products got none. Now a step a cycle
@@ -306,19 +347,23 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   pinned key and only a post, the blog's list and the link page
   (`ember/app/integrations/sftp.py`, `site_publisher.py`). With the live view on
   (0.16.0), it uploads the live page, its banner and its chart there every 15
-  minutes, made from Ember's own numbers, with the agent's titles and last will
-  only as the owner approved each one (`live_view.py`). With Bluesky on
+  minutes (never while the kill switch is on, 0.37.3), made from Ember's own
+  numbers, with the agent's titles and last will only as the owner approved
+  each one (`live_view.py`). With Bluesky on
   (0.19.0), Ember's code logs in to `bsky.social` with the account's app
   password and posts what the owner approved to the account's own server at
   Bluesky, and nowhere else (`ember/app/integrations/bluesky_live.py`).
 - **Outside actions.** The agent has no tool that sends or posts anything. An
   email it proposes is sent by Ember's code only after the owner approves it,
   exactly as approved, once, to one recipient, with a footer saying an AI wrote
-  it and within a daily limit; a send is recorded before it starts and never
-  retried (`ember/app/integrations/executor.py`). A Reddit post becomes a link
-  the owner opens and posts from their own account; a KDP book (0.25.0) becomes
-  a package the owner publishes at KDP from their own account (Ember's code
-  never reaches Amazon).
+  it and within a daily limit, and (0.37.3) only after Ember's code read its
+  mailbox since the approval, so a "stop" waiting there is seen first; a send is
+  recorded before it starts and never retried
+  (`ember/app/integrations/executor.py`). The kill switch stops whatever
+  Ember's code hasn't begun, also in the middle of a round (0.37.3). A Reddit
+  post becomes a link the owner opens and posts from their own account; a KDP
+  book (0.25.0) becomes a package the owner publishes at KDP from their own
+  account (Ember's code never reaches Amazon).
 - **CSRF.** State-changing requests must carry an `X-Ember-Request: 1` header,
   which cross-site pages can't send.
 - **Strict CSP.** No inline scripts or styles; Chart.js is vendored, nothing is

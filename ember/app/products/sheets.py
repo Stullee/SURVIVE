@@ -13,6 +13,11 @@ workspace_read) and drawn (``picture``: one sheet, for make_image's 'file.xlsx#2
 2.67), and so does a number shown with a fixed number of decimals. A workbook in German (its language, as the cost
 statements of products/statement.py are) is drawn in German notation, 1.234,56 € and 31,97%, and a percentage with
 the decimals its format asks for. ``values`` gives every cell's value once worked out, for the statements' check.
+
+0.37.5: make_spreadsheet's pictures are drawn from the file it made (``previews``), worked out as make_image's are: a
+second evaluator, reading the spec, showed other numbers than the buyer's file. A "general" number shows as Excel's
+General format does. The Check line names a whole column (C:C) whose total row a SUM would add again, and checks a
+sheet's own ranges, ranges of several columns and column formulas too; parts of the data (quarters) are no longer named.
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ import csv
 import datetime as dt
 import io
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -100,6 +106,7 @@ class Sheet:
     filter: bool
     zebra: bool
     chart: dict[str, Any] | None
+    warnings: list[str] = field(default_factory=list)  # 0.37.5: for the Check line (a CSV's header line)
 
 
 @dataclass
@@ -193,8 +200,8 @@ def parse(source: str, read_csv: Any) -> Spec:
             if column.formula:
                 last = first + len(sheet.rows) + sheet.empty_rows - 1
                 check_formula(_placed(column.formula, first, first, last), names, f"{sheet.name} column {c + 1}")
-    spec.warnings.extend(_short_ranges(spec))
-    spec.warnings.extend(_outside_cells(spec))  # 0.32.0
+    spec.warnings.extend(warning for sheet in spec.sheets for warning in sheet.warnings)  # 0.37.5: a CSV's header
+    spec.warnings.extend(_formula_checks(spec))  # 0.19.2, 0.32.0, 0.37.5
     return spec
 
 
@@ -204,104 +211,370 @@ def data_rows(sheet: Sheet) -> tuple[int, int]:
     return first, first + len(sheet.rows) + sheet.empty_rows - 1
 
 
-def _short_ranges(spec: Spec) -> list[str]:
-    """0.19.2: a formula's range on another sheet that leaves out some of that sheet's data rows, or counts its total
-    row too. Live, a budget's summary summed Income!C2:C9 and Expenses!C2:C21 while their data were rows 4 to 12 and
-    4 to 26: what a buyer typed in the rows below was left out, and the pictures couldn't show it."""
-    sheets = {sheet.name.casefold(): sheet for sheet in spec.sheets}
-    found: list[str] = []
+# --- what a formula's references take (0.19.2, 0.32.0, 0.37.5) ---
+
+# Functions that take in every number of a range: a total row's too (0.37.5: =SUM(Income!C:C) added Income's total
+# to its data, in the buyer's file twice the income).
+_NUMBERS = frozenset({"SUM", "AVERAGE", "COUNT", "MIN", "MAX", "SUMPRODUCT", "MEDIAN", "LARGE", "SMALL", "RANK"})
+# A conditional function's arguments: the place of the range whose numbers it takes (None: it counts), and where its
+# pairs of a range and its criterion start.
+_LAYOUTS: dict[str, tuple[int | None, int]] = {
+    "COUNTIF": (None, 0),
+    "COUNTIFS": (None, 0),
+    "SUMIF": (2, 0),
+    "AVERAGEIF": (2, 0),
+    "SUMIFS": (0, 1),
+    "AVERAGEIFS": (0, 1),
+    "MINIFS": (0, 1),
+    "MAXIFS": (0, 1),
+}
+_A_TOTAL = object()  # a total row's number, whatever the data make it
+_CHECKS = 10  # the formulas the Check line names at most
+
+
+@dataclass
+class _Call:
+    """A function's call in a formula: its name ("" for brackets), its arguments' tokens (a call or brackets inside one
+    as the token that opens them) and the references that are a whole argument, by their place."""
+
+    name: str
+    args: list[list[Any]] = field(default_factory=lambda: [[]])
+    refs: dict[int, _Ref] = field(default_factory=dict)
+
+
+@dataclass
+class _Ref:
+    """A reference in a formula as the checks read it: as written; its sheet ("" for the formula's own), as named and
+    found (``target``); its columns and rows, from 1 (rows 0 for whole columns), and whether it is one cell (B4, not
+    B4:B4); and the call it is an argument of."""
+
+    text: str
+    sheet: str
+    prefix: str
+    left: int
+    right: int
+    low: int
+    high: int
+    cell: bool
+    call: _Call | None = None
+    place: int = 0
+    target: Sheet | None = None
+
+
+_PLACE = re.compile(
+    r"\$?(?P<left>[A-Za-z]{1,3})\$?(?P<low>\d{1,7})(?::\$?(?P<right>[A-Za-z]{1,3})\$?(?P<high>\d{1,7}))?"
+    r"|\$?(?P<first>[A-Za-z]{1,3}):\$?(?P<last>[A-Za-z]{1,3})"
+)
+
+
+def _refs(formula: str) -> list[_Ref]:
+    """A formula's cells, ranges and whole columns (whole rows aside), each with the call it is an argument of."""
+    try:
+        items = Tokenizer(formula).items
+    except Exception:  # noqa: BLE001 - check_formula refuses what can't be read
+        return []
+    found: list[_Ref] = []
+    calls: list[_Call] = []  # the brackets open, the innermost last
+    for token in items:
+        if token.type == Token.WSPACE:
+            continue
+        if token.subtype == Token.OPEN:
+            if calls:
+                calls[-1].args[-1].append(token)
+            calls.append(_Call(token.value[:-1].upper().removeprefix("_XLFN.") if token.type == Token.FUNC else ""))
+        elif token.subtype == Token.CLOSE:
+            if calls:
+                call = calls.pop()
+                call.refs = {place: ref for place, ref in call.refs.items() if len(call.args[place]) == 1}
+        elif token.type == Token.SEP and token.subtype == Token.ARG and calls:
+            calls[-1].args.append([])
+        else:
+            if calls:
+                calls[-1].args[-1].append(token)
+            ref = _reference(token.value) if token.type == Token.OPERAND and token.subtype == Token.RANGE else None
+            if ref is None:
+                continue
+            found.append(ref)
+            ref.call = next((call for call in reversed(calls) if call.name), None)
+            if ref.call is not None:
+                ref.place = len(ref.call.args) - 1
+                if ref.call is calls[-1]:
+                    ref.call.refs[ref.place] = ref
+    return found
+
+
+def _reference(text: str) -> _Ref | None:
+    """A cell, a range or whole columns as written in a formula (whole rows, 4:4, are none)."""
+    prefix, mark, place = text.rpartition("!")
+    match = _PLACE.fullmatch(place)
+    if match is None:
+        return None
+    if match["first"]:
+        columns, rows = (match["first"], match["last"]), (0, 0)
+    else:
+        columns = (match["left"], match["right"] or match["left"])
+        rows = (int(match["low"]), int(match["high"] or match["low"]))
+    left, right = sorted(_column_index(letters.upper()) + 1 for letters in columns)
+    sheet = prefix[1:-1].replace("''", "'") if prefix.startswith("'") else prefix
+    low, high = sorted(rows)
+    return _Ref(text, sheet, prefix + mark, left, right, low, high, cell=not (match["first"] or match["right"]))
+
+
+def _formula_checks(spec: Spec) -> list[str]:
+    """The Check line's findings on the formulas: a range that leaves out data meant to be in it (0.19.2), a cell that
+    is no data (0.32.0), and 0.37.5: rows outside the data that a function counts (a whole column's total row, a
+    header COUNTA counts), on the formula's own sheet too, for ranges of several columns, and in each column's formula
+    once, also on a sheet with no rows yet (a template's: its rows were all that was read)."""
+    book = {sheet.name.casefold(): sheet for sheet in spec.sheets}
+    # where a formula is, its sheet and row, whether it is a column's (the same in every row), and a reference in it
+    uses: list[tuple[str, Sheet, int, bool, _Ref]] = []
     for sheet in spec.sheets:
-        first = first_row(bool(sheet.title))
+        first, last = data_rows(sheet)
+        formulas = []
         for r, row in enumerate(sheet.rows):
-            for value in row:
+            for c, value in enumerate(row):
+                column = sheet.columns[c].formula
                 if not (isinstance(value, str) and value.startswith("=")):
                     continue
-                for name, column, low, high in _sheet_ranges(value):
-                    other = sheets.get(name.casefold())
-                    if other is None or other is sheet:
-                        continue
-                    top, bottom = data_rows(other)
-                    total = bottom + 1 if other.totals else None
-                    where = f"{sheet.name} row {first + r}: {name}!{column}{low}:{column}{high}"
-                    if low <= bottom and high >= top and (low > top or high < bottom):
-                        found.append(
-                            f"{where} leaves out some of the data of {other.name} (rows {top} to {bottom}"
-                            + (f"; its total is in row {total}" if total else "")
-                            + f"): {name}!{column}{top}:{column}{bottom} takes them all"
-                        )
-                    elif total is not None and low <= total <= high and low <= bottom:
-                        found.append(f"{where} counts the total row of {other.name} (row {total}) besides its data")
-    return found[:5]
+                if column and value == _placed(column, first + r, first, last):
+                    continue  # the column's formula: named once, below
+                formulas.append((f"{sheet.name} row {first + r}", first + r, False, value))
+        for c, column in enumerate(sheet.columns):
+            if column.formula and last >= first:  # in its first and its last row (a reference by {row} moves)
+                where = f"{sheet.name} column {get_column_letter(c + 1)} ({column.title})"
+                formulas.extend(
+                    (where, row, True, _placed(column.formula, row, first, last)) for row in sorted({first, last})
+                )
+        for where, row, repeated, formula in formulas:
+            for ref in _refs(formula):
+                ref.target = book.get(ref.sheet.casefold()) if ref.sheet else sheet
+                if ref.target is not None:
+                    uses.append((where, sheet, row, repeated, ref))
+    taken: dict[tuple[str, int, int], list[tuple[int, int]]] = {}  # the rows ranges take of a sheet's columns
+    for _, _, _, _, ref in uses:
+        if ref.low and not ref.cell and ref.target is not None:
+            taken.setdefault((ref.target.name.casefold(), ref.left, ref.right), []).append((ref.low, ref.high))
+    found: list[str] = []
+    for where, sheet, row, repeated, ref in uses:
+        problem = _problem(ref, ref.target is sheet, repeated, row, taken)
+        if problem and f"{where}: {problem}" not in found:
+            found.append(f"{where}: {problem}")
+    if len(found) > _CHECKS:
+        return [*found[:_CHECKS], f"and {len(found) - _CHECKS} more like these"]
+    return found
 
 
-def _outside_cells(spec: Spec) -> list[str]:
+def _problem(
+    ref: _Ref, own: bool, repeated: bool, row: int, taken: dict[tuple[str, int, int], list[tuple[int, int]]]
+) -> str:
+    """What is wrong with the rows a reference takes of its sheet, if anything (``own``: the sheet of its formula,
+    which is in row ``row``; ``repeated``: a column's formula, the same in each row)."""
+    sheet = ref.target
+    assert sheet is not None
+    top, bottom = data_rows(sheet)
+    if ref.left == ref.right and ref.low == ref.high > 0:  # a cell (or a range of one cell, B4:B4)
+        outside = _outside_cell(ref, sheet)
+        if outside or ref.cell:
+            return outside
+    if bottom < top:
+        return ""
+    data = f"{ref.prefix}{get_column_letter(ref.left)}{top}:{get_column_letter(ref.right)}{bottom}"
+    if not ref.low:  # whole columns
+        counted = _counted(ref)
+        whole = "the whole column" if ref.left == ref.right else "whole columns"
+        if counted:
+            return (
+                f"{ref.text}, {whole}, counts {counted} of {sheet.name} besides its data: {data} takes the data alone"
+            )
+        return ""
+    if ref.low == ref.high and ref.left < ref.right:
+        return ""  # one row of several columns: a record, or a header's titles to look up in
+    if ref.high < top or ref.low > (bottom + 1 if sheet.totals else bottom):
+        return ""  # none of the data
+    short = _short(ref, sheet, own and not repeated, own, row, taken[(sheet.name.casefold(), ref.left, ref.right)])
+    if short:
+        return short
+    counted = _counted(ref)
+    return (
+        f"{ref.text} counts {counted} of {sheet.name} besides its data: {data} takes the data alone" if counted else ""
+    )
+
+
+def _outside_cell(ref: _Ref, sheet: Sheet) -> str:
     """0.32.0: a formula's single cell that is no data of its sheet: in its title, the empty row under it or its
     header, or below its data and its total (an empty cell). Live, a summary's Net was "=B3-B4" in its row 6, the
     header's "Amount" less the income, while its data were rows 4 to 6; nothing said so until a cycle read the file."""
-    sheets = {sheet.name.casefold(): sheet for sheet in spec.sheets}
-    found: list[str] = []
-    for sheet in spec.sheets:
-        first = first_row(bool(sheet.title))
-        for r, row in enumerate(sheet.rows):
-            for value in row:
-                if not (isinstance(value, str) and value.startswith("=")):
-                    continue
-                for name, column, number in _sheet_cells(value):
-                    other = sheets.get(name.casefold()) if name else sheet
-                    if other is None:
-                        continue
-                    top, bottom = data_rows(other)
-                    end = bottom + 1 if other.totals else bottom
-                    if top <= number <= end:
-                        continue
-                    if number >= top:
-                        what = "an empty cell below the data" + (" and the total" if other.totals else "")
-                    elif number == top - 1:
-                        what = "the header row"
-                    else:
-                        what = "the title" if number == 1 else "the empty row under the title"
-                    cell = f"{name}!{column}{number}" if name else f"{column}{number}"
-                    found.append(
-                        f"{sheet.name} row {first + r}: {cell} is {what} of {other.name}, whose data are rows {top} "
-                        f"to {bottom}" + (f" (its total row {bottom + 1})" if other.totals else "")
-                    )
-    return found[:5]
+    top, bottom = data_rows(sheet)
+    number = ref.low
+    if top <= number <= (bottom + 1 if sheet.totals else bottom):
+        return ""
+    if number >= top:
+        what = "an empty cell below the data" + (" and the total" if sheet.totals else "")
+    elif number == top - 1:
+        what = "the header row"
+    else:
+        what = "the title" if number == 1 else "the empty row under the title"
+    total = f" (its total row {bottom + 1})" if sheet.totals else ""
+    return f"{ref.text} is {what} of {sheet.name}, whose data are rows {top} to {bottom}{total}"
 
 
-def _sheet_cells(formula: str) -> list[tuple[str, str, int]]:
-    """The single cells in a formula, not ranges: (its sheet, "" for the formula's own, column, row)."""
-    try:
-        items = Tokenizer(formula).items
-    except Exception:  # noqa: BLE001 - check_formula refuses what can't be read
+def _short(ref: _Ref, sheet: Sheet, placed: bool, own: bool, row: int, taken: list[tuple[int, int]]) -> str:
+    """0.19.2: a range that leaves out some of its sheet's data rows as a range meant to take them all does: it starts
+    with them (or above) and stops short of their end, or ends with them and starts late. Live, a budget's summary
+    summed Income!C2:C9 and Expenses!C2:C21 while their data were rows 4 to 12 and 4 to 26: what a buyer typed in the
+    rows below was left out. 0.37.5: not a part that the workbook's ranges take whole together (four quarters, each
+    named as leaving out the rest of the year); and on the formula's own sheet, not a running sum's range to its own
+    row, nor a total of the rows above it (or below it), which it takes up to the row next to it. (Another sheet's
+    rows are no running sum: a summary's row 4 summing Income!C4:C9 is the live mistake, as both start in row 4.)
+    ``own``: the range is on the formula's sheet; ``placed``: and the formula is in one of its rows, not a column's
+    formula, which is in each row and whose range is meant to take the data."""
+    top, bottom = data_rows(sheet)
+    low, high = ref.low, ref.high
+    span = f"{ref.prefix}{get_column_letter(ref.left)}{{}}:{get_column_letter(ref.right)}{{}}"
+    if placed and high < row:  # a total of the rows above it
+        if low <= top and high < row - 1 and not _together(taken, top, row - 1):
+            return (
+                f"{ref.text} leaves out {_rows_text(high + 1, row - 1)} above it: {span.format(top, row - 1)} "
+                "takes them all"
+            )
+        return ""
+    if placed and low > row:  # a total of the rows below it
+        if high >= bottom and low > row + 1 and not _together(taken, row + 1, bottom):
+            return (
+                f"{ref.text} leaves out {_rows_text(row + 1, low - 1)} below it: {span.format(row + 1, bottom)} "
+                "takes them all"
+            )
+        return ""
+    if low <= top <= high < bottom:  # it starts with the data and stops short
+        if own and high == row:
+            return ""  # a running sum: B$4:B9 in row 9
+    elif top < low <= bottom <= high:  # it ends with the data and starts late
+        if own and low == row:
+            return ""  # what is left: B9:B$15 in row 9
+    else:
+        return ""  # a part inside the data, or all of it
+    if _together(taken, top, bottom):
+        return ""
+    total = f"; its total is in row {bottom + 1}" if sheet.totals else ""
+    return (
+        f"{ref.text} leaves out some of the data of {sheet.name} (rows {top} to {bottom}{total}): "
+        f"{span.format(top, bottom)} takes them all"
+    )
+
+
+def _together(ranges: list[tuple[int, int]], first: int, last: int) -> bool:
+    """0.37.5: whether ranges that each take a part of rows ``first`` to ``last`` take them all together, as four
+    quarters take a year's months (a range that takes all of them alone hides no part that is left out)."""
+    parts = sorted(
+        (max(low, first), min(high, last))
+        for low, high in ranges
+        if low <= last and high >= first and not (low <= first and high >= last)
+    )
+    reach = first - 1
+    for low, high in parts:
+        if low > reach + 1:
+            return False
+        reach = max(reach, high)
+    return reach >= last
+
+
+def _rows_text(first: int, last: int) -> str:
+    return f"row {first}" if first == last else f"rows {first} to {last}"
+
+
+def _counted(ref: _Ref) -> str:
+    """0.37.5: the rows outside its sheet's data that a range takes in where its function counts them, as Excel works
+    it out: SUM and the like a total row's number, COUNTA a title, a header or a total row too, COUNTBLANK their empty
+    cells, and a conditional function (SUMIF, COUNTIF...) the rows whose cells meet all its criteria. In the 0.37.0
+    analysis a summary's =SUM(Income!C:C) was 7,141.00 € in the buyer's file, Income's total counted twice, while the
+    picture of its own evaluator, taking the data rows only, showed 3,570.50 €."""
+    rows = _beside(ref)
+    name = ref.call.name if ref.call is not None else ""
+    if name in _NUMBERS:
+        counted = [r for r, (_, values) in rows.items() if any(value is _A_TOTAL for value in values)]
+    elif name == "COUNTA":
+        counted = [r for r, (_, values) in rows.items() if any(value is not None for value in values)]
+    elif name == "COUNTBLANK":
+        counted = [r for r, (_, values) in rows.items() if any(value is None for value in values)]
+    else:
+        counted = _conditional(ref, rows)
+    return " and ".join(rows[r][0] for r in sorted(counted))
+
+
+def _beside(ref: _Ref) -> dict[int, tuple[str, list[Any]]]:
+    """The rows outside its sheet's data that a range takes, by row: what the row is, and what Ember's code writes in
+    it across the range's columns (_A_TOTAL for a total's number, None for an empty cell). The row under the data and
+    their total stands for all the empty rows below."""
+    sheet = ref.target
+    assert sheet is not None
+    top, bottom = data_rows(sheet)
+    end = bottom + 1 if sheet.totals else bottom
+    columns = range(ref.left, ref.right + 1)
+    rows: dict[int, tuple[str, list[Any]]] = {}
+    if sheet.title:
+        rows[1] = ("the title (row 1)", [sheet.title if c == 1 else None for c in columns])
+        rows[2] = ("the empty row under the title (row 2)", [None for _ in columns])
+    titles = [sheet.columns[c - 1].title if c <= len(sheet.columns) else None for c in columns]
+    rows[top - 1] = (f"the header row (row {top - 1})", titles)
+    if sheet.totals:
+        totals = [_A_TOTAL if c - 1 in sheet.totals else "Total" if c == 1 else None for c in columns]
+        rows[end] = (f"the total row (row {end})", totals)
+    rows[end + 1] = (f"the empty rows below (from row {end + 1})", [None for _ in columns])
+    if ref.low:  # a range: the rows it takes
+        rows = {r: kind for r, kind in rows.items() if ref.low <= r <= ref.high}
+    return rows
+
+
+def _conditional(ref: _Ref, rows: dict[int, tuple[str, list[Any]]]) -> list[int]:
+    """Which of a range's rows outside the data a conditional function counts: those whose cells meet all its
+    criteria, as COUNTIF tests them (a criterion written as a text or a number; one from a cell or a calculation is
+    taken to name data, as "Rent" or A4 does). Named once for the call: at the range whose numbers it takes, or a
+    count's first range."""
+    call = ref.call
+    if call is None or call.name not in _LAYOUTS:
         return []
-    found = []
-    for token in items:
-        if token.type != Token.OPERAND or token.subtype != Token.RANGE:
-            continue
-        sheet, _, place = token.value.rpartition("!")
-        sheet = sheet[1:-1].replace("''", "'") if sheet.startswith("'") else sheet
-        match = re.fullmatch(r"\$?([A-Za-z]{1,3})\$?(\d{1,7})", place)
-        if match is not None:
-            found.append((sheet, match[1].upper(), int(match[2])))
-    return found
-
-
-def _sheet_ranges(formula: str) -> list[tuple[str, str, int, int]]:
-    """The one-column ranges on a named sheet in a formula: (sheet, column, first row, last row)."""
-    try:
-        items = Tokenizer(formula).items
-    except Exception:  # noqa: BLE001 - check_formula refuses what can't be read
+    numbers, start = _LAYOUTS[call.name]
+    if numbers == 2 and len(call.args) < 3:
+        numbers = 0  # SUMIF(range, criterion) takes the range's own numbers
+    if ref.place != (start if numbers is None else numbers):
         return []
-    found = []
-    for token in items:
-        if token.type != Token.OPERAND or token.subtype != Token.RANGE or "!" not in token.value:
-            continue
-        sheet, _, place = token.value.rpartition("!")
-        sheet = sheet[1:-1].replace("''", "'") if sheet.startswith("'") else sheet
-        match = re.fullmatch(r"\$?([A-Za-z]{1,3})\$?(\d{1,7}):\$?([A-Za-z]{1,3})\$?(\d{1,7})", place)
-        if match is not None and match[1].upper() == match[3].upper():
-            found.append((sheet, match[1].upper(), int(match[2]), int(match[4])))
-    return found
+    pairs = []
+    for place in range(start, len(call.args) - 1, 2):
+        tested, criterion = call.refs.get(place), _literal(call.args[place + 1])
+        if tested is None or tested.target is None or criterion is None:
+            return []
+        pairs.append((tested, criterion))
+    counted = []
+    for row, (_, values) in rows.items():
+        if numbers is not None and not any(value is _A_TOTAL for value in values):
+            continue  # no number to take in
+        if pairs and all(_meets(_beside(tested).get(row), criterion) for tested, criterion in pairs):
+            counted.append(row)
+    return counted
+
+
+def _literal(tokens: list[Any]) -> Any:
+    """A criterion written in a formula, a text or a number; None for one from a cell or a calculation."""
+    if len(tokens) == 1 and tokens[0].type == Token.OPERAND:
+        if tokens[0].subtype == Token.TEXT:
+            return tokens[0].value[1:-1].replace('""', '"')
+        if tokens[0].subtype == Token.NUMBER:
+            return float(tokens[0].value)
+    return None
+
+
+def _meets(kind: tuple[str, list[Any]] | None, criterion: Any) -> bool:
+    """Whether a row outside the data (``kind``, as _beside gives it; None: not one) may meet a criterion in its first
+    cell, as COUNTIF tests it: a total's number for some data (">0" takes a positive total)."""
+    if kind is None:
+        return False
+    value = kind[1][0]
+    try:
+        if value is _A_TOTAL:
+            return any(_matches(number, criterion) for number in (0.0, 1.0, -1.0))
+        return _matches(value, criterion)
+    except _Unknown:
+        return False
 
 
 def _sheet(where: str, data: Any, read_csv: Any) -> Sheet:
@@ -339,7 +612,7 @@ def _sheet(where: str, data: Any, read_csv: Any) -> Sheet:
         title = _label(f"{where}.columns[{i}].title", c.get("title"), 60)
         columns.append(Column(title, float(width), fmt, clean, formula))
     titles = [c.title.lower() for c in columns]
-    rows = _rows(where, s, read_csv, len(columns))
+    rows, header = _rows(where, s, read_csv, columns)
     empty = s.get("empty_rows", 0)
     if not isinstance(empty, int) or isinstance(empty, bool) or not 0 <= empty <= MAX_EMPTY_ROWS:
         raise SheetError(f"{where}.empty_rows must be a whole number from 0 to {MAX_EMPTY_ROWS}")
@@ -382,19 +655,34 @@ def _sheet(where: str, data: Any, read_csv: Any) -> Sheet:
         empty_rows=empty,
         totals=totals,
         chart=chart,
+        warnings=[f"{name} row {first}: {header}"] if header else [],
         **flags,
     )
 
 
-def _rows(where: str, s: dict[str, Any], read_csv: Any, width: int) -> list[list[Any]]:
+def _rows(where: str, s: dict[str, Any], read_csv: Any, columns: list[Column]) -> tuple[list[list[Any]], str]:
+    """A sheet's rows, from its spec or a CSV file, an empty text as an empty cell (0.37.5: "" in a column with a
+    formula kept the formula out, as "Rent,950,950," did), and what to say of a CSV's first line that looks like a
+    header with other titles than the columns'. 0.37.5: a first line that is the columns' titles is left out: in the
+    0.37.0 analysis "Category,Planned,Actual" became a data row, its Left formula and the Left total #VALUE!."""
+    width = len(columns)
+    header = ""
     if "rows" in s and "rows_csv" in s:
         raise SheetError(f"{where}: give rows or rows_csv, not both")
     if "rows_csv" in s:
         path = _text(f"{where}.rows_csv", s["rows_csv"], 200)
         if not path.endswith(".csv"):
             raise SheetError(f"{where}.rows_csv must be a .csv file in your workspace")
-        raw = list(csv.reader(io.StringIO(read_csv(path))))
-        data: list[Any] = [[_number_or_text(v) for v in row] for row in raw if any(v.strip() for v in row)]
+        raw = [row for row in csv.reader(io.StringIO(read_csv(path))) if any(v.strip() for v in row)]
+        data: list[Any] = [[_number_or_text(v) for v in row] for row in raw]
+        if data and _titles_line(raw[0], columns):
+            data = data[1:]
+        elif _header_like(data, columns):
+            line = ", ".join(v.strip() for v in raw[0])
+            header = (
+                f"the first line of {path} ({line[:60]}) looks like a header, not data: the columns give the titles, "
+                f"so take it out of {path}"
+            )
     else:
         data = s.get("rows") or []
     if not isinstance(data, list) or len(data) > MAX_ROWS:
@@ -405,14 +693,38 @@ def _rows(where: str, s: dict[str, Any], read_csv: Any, width: int) -> list[list
             raise SheetError(f"{where}.rows[{r}] must be a list of at most {width} values (one per column)")
         clean = []
         for c, value in enumerate(row):
-            if isinstance(value, str):
+            if isinstance(value, str) and not value.strip():
+                clean.append(None)
+            elif isinstance(value, str):
                 clean.append(_text(f"{where}.rows[{r}][{c}]", value, MAX_CELL_CHARS, required=False))
             elif value is None or isinstance(value, bool | int | float):
                 clean.append(value)
             else:
                 raise SheetError(f"{where}.rows[{r}][{c}] must be text, a number, true/false or null")
         rows.append(clean + [None] * (width - len(clean)))
-    return rows
+    return rows, header
+
+
+def _titles_line(fields: list[str], columns: list[Column]) -> bool:
+    """0.37.5: whether a CSV file's line is the columns' titles (case and spaces aside; the formulas' columns may be
+    left out), as a CSV's header line is."""
+    named = [(f.strip().casefold(), c.title.strip().casefold()) for f, c in zip(fields, columns, strict=False)]
+    named = [(field_, title) for field_, title in named if field_]
+    return bool(named) and len(fields) <= len(columns) and all(field_ == title for field_, title in named)
+
+
+def _header_like(data: list[list[Any]], columns: list[Column]) -> bool:
+    """0.37.5: whether a CSV's first row has a text where a column of numbers has numbers in the rows below it, as a
+    header with other titles than the columns' has."""
+    numbers = {"number", "integer", "eur", "usd", "percent"}
+    first, rest = (data[0], data[1:]) if data else ([], [])
+    return any(
+        column.format in numbers
+        and c < len(first)
+        and isinstance(first[c], str)
+        and any(c < len(row) and isinstance(row[c], int | float) for row in rest)
+        for c, column in enumerate(columns)
+    )
 
 
 def first_row(titled: bool) -> int:
@@ -427,6 +739,8 @@ def _placed(formula: str, row: int, first: int, last: int) -> str:
 
 def _number_or_text(value: str) -> Any:
     text = value.strip()
+    if not text:
+        return None  # 0.37.5: an empty field is an empty cell
     if re.fullmatch(r"-?\d+", text):
         return int(text)
     if re.fullmatch(r"-?\d+\.\d+", text):
@@ -567,23 +881,79 @@ def _chart(ws: Any, sheet: Sheet, top: int, first: int, last: int) -> None:
 # --- the picture ---
 
 
-def preview(spec: Spec, max_rows: int = 18, index: int = 0) -> bytes:
-    """A PNG of a sheet's table (the first unless ``index`` names another, 0.15.0), for listing photos and the
-    dashboard.
+@dataclass
+class _Table:
+    """0.37.5: what a sheet's picture shows: its title, its header, its rows and its total row (none when it has none),
+    each cell as the file shows it, with whether it is a formula shown as written."""
 
-    Formulas show their result when the preview can work it out (arithmetic, SUM, AVERAGE, MIN, MAX, COUNT, ROUND
-    and ABS; 0.19.2: IF, IFERROR, COUNTIF, SUMIF and the other sheets' cells; 0.23.0: SUMPRODUCT, and dates as Excel's
-    day numbers) within the workbook's work budget (WORK); any other formula is shown as written, in italics.
+    title: str
+    header: list[str]
+    rows: list[list[tuple[str, bool]]]
+    total: list[tuple[str, bool]]
+
+
+def previews(spec: Spec, data: bytes, max_rows: int = 18) -> list[bytes]:
+    """A PNG of each sheet's table (0.15.0: each sheet's), for listing photos and the dashboard: its title, its header,
+    its first rows, up to 4 of its empty rows and its totals.
+
+    0.37.5: drawn from ``data``, the workbook made of ``spec``: each cell as the buyer's file shows it once Excel has
+    calculated it, worked out from the file's own cells as make_image's sheet pictures are (``picture``) and shown in
+    the cell's number format. The pictures had an evaluator of their own that read the spec: a whole column was its
+    data rows only (Excel takes the total row in too), a total left out the empty rows and their formulas, a "general"
+    number was Python's %g and a date the spec's text. A formula that can't be worked out within the workbook's work
+    budget (WORK) is shown as written, in italics.
     """
-    sheet = spec.sheets[index]
-    values = _spec_book(spec)[sheet.name.casefold()]
+    return [
+        _preview(spec, sheet, table) for sheet, table in zip(spec.sheets, _tables(spec, data, max_rows), strict=True)
+    ]
+
+
+def _tables(spec: Spec, data: bytes, max_rows: int = 18) -> list[_Table]:
+    """What each sheet's picture shows (``previews``), read from the workbook ``data`` made of ``spec``."""
+    book = _book(data)
+    try:
+        read = [(sheet.title, _cells(sheet, READ_ROWS, READ_COLUMNS)) for sheet in book.worksheets]
+        german = _german(book)
+    finally:
+        book.close()
+    grids = _grids(read)
+    found = dict(read)
+    tables = []
+    for sheet in spec.sheets:
+        cells, grid, width = found[sheet.name], grids[sheet.name.casefold()], len(sheet.columns)
+        first, last = data_rows(sheet)
+        given = min(len(sheet.rows), max_rows)
+        rows = range(first, first + given + max(0, min(sheet.empty_rows, max_rows - given, 4)))
+        table = _Table(
+            title=_plain(grid.value(1, 1)) if sheet.title else "",
+            header=[text for text, _ in _texts(cells, grid, german, first - 1, width)],
+            rows=[_texts(cells, grid, german, row, width) for row in rows],
+            # build writes a total row under data rows only
+            total=_texts(cells, grid, german, last + 1, width) if sheet.totals and last >= first else [],
+        )
+        tables.append(table)
+    return tables
+
+
+def _texts(
+    cells: dict[tuple[int, int], Any], grid: _Grid, german: bool, row: int, width: int
+) -> list[tuple[str, bool]]:
+    """A row's first ``width`` cells as the file shows them, each with whether it is a formula shown as written."""
+    found = []
+    for column in range(1, width + 1):
+        cell = cells.get((row, column))
+        value = grid.value(row, column) if cell is not None else None
+        text = cell_text(value, cell.number_format, german) if cell is not None else ""
+        found.append((text, isinstance(value, str) and value.startswith("=")))
+    return found
+
+
+def _preview(spec: Spec, sheet: Sheet, table: _Table) -> bytes:
     scale = 2
     col_px = [max(60, int(c.width * 7.5)) * scale for c in sheet.columns]
     row_h = 22 * scale
     title_h = 44 * scale if sheet.title else 0
-    rows = sheet.rows[:max_rows]
-    blank = max(0, min(sheet.empty_rows, max_rows - len(rows), 4))
-    count = 1 + len(rows) + blank + (1 if sheet.totals else 0)
+    count = 1 + len(table.rows) + (1 if table.total else 0)
     width = sum(col_px) + 2 * 12 * scale
     height = title_h + count * row_h + 2 * 12 * scale
     image = Image.new("RGB", (width, height), (255, 255, 255))
@@ -594,49 +964,35 @@ def preview(spec: Spec, max_rows: int = 18, index: int = 0) -> bytes:
     x0 = y = 12 * scale
     if sheet.title:
         big = ImageFont.truetype(str(fonts.path(spec.font, "B")), 20 * scale)
-        draw.text((x0, y), sheet.title, font=big, fill=spec.accent)
+        draw.text((x0, y), table.title, font=big, fill=spec.accent)
         y += title_h
     line = tint(spec.accent, 0.75)
     header_text = readable_on(spec.accent)
     draw.rectangle([x0, y, x0 + sum(col_px), y + row_h], fill=spec.accent)
-    _row(draw, [c.title for c in sheet.columns], col_px, x0, y, row_h, bold, header_text, scale)
+    _row(draw, table.header, col_px, x0, y, row_h, bold, header_text, scale)
     y += row_h
-    for index in range(len(rows) + blank):
+    for index, shown in enumerate(table.rows):
         if sheet.zebra and index % 2 == 1:
             draw.rectangle([x0, y, x0 + sum(col_px), y + row_h], fill=tint(spec.accent, 0.92))
-        texts, styles = [], []
-        for c, column in enumerate(sheet.columns):
-            value = values.cell(index, c) if index < len(rows) else None
-            unknown = isinstance(value, str) and value.startswith("=")
-            texts.append(_shown(value, column.format))
-            styles.append(italic if unknown else body)
-        _row(draw, texts, col_px, x0, y, row_h, styles, (34, 34, 34), scale)
+        styles = [italic if unknown else body for _, unknown in shown]
+        _row(draw, [text for text, _ in shown], col_px, x0, y, row_h, styles, (34, 34, 34), scale)
         draw.line([x0, y + row_h, x0 + sum(col_px), y + row_h], fill=line, width=scale)
         y += row_h
-    if sheet.totals:
-        texts = ["Total"] + [""] * (len(sheet.columns) - 1)
-        for c, fn in sheet.totals.items():
-            total = values.total(c)
-            texts[c] = _shown(total, sheet.columns[c].format) if total is not None else f"={fn}(…)"
+    if table.total:
         draw.line([x0, y, x0 + sum(col_px), y], fill=spec.accent, width=2 * scale)
-        _row(draw, texts, col_px, x0, y, row_h, bold, (34, 34, 34), scale)
+        styles = [italic if unknown else bold for _, unknown in table.total]
+        _row(draw, [text for text, _ in table.total], col_px, x0, y, row_h, styles, (34, 34, 34), scale)
     buffer = io.BytesIO()
     image.save(buffer, "PNG", optimize=True)
     return buffer.getvalue()
 
 
-def _spec_book(spec: Spec) -> dict[str, _Results]:
-    """0.19.2: each sheet's values by its name (any case), each able to read the others'."""
-    book: dict[str, _Formulas] = {}
-    budget = [WORK]
-    for sheet in spec.sheets:
-        book[sheet.name.casefold()] = _Results(sheet, book, budget)
-    return book  # type: ignore[return-value]
-
-
 # --- any Excel file: read and drawn (0.15.0) ---
 
-READ_ROWS = 2_000  # a sheet's rows read (MAX_ROWS of data under a title and a header)
+# A sheet's rows read: 0.37.5, all of the largest sheet Ember makes (a title, its empty row and a header, MAX_ROWS of
+# data, MAX_EMPTY_ROWS to fill in and the total row). Its pictures are drawn from the file now: at 2,000 rows, a total
+# below row 2,000 (and every sum that took it in) was missing from them.
+READ_ROWS = 3 + MAX_ROWS + MAX_EMPTY_ROWS + 1
 READ_COLUMNS = MAX_COLUMNS
 TEXT_CHARS = 200_000  # a workbook's text at most (workspace_read shows it a part at a time)
 PICTURE_ROWS = 30
@@ -810,11 +1166,14 @@ def _german(book: Any) -> bool:
 def cell_text(value: Any, number_format: str, german: bool = False) -> str:
     """A cell's value as Excel shows it, near enough: in its number format, or the nearest of FORMATS. 0.20.0: a
     percentage with the decimals its format has ('0.00%' is 31.97%), and with ``german`` as German Excel shows numbers:
-    1.234,56 € and 31,97%."""
-    if isinstance(value, dt.datetime | dt.date):
-        shown = {"dd.mm.yyyy": "%d.%m.%Y", "mm/dd/yyyy": "%m/%d/%Y"}.get(number_format, "%Y-%m-%d")
-        return value.strftime(shown)
+    1.234,56 € and 31,97%. 0.37.5: a number in a date format is the day it stands for, as Excel keeps dates (what a
+    formula in a date column works out: Due + 30 is a day's number), and a "general" number is shown as Excel's
+    General format shows it (_general)."""
     number = isinstance(value, int | float) and not isinstance(value, bool)
+    if isinstance(value, dt.datetime | dt.date):
+        return _date_text(value.year, value.month, value.day, number_format)
+    if number and number_format in _DATES:
+        return _day(value, number_format)
     if number and "%" in number_format:
         places = _places(number_format)
         text = f"{_displayed(value * 100, places):.{places}f}%"
@@ -824,6 +1183,27 @@ def cell_text(value: Any, number_format: str, german: bool = False) -> str:
 
 
 _GERMAN = str.maketrans({",": ".", ".": ","})  # 1,234.56 is 1.234,56 in German
+_DATES = {"yyyy-mm-dd": "{y}-{m}-{d}", "dd.mm.yyyy": "{d}.{m}.{y}", "mm/dd/yyyy": "{m}/{d}/{y}"}  # FORMATS' dates
+_LAST_DAY = 2_958_466  # the day after 9999-12-31, Excel's last
+
+
+def _date_text(year: int, month: int, day: int, number_format: str) -> str:
+    """A day in a date format of FORMATS (any other as yyyy-mm-dd)."""
+    shown = _DATES.get(number_format, _DATES["yyyy-mm-dd"])
+    return shown.format(y=f"{year:04d}", m=f"{month:02d}", d=f"{day:02d}")
+
+
+def _day(value: float, number_format: str) -> str:
+    """0.37.5: a day's number in a date format as Excel shows it: day 1 is 1900-01-01, and Excel counts a 29 February
+    1900 that never was (so _EPOCH holds from day 61 on); day 0 is the 0th of January 1900, and a number before or
+    after Excel's dates fills the cell with ########, as an empty Due less 7 does."""
+    if not math.isfinite(value) or not 0 <= value < _LAST_DAY:
+        return "########"
+    whole = math.floor(value)  # its time of the day isn't shown
+    if whole in (0, 60):
+        return _date_text(1900, 1 if whole == 0 else 2, 0 if whole == 0 else 29, number_format)
+    date = _EPOCH + dt.timedelta(days=whole + (whole < 60))
+    return _date_text(date.year, date.month, date.day, number_format)
 
 
 def _places(number_format: str) -> int:
@@ -1164,69 +1544,6 @@ def _empty(name: str) -> float:
     return 0.0
 
 
-class _Results(_Formulas):
-    """The values a sheet of a spec shows once Excel has calculated it, as far as a preview needs them (``book``:
-    0.19.2, the workbook's other sheets, by name)."""
-
-    def __init__(self, sheet: Sheet, book: dict[str, _Formulas] | None = None, budget: list[int] | None = None) -> None:
-        super().__init__(book, budget)
-        self.sheet = sheet
-        self.first = first_row(bool(sheet.title))
-        self.last = self.first + len(sheet.rows) + sheet.empty_rows - 1
-        self.totals: dict[int, float] = {}  # 0.23.0: worked out once (each formula naming one read the column again)
-
-    def cell(self, index: int, column: int) -> Any:
-        """The value of a data cell: a formula's result, or the formula itself when it can't be worked out."""
-        value = self.sheet.rows[index][column]
-        if not (isinstance(value, str) and value.startswith("=")):
-            return value
-        try:
-            return self.formula((self.first + index, column + 1), value)
-        except (_Unknown, ZeroDivisionError, OverflowError, RecursionError, ValueError):
-            return value
-
-    def total(self, column: int) -> float | None:
-        if column in self.totals:
-            return self.totals[column]
-        fn = self.sheet.totals.get(column)
-        found: list[float] = []
-        for index in range(len(self.sheet.rows)):
-            value = self.cell(index, column)
-            if isinstance(value, str) and value.startswith("="):
-                return None
-            if isinstance(value, int | float) and not isinstance(value, bool):
-                found.append(float(value))
-        if not fn or not found:
-            return None
-        self.totals[column] = _total(fn, found)
-        return self.totals[column]
-
-    def _rows(self) -> range:
-        return range(self.first, self.last + 1)
-
-    def _cell(self, row: int, column: int) -> Any:
-        if not 1 <= column <= len(self.sheet.columns):
-            return None
-        if row == 1 and self.sheet.title:
-            return self.sheet.title if column == 1 else None
-        if row == self.first - 1:
-            return self.sheet.columns[column - 1].title
-        if row == self.last + 1 and self.sheet.totals:
-            if column - 1 in self.sheet.totals:
-                total = self.total(column - 1)
-                if total is None:
-                    raise _Unknown
-                return total
-            return "Total" if column == 1 else None
-        index = row - self.first
-        if not 0 <= index < len(self.sheet.rows):
-            return None  # an empty row to fill in, or below the table
-        value = self.sheet.rows[index][column - 1]
-        if isinstance(value, str) and value.startswith("="):
-            return self.formula((row, column), value)
-        return value
-
-
 class _Grid(_Formulas):
     """0.15.0: the values of any Excel file's sheet, by (row, column): formulas worked out as the preview does, over
     whole ranges (text in them is left out, as Excel does); 0.19.2: with the workbook's other sheets (``book``)."""
@@ -1321,8 +1638,51 @@ def _shown(value: Any, fmt: str) -> str:
             return f"{_displayed(value, 0):,.0f}"
         if fmt == "number":
             return f"{_displayed(value, 2):,.2f}"
-        return f"{value:g}"
+        return _general(value)
     return str(value)
+
+
+def _general(value: float) -> str:
+    """0.37.5: a number as Excel's General format shows it in a cell wide enough: in at most 11 characters (a minus
+    sign besides), with the digits that fit, rounded (=1/3 is 0.333333333, =PI() 3.141592654, 1234.5678901 is
+    1234.56789), and in scientific notation with 6 digits what has no room for its digits (123456789012 is
+    1.23457E+11, 0.0000123456 is 1.23456E-05). The pictures printed numbers with Python's %g: 1234567 as 1.23457e+06,
+    12345.67 as 12345.7."""
+    if not math.isfinite(value):
+        return str(value)
+    if value == 0:
+        return "0"
+    number = Decimal(f"{value:.15g}")  # the 15 digits Excel keeps
+    exponent = number.adjusted()  # the place of its first digit: 0 for 1 to 9.99, -1 for 0.1 to 0.999
+    room = 12 if number < 0 else 11
+    if -4 <= exponent <= -1:
+        text = _fixed(number, 9)  # 0.123456789, 0.000123457: eleven characters
+    elif -9 <= exponent <= 10:
+        text = _fixed(number, 12)
+        if len(text) > room:
+            text = _fixed(number, max(0, 9 - exponent))  # ten digits: 3.141592654, 123456789.1
+    else:
+        text = ""
+    if not text or len(text) > room or text in ("0", "-0"):
+        return _scientific(number)
+    return text
+
+
+def _fixed(number: Decimal, places: int) -> str:
+    """``number`` with ``places`` decimals, rounded half away from zero as Excel does, without the zeros at its end."""
+    text = format(number.quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP), "f")
+    return text.rstrip("0").rstrip(".") if "." in text else text
+
+
+def _scientific(number: Decimal) -> str:
+    """``number`` as Excel's General format writes it in scientific notation: 1.23457E+11, 1E-12."""
+    exponent = number.adjusted()
+    digits = number.scaleb(-exponent).quantize(Decimal("0.00001"), rounding=ROUND_HALF_UP)
+    if abs(digits) >= 10:  # 9.999996 rounds up to 10.00000: one place on
+        exponent += 1
+        digits = number.scaleb(-exponent).quantize(Decimal("0.00001"), rounding=ROUND_HALF_UP)
+    mantissa = format(digits, "f").rstrip("0").rstrip(".")
+    return f"{mantissa}E{'-' if exponent < 0 else '+'}{abs(exponent):02d}"
 
 
 def excel_round(value: float, digits: int) -> float:

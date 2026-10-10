@@ -188,7 +188,16 @@ answered at least 9 of the 10 and found web pages for as many questions as the
 worker model, less one; otherwise research stays on the worker model. The
 System log says how the check came out, and **System → Models** shows where it
 stands. Each compared question costs one more research call (a cent or two with
-Haiku), counted as overhead.
+Haiku), counted as overhead. The money guard treats that call as research
+(0.37.4): it keeps back at least 1.5 times the costliest research call of the
+last 14 days on the research model, its check calls included, and needs 5
+times that left above the last will's reserve (see [Money](#money)); a question
+it can't pay for that way is compared with a later one, and the agent's own
+research goes on. Once the research model takes over, its research keeps back
+what its check calls cost too. Until 0.37.4 a check kept back only its worst
+case, and needed only that left above the reserve: in a test, after a check
+that cost $0.45, the next went ahead with $2.93 left above the reserve, keeping
+back $0.49; as research it keeps back $0.675 and needs 5 times that.
 
 ## How the agent works
 
@@ -494,17 +503,25 @@ agent's workspace:
   planners, worksheets, guides, and CV and letter templates. At most 40 pages.
 - **Spreadsheets** (`make_spreadsheet`): a JSON description becomes an Excel
   file with formats, dropdowns, formulas, totals, a chart and a *How to use*
-  sheet, plus a picture of each sheet. Formulas may only use common
-  functions and cells of the same workbook: no links to other files or the web.
-  Ember's code tells the agent where each sheet's data are and names a formula
-  that leaves data out or (since 0.32.0) points at a title, a header or an
-  empty cell below the data. To fix a few words or a formula of a long file,
-  the agent replaces just that passage (`workspace_write`'s `edit`, 0.32.0)
-  instead of writing the file again in parts; since 0.33.0 one edit can change
-  every copy of a passage when it says how many there are (a planner's 48
-  weekly tables). Ember's code also keeps the text a file held before the
-  agent overwrote, edited or deleted it (its newest 5), and `restore` brings it
-  back: live, an overwrite left a book's 24 KB interior as its 671-byte header.
+  sheet, plus a picture of each sheet, drawn since 0.37.5 from the file itself:
+  every number as Excel shows it once it has calculated the file. Formulas may
+  only use common functions and cells of the same workbook: no links to other
+  files or the web. Ember's code tells the agent where each sheet's data are and
+  names a formula that leaves data out or (since 0.32.0) points at a title, a
+  header or an empty cell below the data. Since 0.37.5 it also names one that
+  counts a total row or a header besides the data (`=SUM(C:C)` over a whole
+  column adds the total row under the data again), on the formula's own sheet,
+  over several columns and in a column's formula too; parts of the data that
+  formulas take together, such as four quarters of a year, are no longer named.
+  A CSV file of rows whose first line repeats the columns' titles has that line
+  left out, and an empty field is an empty cell. To fix a few words or a formula
+  of a long file, the agent replaces just that passage (`workspace_write`'s
+  `edit`, 0.32.0) instead of writing the file again in parts; since 0.33.0 one
+  edit can change every copy of a passage when it says how many there are (a
+  planner's 48 weekly tables). Ember's code also keeps the text a file held
+  before the agent overwrote, edited or deleted it (its newest 5), and `restore`
+  brings it back: live, an overwrite left a book's 24 KB interior as its
+  671-byte header.
 - **Listing photos** (`make_image`): up to three pages, sheets or pictures (or a
   zoomed-in region of one), fanned out next to a title, a subtitle and a badge,
   in Etsy's 4:3 size (3000 x 2250) or square or portrait; or a photo of words
@@ -545,7 +562,10 @@ agent's workspace:
 
 Pictures of a sheet (in `make_image` and the spreadsheets' own pictures) round
 as Excel does since 0.20.0, and a German workbook's (a cost statement's) are in
-German notation, 1.234,56 € and 31,97%.
+German notation, 1.234,56 € and 31,97%. Since 0.37.5 both are worked out from
+the file by the same code, a number in the General format is shown as Excel
+shows it (1234567, not 1.23457e+06), and a date in its column's format, also
+when a formula works it out.
 
 The agent reads the text of its PDF, Word and Excel files and copies files
 itself, for free (the workshop was paid for this). Pictures may have up to
@@ -637,7 +657,12 @@ calls in 14 days (what they are known to cost, interrupted ones included),
 under the daily cap and the balance. Since 0.33.0 a run keeps back no more than
 the day has left, and never less than its own worst case: live, a $2.76 hold
 refused every run once the day's spending passed about $3, though each run was
-priced below what was left. **Reset
+priced below what was left. The balance still counts all of it: a run needs 5
+times what it would keep back without the day's limit left above the last
+will's reserve (see [Money](#money)). Until 0.37.2 the day's limit included a
+fifth of the balance, so near the bottom a run kept back that fifth and always
+passed: one that cost $3.21 holding $0.62 would have ended Ember below zero
+without its last will. **Reset
 estimates** doesn't clear those runs; they stop counting after 14 days. A call
 can still cost more than all of this; Ember then books what it cost, makes no
 more workshop calls in that cycle, and raises the workshop's estimates. Runs
@@ -1396,8 +1421,11 @@ no longer shown); a study that failed three times stops until you press
   with its files, Copy buttons and a button that opens your KDP Bookshelf (see
   [Amazon KDP](#amazon-kdp)). A request you don't decide **expires**
   (emails and posts after 7 days, spending after 14, the rest after 30; the
-  card says when), the agent can **withdraw** one that is outdated (with its
-  reason), and each kind has its own limit of waiting requests (6 sales, 5
+  card says when; 0.37.3: checked every minute, before your unlocks act: only
+  a wake cycle's start expired them, and on Resume after a long pause an
+  unlock approved a reply past its days), the agent can **withdraw** one that
+  is outdated (with its reason), and each kind has its own limit of waiting
+  requests (6 sales, 5
   emails, 3 posts, 3 accounts, 3 spendings, 4 others), so waiting listings
   never block an email reply. Each card says what kind of action it is
   (0.13.0) and flags what matters for your decision: whether it reaches people,
@@ -1429,7 +1457,11 @@ no longer shown); a study that failed three times stops until you press
     unlock of them on **Run at once** was taken back at the upgrade).
 
   **Run unless I veto within 12 h** holds such a request on its card with the
-  time it will be approved, and you can still reject it. **Run at once**
+  time it will be approved, and you can still reject it. While Ember is
+  paused or waits for money no unlock acts, and its card says it is approved
+  12 hours after Ember runs again: once it runs, each request held this way
+  gets the whole 12 hours again (0.37.3: one whose window ran out during a
+  pause was approved the minute you resumed Ember). **Run at once**
   approves it when it is made. Each rule has a daily limit and a budget of
   actions. An unlock carries only a request that passes the checks its card
   shows (QA: a reply keeps "Re: …" and has at most 200 words, a listing has at
@@ -1622,7 +1654,14 @@ no longer shown); a study that failed three times stops until you press
   takes back every unlock too, as **Take back every unlock** does, so its reset
   approves nothing an unlock held. The dashboard keeps working. To undo it,
   change **Kill switch reset** in the app's **Configuration** tab to any other
-  number, save and restart the app.
+  number, save and restart the app. It also stops Ember's code in the middle
+  of carrying out what you approved (0.37.3: 2 of 3 approved emails went out
+  after the switch was pressed): what has begun runs on, once (an email being
+  handed over, a listing being created), and nothing else begins. What you
+  approved waits and is carried out after the reset (an email once Ember has
+  read its mailbox). The live view isn't uploaded while the switch is on: your
+  page keeps its last upload, whose time tells its readers after an hour that
+  Ember is offline (delete its files at your host if you want it gone).
 
 The agent hears about your decisions, messages and upgrades once, at its next
 wake-up.
@@ -1734,6 +1773,12 @@ included: encrypt your backups.
   stay. After a **Reject** nothing is sent.
 - Ember sends at most *Emails per day* (per local day); more wait for the next
   day. While an email waits, **Cancel sending** stops it.
+- Before an approved email goes out, Ember reads its mailbox, unless a read
+  that began after your approval, at most 5 minutes before, left nothing to
+  read (0.37.3): a "stop" that came while the kill switch was on, the app was
+  down or reading failed was read only after the first round had sent to its
+  writer. While the mailbox can't be read, or new mail is left to read, every
+  approved email waits, and its card says why.
 - Ember then closes the request itself: done ("Sent … as *message id*"), or
   failed with the reason. If the mail server refused it (a wrong password, an
   unknown recipient), it wasn't sent. If the connection broke while the email
@@ -2515,11 +2560,12 @@ The page has your site's head, header and footer and refreshes itself every 5
 minutes in an open tab. The page and the banner say when they were made (date
 and time) and that a time more than an hour old means Ember is offline: they
 can't tell by themselves when uploads stop (the app is down, the connection
-fails, a dry run). A part you switch off is replaced on your server by a version
-saying so (a banner you switched off doesn't keep showing an old balance), and
-switching **Ember live** off replaces the page, the banner and the chart with
-ones saying the live view is off. In a dry run the files go to the fake server
-and say "Probelauf".
+fails, a dry run, and since 0.37.3 the kill switch, which stops every upload
+until you reset it). A part you switch off is replaced on your server by a
+version saying so (a banner you switched off doesn't keep showing an old
+balance), and switching **Ember live** off replaces the page, the banner and
+the chart with ones saying the live view is off. In a dry run the files go to
+the fake server and say "Probelauf".
 
 ### Setting it up
 
@@ -2834,16 +2880,20 @@ Workshop runs have their own cap per run instead of the cycle cap, and the
 daily review, library study, the lessons' consolidation and the critic count
 only toward the daily cap (in maintenance the cycle's $0.40 bounds them all). A small reserve is kept
 so the agent can write its last will. The worst case of a call with Anthropic's
-server tools (the workshop, research) is priced under assumptions the request
-can't enforce (how much a code run prints, how long a search result is), so
-for those the daily cap and the balance hold only up to what Ember keeps back
-for them (see [The workshop](#the-workshop); research keeps back at least 1.5
-times the costliest research call of the last 14 days too, 0.21.0). Near the
-bottom of the balance such a call could still cost more than is left, and
-Ember would die below zero without its last will, your Anthropic account
-paying the rest: so a workshop or research call needs 5 times what it keeps
-back (or more, if one ever cost more than that many times its hold) left
-above the last will's reserve (0.21.0). If a call ever costs more than its
+server tools (the workshop, research, the research model's check) is priced
+under assumptions the request can't enforce (how much a code run prints, how
+long a search result is), so for those the daily cap and the balance hold only
+up to what Ember keeps back for them (see [The workshop](#the-workshop);
+research keeps back at least 1.5 times the costliest research call of the last
+14 days on its model too, 0.21.0, the research model's check calls included,
+0.37.4). Near the bottom of the balance such a call could still cost more than
+is left, and Ember would die below zero without its last will, your Anthropic
+account paying the rest: so a workshop or research call needs 5 times what it
+keeps back (or more, if one ever cost more than that many times its hold) left
+above the last will's reserve (0.21.0); a workshop run's hold counts in full,
+however little of the day is left (0.37.2), and the research model's check is
+judged as research (0.37.4, see [Research model](#choosing-models)). If a call
+ever costs more than its
 worst case, Ember scales up the estimates for that kind of call (planning, a
 work step, the reflection, research, ...) on that model, up to 8 times; the
 other kinds keep theirs. That kind of call makes no more calls in the cycle,
