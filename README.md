@@ -238,6 +238,18 @@ went ahead holding $0.62 with $3.10 left, cost $3.21, and Ember died at -$0.08
 without its last will. Now only the day limits what a run keeps back, and the
 balance counts all of it.
 
+0.37.3: a spreadsheet's pictures show the buyer's file, and its Check line names
+what is wrong in it, not what is right. The pictures came from a second
+evaluator that read the spec: in the codebase analysis of 0.37.0 (findings 3.5,
+4.6.1 and 4.6.2), a summary's =SUM(Income!C:C) showed 3,570.50 € in its picture
+while the file showed 7,141.00 €, as Excel adds the Total row under the data
+too. Now each picture is drawn from the file, its numbers and dates as Excel
+shows them. The Check line names a whole column whose total or header a SUM,
+AVERAGE, MAX or COUNTA counts, checks a sheet's own ranges, ranges of several
+columns and a template's column formulas, and no longer calls quarterly sums
+wrong. A CSV of rows may start with the columns' titles, and an empty field gets
+its column's formula.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
