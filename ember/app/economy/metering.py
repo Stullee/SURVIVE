@@ -120,14 +120,20 @@ EXPECTED_FACTOR = Decimal("1.5")
 EXPECTED_WINDOW = 20
 EXPECTED_SAMPLES = 5
 # 0.15.0: a workshop call holds at least what the workshop calls of the last WORKSHOP_TAIL_DAYS cost (see
-# workshop_reservation). 0.21.0: a research call too.
+# workshop_reservation). 0.21.0: a research call too. 0.37.3: research and the research model's check
+# (RESEARCH_PURPOSES) send the same request (prompts.research_request), so each holds what either cost on its model: the
+# check what research on the research model cost, and research, once the research model took over, what its check cost.
 WORKSHOP_TAIL_DAYS = 14
+RESEARCH_PURPOSES = (RESEARCH, RESEARCH_CHECK)
 # 0.21.0 (analysis 0.20.1, FIX NOW 6): a call with server tools can cost more than it holds: a workshop run admitted
 # with its hold just above the last will's reserve, booked at what live call #423 used, cost $1.89 on a $1.00 balance,
 # and Ember died $0.89 below zero without a last will (the owner's Anthropic account paid the rest). A workshop or
 # research call is admitted only while what is left above that reserve is SERVER_TOOL_ROOM times its hold, or the most
 # such a call cost of its hold in the last WORKSHOP_TAIL_DAYS if that is more (server_tool_room).
-SERVER_TOOL_PURPOSES = (WORKSHOP, RESEARCH)
+# 0.37.3 (analysis 0.37.0): the research model's check too. It held only its worst case and needed only that left above
+# the reserve, though a search can cost several times its worst case (live research did): near the bottom of the
+# balance a check whose quote fit could still end Ember below zero without its last will.
+SERVER_TOOL_PURPOSES = (WORKSHOP, RESEARCH, RESEARCH_CHECK)
 SERVER_TOOL_ROOM = Decimal(5)
 # 0.15.0: an overrun stops the cycle only when its call counts toward the cycle cap and it is more than
 # OVERRUN_TOLERANCE of the estimate or more than OVERRUN_TOLERANCE_MICROS. Otherwise the cycle goes on without further
@@ -477,15 +483,17 @@ def workshop_reservation(
     return max(quote, usd_cap_to_micros(settings.workshop_run_cap_usd), _tail_hold(db, clock, simulated, model))
 
 
-def _tail_hold(db: Database, clock: Clock, simulated: bool, model: str, purpose: str = WORKSHOP) -> int:
-    """EXPECTED_FACTOR times the costliest recent ``purpose`` call on ``model`` (``_workshop_tail``; 0 without one)."""
-    costs = [cost for _, cost in _workshop_tail(db, clock, simulated, model, purpose)]
+def _tail_hold(db: Database, clock: Clock, simulated: bool, model: str, purposes: tuple[str, ...] = (WORKSHOP,)) -> int:
+    """EXPECTED_FACTOR times the costliest recent call of ``purposes`` on ``model`` (``_workshop_tail``; 0 without
+    one)."""
+    costs = [cost for _, cost in _workshop_tail(db, clock, simulated, model, purposes)]
     return int((Decimal(max(costs)) * EXPECTED_FACTOR).to_integral_value(rounding=ROUND_CEILING)) if costs else 0
 
 
 def server_tool_room(db: Database, clock: Clock, simulated: bool) -> Decimal:
-    """0.21.0: how many times its hold a workshop or research call needs above the last will's reserve:
-    SERVER_TOOL_ROOM, or the most such a call cost of what it held in the last WORKSHOP_TAIL_DAYS if that is more."""
+    """0.21.0: how many times its hold a workshop or research call (0.37.3: or the research model's check) needs above
+    the last will's reserve: SERVER_TOOL_ROOM, or the most such a call cost of what it held in the last
+    WORKSHOP_TAIL_DAYS if that is more."""
     since = to_iso(clock.now() - timedelta(days=WORKSHOP_TAIL_DAYS))
     marks = ", ".join("?" for _ in SERVER_TOOL_PURPOSES)
     with db.connection() as conn:
@@ -506,19 +514,20 @@ def workshop_tail_ends(db: Database, clock: Clock, simulated: bool, model: str, 
 
 
 def _workshop_tail(
-    db: Database, clock: Clock, simulated: bool, model: str, purpose: str = WORKSHOP
+    db: Database, clock: Clock, simulated: bool, model: str, purposes: tuple[str, ...] = (WORKSHOP,)
 ) -> list[tuple[str, int]]:
-    """(when, what it is known to cost) of the last EXPECTED_WINDOW workshop calls on ``model`` in the last
-    WORKSHOP_TAIL_DAYS days that are known to have cost something. What they are known to cost, not what they were
-    booked at: an uncertain call booked at its hold would raise the next hold with every call. 0.16.2: an interrupted
-    call too (a broken stream reports what the run had used so far; one cut by a restart knows nothing, so it adds
-    nothing)."""
+    """(when, what it is known to cost) of the last EXPECTED_WINDOW calls of ``purposes`` (the workshop's; research's
+    and its check's together: 0.37.3) on ``model`` in the last WORKSHOP_TAIL_DAYS days that are known to have cost
+    something. What they are known to cost, not what they were booked at: an uncertain call booked at its hold would
+    raise the next hold with every call. 0.16.2: an interrupted call too (a broken stream reports what the run had used
+    so far; one cut by a restart knows nothing, so it adds nothing)."""
     since = to_iso(clock.now() - timedelta(days=WORKSHOP_TAIL_DAYS))
+    marks = ", ".join("?" for _ in purposes)
     with db.connection() as conn:
         rows = conn.execute(
-            "SELECT ts, floor_micros FROM llm_calls WHERE model = ? AND purpose = ? AND simulated = ?"
+            f"SELECT ts, floor_micros FROM llm_calls WHERE model = ? AND purpose IN ({marks}) AND simulated = ?"
             " AND status IN ('ok', 'interrupted') AND floor_micros > 0 AND ts >= ? ORDER BY id DESC LIMIT ?",
-            (model, purpose, 1 if simulated else 0, since, EXPECTED_WINDOW),
+            (model, *purposes, 1 if simulated else 0, since, EXPECTED_WINDOW),
         ).fetchall()
     return [(str(r[0]), int(r[1])) for r in rows]
 
@@ -723,8 +732,10 @@ class MeteredModel:
         return held if room is None or purpose != WORKSHOP else max(quote, min(held, room))
 
     def _held(self, purpose: str, model: str, estimate: int) -> int:
-        if purpose == RESEARCH:  # 0.21.0: what recent research calls cost, like a workshop call's
-            return max(estimate, _tail_hold(self.db, self.clock, self.simulated, model, RESEARCH))
+        # 0.21.0: what recent research calls cost, like a workshop call's; 0.37.3: the research model's check too, and
+        # either holds what both cost on its model (RESEARCH_PURPOSES)
+        if purpose in RESEARCH_PURPOSES:
+            return max(estimate, _tail_hold(self.db, self.clock, self.simulated, model, RESEARCH_PURPOSES))
         if purpose != WORKSHOP:
             return estimate
         return workshop_reservation(self.db, self.settings, self.clock, self.simulated, model, estimate)
@@ -773,7 +784,8 @@ class MeteredModel:
             allowance = self._allowance(cycle_id, purpose, miss)
         cycle_room, money_room = self.rooms(cycle_id, purpose, keep, keep_money, allowance)
         own = expected if purpose not in OUTSIDE_CYCLE_CAP else worst
-        # 0.23.0: what the call holds of the day and the balance, as the guard counts it (research: its tail too)
+        # 0.23.0: what the call holds of the day and the balance, as the guard counts it (research and, 0.37.3, its
+        # check: their tail too)
         held = self._held(purpose, str(request.get("model") or ""), worst)
         return own <= cycle_room and held <= money_room, expected, worst
 
