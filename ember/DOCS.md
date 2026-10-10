@@ -487,17 +487,25 @@ agent's workspace:
   planners, worksheets, guides, and CV and letter templates. At most 40 pages.
 - **Spreadsheets** (`make_spreadsheet`): a JSON description becomes an Excel
   file with formats, dropdowns, formulas, totals, a chart and a *How to use*
-  sheet, plus a picture of each sheet. Formulas may only use common
-  functions and cells of the same workbook: no links to other files or the web.
-  Ember's code tells the agent where each sheet's data are and names a formula
-  that leaves data out or (since 0.32.0) points at a title, a header or an
-  empty cell below the data. To fix a few words or a formula of a long file,
-  the agent replaces just that passage (`workspace_write`'s `edit`, 0.32.0)
-  instead of writing the file again in parts; since 0.33.0 one edit can change
-  every copy of a passage when it says how many there are (a planner's 48
-  weekly tables). Ember's code also keeps the text a file held before the
-  agent overwrote, edited or deleted it (its newest 5), and `restore` brings it
-  back: live, an overwrite left a book's 24 KB interior as its 671-byte header.
+  sheet, plus a picture of each sheet, drawn since 0.37.2 from the file itself:
+  every number as Excel shows it once it has calculated the file. Formulas may
+  only use common functions and cells of the same workbook: no links to other
+  files or the web. Ember's code tells the agent where each sheet's data are and
+  names a formula that leaves data out or (since 0.32.0) points at a title, a
+  header or an empty cell below the data. Since 0.37.2 it also names one that
+  counts a total row or a header besides the data (`=SUM(C:C)` over a whole
+  column adds the total row under the data again), on the formula's own sheet,
+  over several columns and in a column's formula too; parts of the data that
+  formulas take together, such as four quarters of a year, are no longer named.
+  A CSV file of rows whose first line repeats the columns' titles has that line
+  left out, and an empty field is an empty cell. To fix a few words or a formula
+  of a long file, the agent replaces just that passage (`workspace_write`'s
+  `edit`, 0.32.0) instead of writing the file again in parts; since 0.33.0 one
+  edit can change every copy of a passage when it says how many there are (a
+  planner's 48 weekly tables). Ember's code also keeps the text a file held
+  before the agent overwrote, edited or deleted it (its newest 5), and `restore`
+  brings it back: live, an overwrite left a book's 24 KB interior as its
+  671-byte header.
 - **Listing photos** (`make_image`): up to three pages, sheets or pictures (or a
   zoomed-in region of one), fanned out next to a title, a subtitle and a badge,
   in Etsy's 4:3 size (3000 x 2250) or square or portrait; or a photo of words
@@ -538,7 +546,10 @@ agent's workspace:
 
 Pictures of a sheet (in `make_image` and the spreadsheets' own pictures) round
 as Excel does since 0.20.0, and a German workbook's (a cost statement's) are in
-German notation, 1.234,56 € and 31,97%.
+German notation, 1.234,56 € and 31,97%. Since 0.37.2 both are worked out from
+the file by the same code, a number in the General format is shown as Excel
+shows it (1234567, not 1.23457e+06), and a date in its column's format, also
+when a formula works it out.
 
 The agent reads the text of its PDF, Word and Excel files and copies files
 itself, for free (the workshop was paid for this). Pictures may have up to
@@ -2536,7 +2547,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.37.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.37.2 (by /u/your name)`.
 
 ## Amazon KDP
 

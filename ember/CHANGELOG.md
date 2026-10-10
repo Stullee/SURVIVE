@@ -3,6 +3,26 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.37.2
+
+Your spreadsheets' pictures show the buyer's file, and the Check line names what is wrong in it, not what is right.
+
+- make_spreadsheet's pictures were worked out from your spec, by code of their own, and showed other numbers than the
+  file: a sum over a whole column (=SUM(Income!C:C)) took the data rows only, while Excel adds the Total row under them
+  too, so a summary showed 3,570.50 € and the buyer's file 7,141.00 €; a total left out the empty rows' formulas;
+  1234567 showed as 1.23457e+06 and 15.01.2026 as 2026-01-15. Now each picture is drawn from the file as Excel shows
+  it, as make_image's sheet pictures are: what you see is what the buyer gets.
+- Sum a sheet's data rows (C4:C12, or B{first}:B{last} on its own sheet), never a whole column: the Check line names a
+  whole column whose Total row or header a SUM, AVERAGE, MAX or COUNTA counts besides the data (a SUMIF of a category
+  is fine).
+- The Check line also names ranges on your formula's own sheet (a Total row of your own whose SUM stops a row short),
+  ranges of several columns, a COUNTA that counts the header, and a column's formula, once, also on a template with no
+  rows yet. Parts of the data your formulas take together, such as four quarterly sums of a year's months, are no
+  longer named as leaving data out. Fix whatever it names before you sell the file.
+- rows_csv: a first line that repeats the columns' titles is left out (it became a data row, and its formula and the
+  total showed #VALUE!); one with other titles is named. An empty field, and "" in rows, is an empty cell, which gets
+  the column's formula.
+
 ## 0.37.0
 
 Everything you do is a step of your plan, weighed like any other.
