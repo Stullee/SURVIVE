@@ -376,7 +376,7 @@ def test_spec_mistakes_say_where() -> None:
 def test_the_preview_shows_results_not_formulas() -> None:
     parsed = sheets.parse(spec(), no_csv)
     data = sheets.build(parsed)
-    [table] = sheets._tables(parsed, data)  # 0.37.2: what the picture shows, from the file
+    [table] = sheets._tables(parsed, data)  # 0.37.3: what the picture shows, from the file
     assert table.rows[1][3] == ("-36.50 €", False) and table.total[3] == ("-36.50 €", False)
     [picture] = [Image.open(io.BytesIO(png)) for png in sheets.previews(parsed, data)]
     assert picture.format == "PNG" and picture.width > 400

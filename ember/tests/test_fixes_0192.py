@@ -464,9 +464,9 @@ BUDGET = {
 
 def test_the_sheet_pictures_work_out_iferror_if_countif_sumif_and_other_sheets() -> None:
     spec = sheets.parse(json.dumps(BUDGET), lambda path: "")
-    assert spec.warnings == []  # 0.37.2: a SUMIF of "Rent" over whole columns counts no total row
+    assert spec.warnings == []  # 0.37.3: a SUMIF of "Rent" over whole columns counts no total row
     data = sheets.build(spec)
-    book = sheets.values(data)  # 0.37.2: the pictures are drawn from the file, worked out as these are
+    book = sheets.values(data)  # 0.37.3: the pictures are drawn from the file, worked out as these are
     summary, year, counts = book["Summary"], book["Year Overview"], book["Counts"]
     assert [summary[(r, 2)] for r in range(4, 9)] == [2800.0, 1232.5, 1567.5, 850.0, "Saving"]
     assert [year[(r, 4)] for r in (2, 3)] == [300 / 2800, 0.0]  # IFERROR: a division by zero is 0
