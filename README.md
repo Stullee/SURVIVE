@@ -220,6 +220,15 @@ to you and your decisions are weighed too: worth more than most products,
 heavier as their day nears, and no longer first whatever else waits; one about
 no product is a step of the plan's Owner project.
 
+0.37.1: your promises weigh about what a product does, and press as their day
+nears. On 0.37.0's first evening every promise weighed at least 15 and no step of
+a product more than about 12, so they still came first: the pins you put first
+for the week ranked tenth, behind nine promises and decisions, four of them one
+KDP job (see [the analysis](analysis-0.37.0/ember-analysis-0.37.0.md)). A
+promise is worth 3 now and urgent only from two days before its day; one taken
+three times in a day without being kept weighs its worth alone until the day is
+over.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
