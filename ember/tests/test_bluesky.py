@@ -68,7 +68,7 @@ def picture(width: int = 1200, height: int = 1500) -> bytes:
 def listed(data_dir: Path) -> tuple[Any, FakeTransport]:
     """A dry-run agent with Bluesky on (the fake account) and one live listing in the fake shop."""
     fake = FakeTransport()
-    agent, _ = run(data_dir, fake, cycles=4, settings=POSTING)
+    agent, _ = run(data_dir, fake, cycles=4, settings=POSTING, brake=False)  # the fourth cycle's listing (test_etsy)
     request = rows(agent, "SELECT id FROM approvals WHERE executor = 'etsy_listing'")[0]["id"]
     assert owner(agent).decide(request, {"decision": "approve"}, "Owner").status == 200
     assert agent.execute_approved() == [(request, "active")]
@@ -508,7 +508,7 @@ def test_a_post_is_checked_before_it_reaches_the_owner(data_dir: Path) -> None:
     agent, _ = listed(data_dir)
     ctx = post_context(agent)
     shown = call(ctx, "bluesky_posts", {})
-    head = f"Ember's Bluesky account: @{FakeBluesky.HANDLE} (0 posted today, at most 2 a day)."  # 0.37.6: today's
+    head = f"Ember's Bluesky account: @{FakeBluesky.HANDLE} (0 posted today, at most 2 a day)."  # 0.37.7: today's
     assert shown.ok and f"{head}\nNo post of yours yet." == shown.text
     agent.roots()[0].write_bytes("shop/notes.pdf", b"%PDF-1.7 x")
     for args, message in (
@@ -709,7 +709,7 @@ def test_posts_are_read_for_the_plan_the_metrics_and_the_reach(data_dir: Path) -
     plan = next(r for r in list(fake.sent)[before:] if request_kind(r) == "plan")
     text = plan["messages"][0]["content"][0]["text"]
     assert f"\n== BLUESKY ==\nEmber's account: @{FakeBluesky.HANDLE} (3 followers; at most 2 posts a day).\n" in text
-    day = row["finished_at"][:10]  # 0.37.6: each by its request's number and day
+    day = row["finished_at"][:10]  # 0.37.7: each by its request's number and day
     assert f"- request #{request}, {day} (active): {WORDS[:60]} -> {etsy.listing_url(LISTING)}: 14 likes" in text
     work = next(r for r in list(fake.sent)[before:] if request_kind(r) == "work")
     assert {t["name"] for t in work["tools"]} >= tools.BLUESKY_TOOLS

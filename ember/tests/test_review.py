@@ -17,7 +17,7 @@ from app.economy import pricing
 from app.economy.metering import REVIEW, MeteredModel, rough_token_count
 from tests.economy_helpers import owner as owner_entry
 from tests.test_agent import rows
-from tests.test_loop_shapes import run
+from tests.test_loop_shapes import run, unbraked
 from tests.test_owner_loop import owner
 
 
@@ -174,7 +174,7 @@ def test_only_verdicts_on_listed_projects_count() -> None:
 
 
 def test_the_scorecard_holds_the_facts(data_dir: Path) -> None:
-    agent, _ = run(data_dir, FakeTransport(), cycles=3)
+    agent, _ = run(data_dir, FakeTransport(), cycles=3, brake=False)  # the fake's founder routine works on line #1
     pending = rows(agent, "SELECT id FROM approvals WHERE status = 'pending' ORDER BY id")
     assert pending, "the fake asks for an approval in its third cycle"
     rejection = {"decision": "reject", "comment": "Too pricey for a first try."}
@@ -227,9 +227,10 @@ def test_the_dry_run_agent_holds_what_its_review_stopped(data_dir: Path) -> None
     from tests.test_fixes_0300 import judged  # noqa: PLC0415
 
     fake = FakeTransport()
-    agent, _ = run(data_dir, fake, cycles=2)  # the fake started line #1 and works on it
+    agent, _ = run(data_dir, fake, cycles=2, brake=False)  # the fake started line #1 and works on it
     judged(agent, (1, "stop", "demand"))  # today's review says stop
-    agent.run_cycle("schedule")  # the plan tree's step is line #1's (its only product)
+    with unbraked():  # 0.37.6: its founder routine didn't write the demand note it was given: it would wait
+        agent.run_cycle("schedule")  # the plan tree's step is line #1's (its only product)
     # 0.35.0: only the owner closes or drops a product: the agent holds it, to work elsewhere
     assert rows(agent, "SELECT status FROM projects WHERE id = 1")[0]["status"] == "active"
     [product] = rows(agent, "SELECT hold_reason FROM plan_nodes WHERE level = 'product' AND project_id = 1")

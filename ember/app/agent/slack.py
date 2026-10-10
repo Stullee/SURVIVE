@@ -23,6 +23,12 @@ busy, whatever else waits on the owner.
 was promised to the owner: a venture cycle's sleep was never cut, and a cut one still kept 3 hours. The owner: "time is
 money", their daily cap is the only brake. Now any cycle whose plan had steps ready sleeps the owner's shortest sleep
 (min_sleep_minutes) at most: a venture cycle too.
+
+0.37.6: live on 2026-10-09 that cut every sleep to 30 minutes while the plan's heaviest step was one no cycle could
+advance (its pins waited for the owner): 21 cycles from midnight to 12:35, $5.88 of the $7 cap. The plan has a brake
+now (plan.py): a step a cycle took with nothing its check reads moving waits until that moves or the next day, and the
+cut counts only steps a cycle can advance (plan.busy): not one taken before with nothing moved since, nor the cycle's
+own step if it moved nothing.
 """
 
 from __future__ import annotations
@@ -32,7 +38,7 @@ WHY = "your plan has steps ready"  # why Ember's code cut the sleep, as the Syst
 
 def sleep(minutes: int | None, busy: bool, shortest: int, burn_mode: str) -> int | None:
     """The sleep a cycle that worked keeps: at most ``shortest`` (the owner's shortest sleep) while ``busy`` (its plan
-    had steps ready; not in maintenance or dormant)."""
+    had steps ready, 0.37.6: that a cycle can advance, plan.busy; not in maintenance or dormant)."""
     if minutes is None or not busy or burn_mode in ("maintenance", "dormant"):
         return minutes
     return min(minutes, shortest)

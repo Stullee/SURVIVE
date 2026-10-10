@@ -395,12 +395,17 @@ class CycleRunner:
     def _cut_sleep(self, end: CycleEnd, trigger: str) -> None:
         """0.18.0: no long sleep while work waits. 0.21.0: never an idle plan's (the agent chose to do nothing).
         0.35.1: any cycle whose plan had steps ready (plan.steer; a venture cycle too) sleeps the owner's shortest
-        sleep at most."""
+        sleep at most. 0.37.6: steps a cycle can advance (plan.busy): not one a cycle took with nothing it is checked
+        by moving since, nor this cycle's own step if it moved nothing (live on 2026-10-09 a step no cycle could
+        advance cut every sleep to 30 minutes until the daily cap was spent)."""
         if end.status != "completed" or trigger == "last_will":
             return
         mode_now = burn.peek(self.db, self.economy.life.evaluate()).mode
         shortest = self.settings.min_sleep_minutes
-        busy = self.steered is not None and bool(self.steered.pick.ranked)
+        busy = False
+        if self.steered is not None:
+            with self.db.connection() as conn:
+                busy = plan_tree.busy(conn, self.scope, self.steered, to_iso(self.clock.now()), end.cycle_id)
         kept = slack.sleep(end.sleep_minutes, busy, shortest, mode_now)
         if kept != end.sleep_minutes:  # 0.19.2: the agent's choice and words stay ("Ember chose" the cut)
             end.asked_minutes, end.sleep_minutes = end.sleep_minutes, kept
@@ -622,7 +627,7 @@ class CycleRunner:
             self.bluesky.handle() or "Ember's account",
             self.settings.bluesky_posts_per_day,
             website.address(self.settings),  # the owner's website, which a post may link
-            self.bluesky.followers(),  # 0.37.6: bluesky_posts says them
+            self.bluesky.followers(),  # 0.37.7: bluesky_posts says them
         )
         self.bluesky_on = True
 
@@ -801,7 +806,7 @@ class CycleRunner:
             if self.marketing_apart and kind == lines.ORDINARY:
                 # 0.35.0: a ready channel's account, posts and tools are a marketing cycle's; one waiting for the
                 # owner's setup still says so (live, the agent asked its owner for the same setup again and again).
-                # 0.37.6: Bluesky's numbers stay in one line, with bluesky_posts: an ordinary cycle judges the channel
+                # 0.37.7: Bluesky's numbers stay in one line, with bluesky_posts: an ordinary cycle judges the channel
                 # and answers the owner about it (live, it told them it couldn't report on their posts)
                 pins = "" if self.pinterest_on else pins
                 if self.bluesky_on and self.bluesky is not None:
@@ -1222,7 +1227,7 @@ class CycleRunner:
         elif self.pinterest is not None:
             waits.append(("Pinterest", _waiting("Pinterest", self.pinterest.status(), self._etsy_state())))
         if self.bluesky is not None and self.bluesky_on:
-            # 0.37.6: with its numbers, which the review judges the channel by
+            # 0.37.7: with its numbers, which the review judges the channel by
             followers = self.bluesky.followers()
             known = "" if followers is None else f"{followers} follower{'' if followers == 1 else 's'}, "
             ready.append(
