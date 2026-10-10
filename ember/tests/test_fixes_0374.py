@@ -1,4 +1,4 @@
-"""0.37.3: a spreadsheet's pictures show the buyer's file, and its Check line names what is wrong, not what is right.
+"""0.37.4: a spreadsheet's pictures show the buyer's file, and its Check line names what is wrong, not what is right.
 
 From the 0.37.0 analysis (sections 3.5, 4.6.1 and 4.6.2) and its reproductions (analysis-0.37.0/repro/products):
 

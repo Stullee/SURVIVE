@@ -488,12 +488,12 @@ agent's workspace:
   planners, worksheets, guides, and CV and letter templates. At most 40 pages.
 - **Spreadsheets** (`make_spreadsheet`): a JSON description becomes an Excel
   file with formats, dropdowns, formulas, totals, a chart and a *How to use*
-  sheet, plus a picture of each sheet, drawn since 0.37.3 from the file itself:
+  sheet, plus a picture of each sheet, drawn since 0.37.4 from the file itself:
   every number as Excel shows it once it has calculated the file. Formulas may
   only use common functions and cells of the same workbook: no links to other
   files or the web. Ember's code tells the agent where each sheet's data are and
   names a formula that leaves data out or (since 0.32.0) points at a title, a
-  header or an empty cell below the data. Since 0.37.3 it also names one that
+  header or an empty cell below the data. Since 0.37.4 it also names one that
   counts a total row or a header besides the data (`=SUM(C:C)` over a whole
   column adds the total row under the data again), on the formula's own sheet,
   over several columns and in a column's formula too; parts of the data that
@@ -547,7 +547,7 @@ agent's workspace:
 
 Pictures of a sheet (in `make_image` and the spreadsheets' own pictures) round
 as Excel does since 0.20.0, and a German workbook's (a cost statement's) are in
-German notation, 1.234,56 € and 31,97%. Since 0.37.3 both are worked out from
+German notation, 1.234,56 € and 31,97%. Since 0.37.4 both are worked out from
 the file by the same code, a number in the General format is shown as Excel
 shows it (1234567, not 1.23457e+06), and a date in its column's format, also
 when a formula works it out.
@@ -2557,7 +2557,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.37.3 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.37.4 (by /u/your name)`.
 
 ## Amazon KDP
 

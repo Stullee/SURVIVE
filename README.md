@@ -238,7 +238,7 @@ went ahead holding $0.62 with $3.10 left, cost $3.21, and Ember died at -$0.08
 without its last will. Now only the day limits what a run keeps back, and the
 balance counts all of it.
 
-0.37.3: a spreadsheet's pictures show the buyer's file, and its Check line names
+0.37.4: a spreadsheet's pictures show the buyer's file, and its Check line names
 what is wrong in it, not what is right. The pictures came from a second
 evaluator that read the spec: in the codebase analysis of 0.37.0 (findings 3.5,
 4.6.1 and 4.6.2), a summary's =SUM(Income!C:C) showed 3,570.50 € in its picture
