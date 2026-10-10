@@ -238,7 +238,7 @@ went ahead holding $0.62 with $3.10 left, cost $3.21, and Ember died at -$0.08
 without its last will. Now only the day limits what a run keeps back, and the
 balance counts all of it.
 
-0.37.3: near the bottom of the balance the research model's check can no longer
+0.37.4: near the bottom of the balance the research model's check can no longer
 cost more than is left above the last will's reserve. While a research model is
 checked, each research question is asked of it too: the same web search, but the
 guard kept back only its worst case and needed only that left. In a test, after a

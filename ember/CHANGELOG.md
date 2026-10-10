@@ -3,7 +3,7 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
-## 0.37.3
+## 0.37.4
 
 Near the bottom of your balance, the research model's check can no longer cost more than is left above your last
 will's reserve.

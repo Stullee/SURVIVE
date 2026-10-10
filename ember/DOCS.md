@@ -189,12 +189,12 @@ worker model, less one; otherwise research stays on the worker model. The
 System log says how the check came out, and **System → Models** shows where it
 stands. Each compared question costs one more research call (a cent or two with
 Haiku), counted as overhead. The money guard treats that call as research
-(0.37.3): it keeps back at least 1.5 times the costliest research call of the
+(0.37.4): it keeps back at least 1.5 times the costliest research call of the
 last 14 days on the research model, its check calls included, and needs 5
 times that left above the last will's reserve (see [Money](#money)); a question
 it can't pay for that way is compared with a later one, and the agent's own
 research goes on. Once the research model takes over, its research keeps back
-what its check calls cost too. Until 0.37.3 a check kept back only its worst
+what its check calls cost too. Until 0.37.4 a check kept back only its worst
 case, and needed only that left above the reserve: in a test, after a check
 that cost $0.45, the next went ahead with $2.93 left above the reserve, keeping
 back $0.49; as research it keeps back $0.675 and needs 5 times that.
@@ -2555,7 +2555,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.37.3 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.37.4 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -2806,13 +2806,13 @@ long a search result is), so for those the daily cap and the balance hold only
 up to what Ember keeps back for them (see [The workshop](#the-workshop);
 research keeps back at least 1.5 times the costliest research call of the last
 14 days on its model too, 0.21.0, the research model's check calls included,
-0.37.3). Near the bottom of the balance such a call could still cost more than
+0.37.4). Near the bottom of the balance such a call could still cost more than
 is left, and Ember would die below zero without its last will, your Anthropic
 account paying the rest: so a workshop or research call needs 5 times what it
 keeps back (or more, if one ever cost more than that many times its hold) left
 above the last will's reserve (0.21.0); a workshop run's hold counts in full,
 however little of the day is left (0.37.2), and the research model's check is
-judged as research (0.37.3, see [Research model](#choosing-models)). If a call
+judged as research (0.37.4, see [Research model](#choosing-models)). If a call
 ever costs more than its
 worst case, Ember scales up the estimates for that kind of call (planning, a
 work step, the reflection, research, ...) on that model, up to 8 times; the

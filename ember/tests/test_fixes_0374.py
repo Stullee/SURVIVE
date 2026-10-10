@@ -1,4 +1,4 @@
-"""0.37.3 (analysis 0.37.0, section 5, Money): the research model's check skipped the server-tool hold and the 5x rule.
+"""0.37.4 (analysis 0.37.0, section 5, Money): the research model's check skipped the server-tool hold and the 5x rule.
 
 While the owner's research model is checked (research_model, loop._research_model), each of the agent's research
 questions is asked of it too (loop._compare_research), with research's own request (prompts.research_request) but as a
@@ -59,7 +59,7 @@ def test_near_the_bottom_a_check_needs_five_times_its_hold_above_the_reserve(dat
     quote, hold = model.quote(CHECK, RESEARCH_CHECK), -(-cost * 3 // 2)  # $0.49 (raised), $0.675 (1.5 times $0.45)
     above = above_the_reserve(economy, (5 * quote + 5 * hold) // 2)
     assert 5 * quote <= above < 5 * hold  # the quote fits 5 times above the reserve, the hold doesn't
-    # until 0.37.3 the check was judged on its quote, once: the pre-check let it through and the guard sent it
+    # until 0.37.4 the check was judged on its quote, once: the pre-check let it through and the guard sent it
     assert model.affordable(CHECK, RESEARCH_CHECK, cycle)[0] is False
     held = re.escape(f"(${micros_to_usd(hold):.4f}), so it needs 5.0 times that left above the last will's reserve")
     with pytest.raises(CallRefused, match=f"a research_check call can cost more than it holds {held}"):
@@ -84,7 +84,7 @@ def test_near_the_bottom_the_agent_s_question_is_answered_and_its_check_waits(da
     runner, cycle_id, ctx = runner_and_cycle(agent)
     found = runner._research_fn(ctx)(QUESTION, None, cycle_id, None)
     assert found.ok and found.summary == f"research: {QUESTION}"
-    # until 0.37.3 the check was sent too, and its comparison booked
+    # until 0.37.4 the check was sent too, and its comparison booked
     calls = rows(agent, "SELECT purpose FROM llm_calls ORDER BY id")
     assert [c["purpose"] for c in calls] == [RESEARCH_CHECK, RESEARCH] and len(transport.sent) == 2
     assert rows(agent, "SELECT COUNT(*) AS n FROM research_checks")[0]["n"] == 0
