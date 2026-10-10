@@ -306,7 +306,7 @@ def test_only_printify_can_be_reached_and_only_with_a_token() -> None:
 def listed(data_dir: Path) -> tuple[Any, FakeTransport]:
     """A dry-run agent with Printify on (the fake account) and one live listing in the fake shop."""
     fake = FakeTransport()
-    agent, _ = run(data_dir, fake, cycles=4, settings=PRINTING)
+    agent, _ = run(data_dir, fake, cycles=4, settings=PRINTING, brake=False)  # the fourth cycle's listing (test_etsy)
     request = rows(agent, "SELECT id FROM approvals WHERE executor = 'etsy_listing'")[0]["id"]
     assert owner(agent).decide(request, {"decision": "approve"}, "Owner").status == 200
     assert agent.execute_approved() == [(request, "active")]

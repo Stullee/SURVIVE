@@ -3,6 +3,39 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.37.6
+
+Your plan has a brake: a step a cycle can't advance no longer takes every cycle, and a product whose request ended is
+proposed again.
+
+- Until now nothing noticed that a cycle took a step and nothing changed. On 10-09 one step whose pins waited for your
+  owner took cycle after cycle 30 minutes apart: 21 cycles by 12:35, $5.88 of the $7 cap, and the other products got
+  none. Now a step a cycle took without anything it is checked by moving waits until something moves, or until the
+  next day, when it gets one more try. What moves a step: the numbers its check counts (pins and posts live, files and
+  photos made, demand notes, the critic's verdict) and its own requests (one made, or decided by your owner, expired or
+  carried out). A promise, your owner's decision and a step you close yourself (plan_step done) move when their
+  obligation closes or one of their product's requests is decided, expires or is carried out; a promise and a step of
+  yours also with what its own cycle made for its product (a file, a picture, a demand note, a request). A venture's
+  step moves with its stage, its evidence, cases and the critic's answers, not with a note or a rescore alone (save
+  the numbers research found with evidence); any step moves with your owner's pin.
+- While steps of yours wait for tomorrow, YOUR STEP offers no new product: they are your plan's work still.
+- A step whose own requests are on their way, and are all its check still needs (two pins asked for or live), waits on
+  them by itself: on your owner while one waits for their decision, then while it is carried out. It takes none of
+  your two plan_step waits a day. YOUR PLAN's "No step ready" says what each waits on ("a change since a cycle took it
+  today", "an approved request being carried out").
+- Your sleep is cut to your owner's shortest only while a step you can advance is ready: not for your own step if you
+  moved nothing for it, nor for one whose last try moved nothing. So when a step is ready, do it in that cycle: make
+  the file, propose the request, close the promise (obligation_done), or say with plan_step what blocks it. A cycle
+  that only reads and plans leaves the step waiting until tomorrow.
+- A promise of pins, a Bluesky post or a blog post that names no product (your owner's project) is a marketing cycle's
+  step now, with that channel's tools: it was an ordinary cycle, which couldn't make a pin. A promise to report on a
+  channel ("Report the Bluesky reactions") is no channel's work: you tell it in a message, in an ordinary cycle.
+- A product whose listing request expired, was withdrawn, rejected or failed had no step ready again ("Propose the
+  listing" had closed on the first request), while "You approve it" said it waited on your owner. Now its stage gets
+  "Propose the listing again: request #N expired" (the product, the book likewise), done when you make a new request;
+  "You approve it" waits on that while no request waits for your owner. The same step asks for a product's first
+  listing once its files and photos are made.
+
 ## 0.37.5
 
 Your spreadsheets' pictures show the buyer's file, and the Check line names what is wrong in it, not what is right.

@@ -10022,6 +10022,9 @@
     turn: "a new product's turn (no product step is ready)",
     room: "waits until fewer ventures are researched or proposed",  // 0.37.0: an idea's triage
     moved: "its venture moved on: it closes at the next cycle",  // 0.37.0: backed, parked or killed since
+    // 0.37.6: the brake, and a step whose own requests are on their way
+    tried: "taken today, and nothing it is checked by moved: it waits for a change, or tomorrow",
+    approved: "its approved request is being carried out",
   };
   var PLAN_DECIDED = {
     pin: "you pinned it", promise: "a promise to you or your decision (first, until 0.36.0)",

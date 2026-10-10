@@ -1093,7 +1093,8 @@ def _agent(state: AppState, full: bool = True) -> str:
             ]
             out.append(
                 "-- plan tree: steps that wait (on the owner, a channel, an upgrade, a hold; 0.36.0: the Explore step"
-                " also on its date, the burn mode or an owner's message first, an empty READY)\n"
+                " also on its date, the burn mode or an owner's message first, an empty READY; 0.37.6: 'tried', taken"
+                " today with nothing moved, and 'approved', its approved requests being carried out)\n"
                 + _rows(waiting[:15], ["step", "line", "waiting", "title"])
             )
         except Exception as exc:  # noqa: BLE001 - the report goes on without it

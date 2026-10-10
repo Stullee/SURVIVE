@@ -22,6 +22,9 @@ turn); the plan sees it as YOUR STEP (``step_text``). The owner's decisions on a
 (``_decisions``), taken first like a promise due. 0.35.1: a promise is a step of its own, taken before the heaviest
 step and the ventures' turn until it is kept; one made without naming its product gets the one its words name.
 0.37.0: a promise and a decision are weighed like any step (``candidates``); 0.37.1: urgent only near their day.
+0.37.6: one brake for every step: a step a cycle took without what its check reads moving waits until that moves or
+the next day, one whose own requests are on their way waits on them (``candidates``, ``mark``), and a stage that still
+needs a request of the owner's gets a step to propose it again (``_again``).
 """
 
 from __future__ import annotations
@@ -36,7 +39,7 @@ from typing import Any
 
 from ..economy.clock import from_iso, to_iso
 from . import critic, desk, metrics, obligations, policy, reach, roadmap, templates, ventures, weights
-from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope
+from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope, canonical, sha256
 
 SEQUENTIAL = (
     "research",
@@ -71,7 +74,26 @@ PROMISE_CHANNELS = (
     ("bluesky", re.compile(r"\bbluesky\b", re.IGNORECASE)),
     ("blog", re.compile(r"\bblog", re.IGNORECASE)),
 )
+REPORT = re.compile(r"\breport", re.IGNORECASE)  # 0.37.6: a promise to report on a channel names no channel's work
 ALTERNATIVES = 3  # the other steps YOUR STEP names
+# 0.37.6: the brake. Live on 2026-10-09 a step no cycle could advance took every cycle 30 minutes apart until the daily
+# cap stopped it ($5.88 of $7 by 12:35): a step stopped being ready only when Ember said it waits (two a day), the owner
+# held its product or its channel was off. Now one a cycle took without what its check reads moving (``mark``) waits
+# until that moves or the owner's next day ('tried'), and one whose own requests are on their way waits on them
+# ('owner': the owner's decision; 'approved': carrying them out), without one of Ember's waits.
+FINISHED = ("completed", "idle")  # the cycles whose picks count: they ran their plan (a failed or refused one didn't)
+IN_FLIGHT = ("pending", "approved", "approved_with_changes")  # a request not decided yet, or not carried out yet
+CHECK_EXECUTORS = {  # the requests a check counts, by their executor (a request check names its own)
+    "pin": ("pinterest_pin",),
+    "post": ("bluesky_post",),
+    "blog": ("site_post",),
+    "live": ("etsy_listing", "printify_product"),
+    "critic": ("etsy_edit",),
+}
+CHANNEL_EXECUTORS = {"pinterest": "pinterest_pin", "bluesky": "bluesky_post", "blog": "site_post"}
+# the tools whose results a product's checks read (its files, pictures, KDP package): with a demand note or a request,
+# what the cycle that took a promise, a decision or a step Ember says is done made for its product (_made_in)
+MADE_BY = ("make_document", "make_spreadsheet", "make_cost_statement", "make_image", "resize_image", "propose_kdp_book")
 # 0.35.0: a product's decide-by dates once it has a live listing (in place of the listing test's bars, gates.py until
 # 0.34.0): from the day its first listing was seen live. Day 7: 10 views, or its marketing is urgent for a week.
 # Day 14: 30 views and 2 favorites; missed with less reach than reach.ENOUGH, one more try by day 28 (its marketing
@@ -388,6 +410,24 @@ class Facts:
     _funnels: dict[int, reach.Funnel] | None = None
     _verdicts: dict[int, str] = field(default_factory=dict)
     _lowest: dict[int, int | None] = field(default_factory=dict)
+    _requests: list[dict[str, Any]] | None = None
+
+    def requests(self) -> list[dict[str, Any]]:
+        """0.37.6: every request to the owner, oldest first, with the product line it carries on
+        (ventures.request_line: the line of the listing it is about, else its own or its cycle's)."""
+        if self._requests is None:
+            where, params = self.scope.where()
+            self._requests = [
+                {
+                    "id": int(r["id"]),
+                    "line": ventures.request_line(self.conn, self.scope, r),
+                    "executor": r["executor"],
+                    "status": str(r["status"]),
+                    "created_at": str(r["created_at"]),
+                }
+                for r in self.conn.execute(f"SELECT * FROM approvals WHERE {where} ORDER BY id", params).fetchall()
+            ]
+        return self._requests
 
     def funnel(self, project_id: int) -> reach.Funnel | None:
         if self._funnels is None:
@@ -447,14 +487,14 @@ def passes(facts: Facts, project_id: int | None, kind: str | None, spec: Mapping
         ).fetchall()
         clean = sum(1 for r in made if not _CHECK_LINE.search(r["result"] or ""))
         return clean >= int(spec.get("count", 1))
-    if kind == "request":
+    if kind == "request":  # 0.37.6: ``since``, one made since then (a step proposing it again, _again)
         where, params = scope.where("a")
         statuses = [
             r[0]
             for r in conn.execute(
                 "SELECT a.status FROM approvals a LEFT JOIN cycles y ON y.id = a.cycle_id"
-                f" WHERE {where} AND COALESCE(a.project_id, y.project_id) = ? AND a.executor = ?",
-                (*params, project_id, spec.get("executor")),
+                f" WHERE {where} AND COALESCE(a.project_id, y.project_id) = ? AND a.executor = ? AND a.created_at >= ?",
+                (*params, project_id, spec.get("executor"), str(spec.get("since") or "")),
             )
         ]
         wanted = ("done",) if spec.get("status") == "done" else REQUESTED
@@ -526,6 +566,7 @@ def keep(conn: sqlite3.Connection, scope: AgentScope, now: str, today: date, cha
         said += closed if product["id"] not in laid else []  # a new product's stages already done: no news
         said += _promises(facts, product, now)
         said += _decisions(facts, product, decided.get(int(product["project_id"]), []), now)
+        said += _again(facts, product, now)  # 0.37.6: a request its stage still needs, proposed again
         said += _recurring(facts, product, now, today, channels)
         said += _decide_by(facts, product, now, today)
     said += _ventures(conn, scope, now)  # 0.37.0: each venture a node, its next decision a step
@@ -695,7 +736,13 @@ def venture_worth(conn: sqlite3.Connection, v: Mapping[str, Any] | None) -> floa
 
 
 def _venture_candidates(
-    conn: sqlite3.Connection, scope: AgentScope, now: str, today: date, exploring: bool, turn: bool = False
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    now: str,
+    today: date,
+    exploring: bool,
+    turn: bool = False,
+    picks: Mapping[int, Any] | None = None,
 ) -> list[Candidate]:
     """The ventures' steps as the scorer sees them: each worth the owner's (the venture's, else all the ventures'),
     else what its case expects (venture_worth); urgent when the owner wished for it (weights.ASKED) or Ember's code
@@ -704,10 +751,14 @@ def _venture_candidates(
     burn mode without venture cycles, or what the owner waits for first: ``exploring`` false), when a new product has
     its turn ('turn': no product step is ready and the cycle before explored; not the step the owner pinned), an
     idea while ventures.MAX_ACTIVE are researched or proposed ('room'), and once its venture was backed, parked or
-    killed until the next cycle's keeper closes it ('moved')."""
+    killed until the next cycle's keeper closes it ('moved'). 0.37.6: and once a cycle took it without its venture's
+    records moving (``mark``: its stage, evidence, cases, the critic's answers; a brainstorm's new ideas), until
+    they move or the next day ('tried')."""
     top = ventures_node(conn, scope)
     if top is None:
         return []
+    facts = Facts(conn, scope, now)
+    picks = _last_picks(conn, scope) if picks is None else picks
     rows = {int(v["id"]): v for v in ventures.all_ventures(conn, scope)}
     room = sum(1 for v in rows.values() if v["stage"] in ventures.EXPLORED) < ventures.MAX_ACTIVE
     taken = _last_taken(conn, scope)
@@ -736,6 +787,9 @@ def _venture_candidates(
             reason = "room"
         else:
             reason = None
+        stale = _stale(facts, step, picks)
+        if reason is None and stale == today.isoformat():
+            reason = "tried"
         if parent is not None and parent["owner_worth"] is not None:
             worth = float(parent["owner_worth"])
         elif top["owner_worth"] is not None:
@@ -760,6 +814,7 @@ def _venture_candidates(
                 ),
                 "venture",
                 reason,
+                stale is not None,
             )
         )
     return found
@@ -1025,7 +1080,9 @@ def _owner_owed(conn: sqlite3.Connection, scope: AgentScope, now: str) -> list[s
     """0.37.0: a promise to the owner, or their decision, of no product line is a step of the Owner project, weighed
     like any step (until 0.36.0 only an obligation in OBLIGATIONS, its pressing ones coming first by a rule of their
     own): done once its obligation is closed. Laid out after a promise's words could name its product
-    (_link_promises), and never moved there later (a node's place is fixed)."""
+    (_link_promises), and never moved there later (a node's place is fixed). 0.37.6: a promise of pins, a Bluesky
+    post or a blog post has its channel, as one of a product has, so its cycle is a marketing cycle with that channel's
+    tools (an ordinary one couldn't keep it, and took every cycle); one laid out before gets it at the next keep."""
     where, params = scope.where()
     said: list[str] = []
     owed = [
@@ -1049,6 +1106,7 @@ def _owner_owed(conn: sqlite3.Connection, scope: AgentScope, now: str) -> list[s
                 parent_id=top,
                 level="step",
                 kind="promise" if promise else "fix",
+                channel=promise_channel(what) if promise else None,
                 title=(f"Keep promise #{row['id']}: {what}" if promise else f"Obligation #{row['id']}: {what}")[:160],
                 check_kind="obligation",
                 check_spec=json.dumps({"id": row["id"]}),
@@ -1064,25 +1122,32 @@ def _owner_owed(conn: sqlite3.Connection, scope: AgentScope, now: str) -> list[s
             if _holds(facts, step):
                 kept = "the promise was kept" if step["kind"] == "promise" else "the obligation was closed"
                 _close(conn, step["id"], now, "done", f"Ember's code: {kept}")
+            elif step["kind"] == "promise" and step["channel"] is None and promise_channel(str(step["title"])):
+                _update(conn, step["id"], now, channel=promise_channel(str(step["title"])))
     return said
 
 
 def _owner_candidates(
-    conn: sqlite3.Connection,
-    scope: AgentScope,
-    now: str,
+    facts: Facts,
     today: date,
     channels: Mapping[str, bool],
     lately: Mapping[int, int],
+    picks: Mapping[int, Any],
 ) -> list[Candidate]:
     """0.37.0: the Owner project's steps as the scorer sees them: worth weights.PROMISE_WORTH, urgent as their day
-    nears (_owed_urgency)."""
+    nears (_owed_urgency). 0.37.6: one waits once a cycle took it without its obligation closing or, for a promise of a
+    channel's work, the channel's requests made since it was promised moving ('tried', ``mark``), until they do or the
+    next day."""
+    conn, scope, now = facts.conn, facts.scope, facts.now
     top = nodes(conn, scope, "level = 'project' AND platform = 'owner'")
     if not top:
         return []
     found = []
     for step in _open_steps(conn, scope, int(top[0]["id"])):
         reason = _waiting(step, channels)
+        stale = _stale(facts, step, picks)
+        if reason is None and stale == today.isoformat():
+            reason = "tried"
         found.append(
             Candidate(
                 weights.Step(
@@ -1098,13 +1163,19 @@ def _owner_candidates(
                 ),
                 "owner",
                 reason,
+                stale is not None,
             )
         )
     return found
 
 
 def promise_channel(what: str) -> str | None:
-    """0.35.1: the channel a promise's words name (PROMISE_CHANNELS), None for none."""
+    """0.35.1: the channel a promise's words name (PROMISE_CHANNELS), None for none. 0.37.6: none for a report ("Report
+    the Bluesky reactions of the week"): a report is told in a message, not made with a channel's tools (live on
+    2026-10-09, six of the nine promises open were reports; an Owner promise of a channel's work has its channel
+    now)."""
+    if REPORT.search(what):
+        return None
     return next((channel for channel, words in PROMISE_CHANNELS if words.search(what)), None)
 
 
@@ -1171,6 +1242,82 @@ def _decisions(facts: Facts, product: Mapping[str, Any], decided: list[tuple[Any
         change(conn, scope, step, None, "code", "add", f"your owner's decision: obligation #{row['id']}", now)
         said.append(f"Plan tree: obligation #{row['id']} (a decision) is a step of product #{product['id']}.")
     return said
+
+
+def _again(facts: Facts, product: Mapping[str, Any], now: str) -> list[str]:
+    """0.37.6: a request to the owner that a product's stage still needs, proposed again by a step of Ember's code's.
+    Once the stage has no step of Ember's open, and none of the kinds of request its check or its steps need is
+    pending, approved or carried out for the product, it gets one: "Propose ... again" when an earlier one expired, was
+    withdrawn, rejected or failed (the step that proposed it had closed on it, and closed is final: in the analysis of
+    0.37.0 the product never had a ready step again, and "You approve it" waited on the owner with nothing waiting
+    for them), else the template's step that proposes it (the create stage's check needs the listing proposed, its
+    files and photos made). Its check: a request made since then. One at a time."""
+    conn, scope = facts.conn, facts.scope
+    stage = current_stage(conn, scope, product["id"])
+    if stage is None or stage["stage"] == "maintain":
+        return []
+    steps = [s for s in _steps(conn, scope, stage["id"]) if s["status"] != "dropped"]
+    if any(s["status"] == "open" and s["obligation_id"] is None and s["kind"] != templates.OWNER_KIND for s in steps):
+        return []  # a step of Ember's to take
+    line = int(product["project_id"])
+    needed = [*_asks(stage["check_kind"], _spec(stage)), *(e for s in steps for e in _asks(s["check_kind"], _spec(s)))]
+    for executor in dict.fromkeys(needed):
+        if passes(facts, line, "request", {"executor": executor}):
+            continue  # one is on its way, or carried out
+        where, params = scope.where("a")
+        ended = conn.execute(
+            "SELECT a.id, a.status FROM approvals a LEFT JOIN cycles y ON y.id = a.cycle_id"
+            f" WHERE {where} AND COALESCE(a.project_id, y.project_id) = ? AND a.executor = ?"
+            " ORDER BY a.id DESC LIMIT 1",
+            (*params, line, executor),
+        ).fetchone()
+        title = _proposes(product, executor)
+        if ended is not None:
+            title = f"{title} again: request #{ended['id']} {ended['status']}"
+        seq = next((int(s["seq"]) for s in steps if executor in _asks(s["check_kind"], _spec(s))), None)
+        if seq is None:
+            seq = max((int(s["seq"]) for s in steps if s["obligation_id"] is None), default=-1) + 1
+        step = _insert(
+            conn,
+            scope,
+            now,
+            parent_id=stage["id"],
+            level="step",
+            project_id=line,
+            template=f"propose/{executor}"[:80],
+            stage=stage["stage"],
+            kind="ship",
+            title=_cut(title, 160),
+            check_kind="request",
+            check_spec=json.dumps({"executor": executor, "since": now}),
+            seq=seq,
+            source="code",
+        )
+        why = f"request #{ended['id']} {ended['status']}" if ended is not None else "its stage needs it proposed"
+        change(conn, scope, step, None, "code", "add", f"{why}: none waits for your owner", now)
+        return [f"Plan tree: line #{line}'s {stage['stage']} stage needs a request to your owner: {_quoted(title)}."]
+    return []
+
+
+def _asks(kind: str | None, spec: Mapping[str, Any]) -> tuple[str, ...]:
+    """0.37.6: the executors whose request a check needs made (a request check, or one of an any)."""
+    if kind == "any":
+        return tuple(e for s in spec.get("of", ()) for e in _asks(s.get("check"), s))
+    return (str(spec["executor"]),) if kind == "request" and spec.get("executor") else ()
+
+
+def _proposes(product: Mapping[str, Any], executor: str) -> str:
+    """The title of the step of a product's template that proposes a request by ``executor`` ("Propose the listing")."""
+    template = templates.by_key(product["template"])
+    return next(
+        (
+            step.title
+            for stage in template.stages
+            for step in stage.steps
+            if step.check == "request" and step.spec.get("executor") == executor and step.kind != templates.OWNER_KIND
+        ),
+        "Propose it to your owner",
+    )
 
 
 def change(
@@ -1589,7 +1736,11 @@ class Candidate:
 
     step: weights.Step
     stage: str
-    waiting: str | None  # why it can't be taken now ('owner', 'channel', 'upgrade', 'step', 'hold'), None: ready
+    # why it can't be taken now ('owner', 'channel', 'upgrade', 'step', 'hold'; 0.37.6 'approved', 'tried'), None: ready
+    waiting: str | None
+    # 0.37.6: a cycle took it, and nothing its check reads moved since (it waits 'tried' while that was today; ready
+    # again the next day for a try, it doesn't cut a cycle's sleep: busy)
+    tried: bool = False
 
 
 def _waiting(row: Mapping[str, Any], channels: Mapping[str, bool]) -> str | None:
@@ -1676,14 +1827,23 @@ def candidates(
     closed line, stops these two. 0.36.0: and the ventures' steps (0.37.0: each venture's; ``exploring``: whether this
     cycle may explore; ``before``: the cycle it is for, None the next), which take turns with a new product while no
     product step is ready (a new install's first cycles: live until 0.35.3 the day's first cycle was an ordinary one,
-    which started a product)."""
+    which started a product).
+
+    0.37.6, the brake, one rule for every step: one a cycle took without what its check reads moving (``mark``) waits
+    until that moves or the owner's next day ('tried'); a step of Ember's whose own requests are on their way, and all
+    its check still needs, waits on them ('owner' while one waits for the owner's decision, 'approved' while they are
+    carried out), without one of Ember's waits; an owner's step with nothing for them to decide waits on the step of
+    Ember's before it ('step': in the analysis of 0.37.0, "You approve it" waited on the owner while no request
+    did)."""
     facts = Facts(conn, scope, now)
     factors = _channel_factors(conn, scope, now)
     missed = _missed(conn, scope, today)
     worked = _worked(conn, scope)
     lately = _taken_counts(conn, scope, to_iso(from_iso(now) - timedelta(hours=OBLIGATION_HOURS)))
-    asked = _asked(conn, scope)
+    asked = [(r["line"], r["created_at"]) for r in facts.requests() if r["status"] == "pending"]
     promised_at = _promised_at(conn, scope)
+    picks = _last_picks(conn, scope)
+    day = today.isoformat()
     found: list[Candidate] = []
     for product in nodes(conn, scope, "level = 'product' AND status = 'open'"):
         pid = int(product["project_id"])
@@ -1714,19 +1874,25 @@ def candidates(
         work = [(stage, step) for stage, step in rows if step["obligation_id"] is None]
         steps: dict[int, weights.Step] = {}
         reasons: dict[int, str | None] = {}
+        stale: dict[int, str | None] = {}
         first_taken = False
         for stage, step in work:
             sequential = stage["stage"] in SEQUENTIAL
             later = stage["id"] != current["id"] and not (
                 stage["stage"] == "maintain" and (current["stage"] == "launch" or live)
             )
+            stale[step["id"]] = _stale(facts, step, picks)
             reason: str | None
             if stopped or held:
                 reason = "hold"
             elif later or (sequential and first_taken):
                 reason = "step"
+            elif step["kind"] == templates.OWNER_KIND:
+                reason = _owners(facts, step, pid)  # 0.37.6: theirs while something waits for them
             else:
-                reason = _waiting(step, channels)
+                reason = _waiting(step, channels) or _requested(facts, step, pid)
+                if reason is None and stale[step["id"]] == day:
+                    reason = "tried"
             if sequential and stage["id"] == current["id"] and reason is None:
                 first_taken = True
             urgency = 0.0
@@ -1761,6 +1927,7 @@ def candidates(
                     weights.Step(**{**_fields(steps[step["id"]]), "waiting": waiting}),
                     str(stage["stage"]),
                     reasons[step["id"]],
+                    stale[step["id"]] is not None,
                 )
             )
         for stage, step in owed:
@@ -1769,6 +1936,9 @@ def candidates(
             made = promised_at.get(int(step["obligation_id"]))
             if reason is None and promise and made and any(line == pid and at > made for line, at in asked):
                 reason = "owner"  # a request for it waits on the owner's decision
+            tried = _stale(facts, step, picks)
+            if reason is None and tried == day:
+                reason = "tried"
             since = max(filter(None, (step["ready_since"], worked.get(pid))), default=None)
             found.append(
                 Candidate(
@@ -1784,11 +1954,14 @@ def candidates(
                     ),
                     str(stage["stage"]),
                     reason,
+                    tried is not None,
                 )
             )
-    found += _owner_candidates(conn, scope, now, today, channels, lately)  # 0.37.0: what is owed of no product
-    turn = exploring and not any(c.waiting is None for c in found) and _ventured_last(conn, scope, before)
-    return found + _venture_candidates(conn, scope, now, today, exploring, turn)  # 0.37.0: and the ventures' steps
+    found += _owner_candidates(facts, today, channels, lately, picks)  # 0.37.0: what is owed of no product
+    # 0.37.6: a step that waits for tomorrow since a cycle tried it is work of Ember's still: no new product's turn
+    turn = exploring and not any(c.waiting in (None, "tried") for c in found) and _ventured_last(conn, scope, before)
+    # 0.37.0: and the ventures' steps
+    return found + _venture_candidates(conn, scope, now, today, exploring, turn, picks)
 
 
 def _taken_counts(conn: sqlite3.Connection, scope: AgentScope, since: str) -> dict[int, int]:
@@ -1805,15 +1978,6 @@ def _taken_counts(conn: sqlite3.Connection, scope: AgentScope, since: str) -> di
     }
 
 
-def _asked(conn: sqlite3.Connection, scope: AgentScope) -> list[tuple[int | None, str]]:
-    """0.35.1: the requests waiting on the owner's decision, each with its product line and when it was made."""
-    where, params = scope.where()
-    return [
-        (ventures.request_line(conn, scope, r), str(r["created_at"]))
-        for r in conn.execute(f"SELECT * FROM approvals WHERE {where} AND status = 'pending'", params).fetchall()
-    ]
-
-
 def _promised_at(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, str]:
     """0.35.1: when each open promise was made."""
     where, params = scope.where()
@@ -1823,6 +1987,246 @@ def _promised_at(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, str]:
             f"SELECT id, created_at FROM obligations WHERE {where} AND kind = 'promise' AND status = 'open'", params
         )
     }
+
+
+# --- the brake (0.37.6) ---
+
+
+def _last_picks(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, sqlite3.Row]:
+    """Each step's latest pick by a cycle that ran its plan (FINISHED: a cycle that failed, was refused or still runs
+    didn't get to work on it), with what its check read then (``mark``) and the owner's day it was taken on."""
+    where, params = scope.where("k")
+    found: dict[int, sqlite3.Row] = {}
+    for r in conn.execute(
+        "SELECT k.node_id, k.cycle_id, k.mark, k.day FROM plan_picks k JOIN cycles c ON c.id = k.cycle_id"
+        f" WHERE {where} AND k.node_id IS NOT NULL AND c.status IN {FINISHED} ORDER BY k.id",
+        params,
+    ):
+        found[int(r["node_id"])] = r
+    return found
+
+
+def _stale(facts: Facts, row: Mapping[str, Any], picks: Mapping[int, Any]) -> str | None:
+    """The owner's day a cycle last took a step on, while nothing moved for it since (``mark``; a promise's or a step's
+    Ember says is done: and that cycle made nothing for its product, ``_made_in``): it waits 'tried' while that day is
+    today. None when no cycle took it (since 0.37.6) or something moved."""
+    pick = picks.get(int(row["id"]))
+    if pick is None or not pick["mark"] or mark(facts, row) != pick["mark"]:
+        return None
+    return None if _made_in(facts.conn, int(pick["cycle_id"]), row) else str(pick["day"] or "")
+
+
+COUNT_NOTHING = (None, "agent", "obligation")  # checks that count nothing of their own before they pass
+
+
+def mark(facts: Facts, row: Mapping[str, Any]) -> str:
+    """What a step's check reads now, as a short digest, kept with each pick (plan_picks.mark): something moved for the
+    step once this changed. The numbers its check counts and its own requests with their states (a request made,
+    decided, expired or carried out); for a promise, a decision or a step Ember says is done, which count nothing of
+    their own, their obligation and what became of their product's requests (the owner's decisions: one made since
+    doesn't move them; what the cycle that took a promise or Ember's step made for its product does, ``_made_in``), and
+    for one of no product what became of the requests of its channel made since it was promised; for a venture's step
+    its venture's records (stage, evidence, cases, the critic's answers; not a note or a rescore), for a brainstorm
+    the ideas; and the owner's word on the step (a pin since)."""
+    conn = facts.conn
+    line = row["project_id"]
+    kind, spec = row["check_kind"], _spec(row)
+    read: Any
+    if row["template"] in VENTURE_TEMPLATES:
+        read = _venture_read(conn, facts.scope, row)
+    elif kind in COUNT_NOTHING:
+        owed = None
+        if kind == "obligation":
+            owed = conn.execute("SELECT status, created_at FROM obligations WHERE id = ?", (spec.get("id"),)).fetchone()
+        own: Any = None
+        if line is not None:
+            own = _own(facts, int(line), None)
+        elif owed is not None and row["channel"] in CHANNEL_EXECUTORS:
+            own = _own(facts, None, (CHANNEL_EXECUTORS[str(row["channel"])],), since=str(owed["created_at"]))
+        decided = [r for r in own or () if r[1] != "pending"]
+        read = [owed["status"] if owed is not None else None, decided]
+    else:
+        read = _check_read(facts, int(line), kind, spec) if line is not None else None
+    words = conn.execute("SELECT COUNT(*) FROM plan_words WHERE node_id = ?", (row["id"],)).fetchone()[0]
+    return sha256(canonical([words, read]))[:16]
+
+
+def _made_in(conn: sqlite3.Connection, cycle_id: int, row: Mapping[str, Any]) -> bool:
+    """Whether the cycle that took a promise of a product or a step Ember says is done (checks that count nothing of
+    their own before they pass: work toward them can take several cycles) made something for its product that its
+    checks read: a file, a picture or a KDP package, a demand note, a request to the owner. Work on the product in
+    other cycles doesn't move them (those take the product's own steps), and an owner's decision moves only once it is
+    closed or something became of its product's requests (in a simulated week of dry run, decisions the fake model
+    never closed were taken again after each request a cycle made)."""
+    if row["check_kind"] not in (None, "agent") and row["kind"] != "promise":
+        return False
+    if row["project_id"] is None or row["template"] in VENTURE_TEMPLATES:
+        return False
+    marks = ", ".join("?" for _ in MADE_BY)
+    made = conn.execute(
+        f"SELECT 1 FROM tool_calls WHERE cycle_id = ? AND status = 'ok' AND tool IN ({marks}) LIMIT 1",
+        (cycle_id, *MADE_BY),
+    ).fetchone()
+    noted = conn.execute(
+        "SELECT 1 FROM demand_notes WHERE cycle_id = ? AND project_id = ? LIMIT 1", (cycle_id, row["project_id"])
+    ).fetchone()
+    asked = conn.execute("SELECT 1 FROM approvals WHERE cycle_id = ? LIMIT 1", (cycle_id,)).fetchone()
+    return made is not None or noted is not None or asked is not None
+
+
+def _check_read(facts: Facts, line: int, kind: str, spec: Mapping[str, Any]) -> Any:
+    """What a check counts for a product, with its own requests (``mark``)."""
+    if kind == "any":
+        return [_check_read(facts, line, str(s.get("check")), s) for s in spec.get("of", ())]
+    own = _own(facts, line, _executors(kind, spec))
+    if kind in ("pin", "post", "blog", "live"):
+        return [_have(facts, line, kind), own]
+    if kind == "critic":
+        return [_newest_check(facts, line), own]
+    if kind == "demand":
+        return _demand_notes(facts, line)
+    if kind in ("built", "kdp_check"):
+        tools = ("propose_kdp_book",) if kind == "kdp_check" else tuple(str(t) for t in spec.get("tools", ()))
+        return _made(facts, line, tools)
+    return own
+
+
+def _venture_read(conn: sqlite3.Connection, scope: AgentScope, row: Mapping[str, Any]) -> Any:
+    """A venture step's venture's records (``mark``): its stage, its evidence (the numbers research found, graded by
+    Ember's code), business cases and the critic's answers; not a note or a rescore alone (in a simulated week of dry
+    run, the fake model's repeated research saved a note and new scores every cycle: 183 of 220 cycles). A brainstorm's,
+    the ideas."""
+    venture = venture_of(conn, scope, int(row["id"]))
+    if venture is None:
+        where, params = scope.where()
+        return list(conn.execute(f"SELECT COUNT(*), MAX(id) FROM ventures WHERE {where}", params).fetchone())
+    v = conn.execute("SELECT stage FROM ventures WHERE id = ?", (venture,)).fetchone()
+    return [
+        v["stage"] if v is not None else None,
+        *(
+            conn.execute(f"SELECT COUNT(*) FROM {table} WHERE venture_id = ?", (venture,)).fetchone()[0]
+            for table in ("evidence", "venture_cases", "venture_critiques")
+        ),
+    ]
+
+
+def _own(
+    facts: Facts, line: int | None, executors: tuple[str, ...] | None, since: str | None = None
+) -> list[list[Any]]:
+    """A product line's requests (None: every line's) by these executors (None: any), made since ``since``: [id,
+    status], oldest first."""
+    return [
+        [r["id"], r["status"]]
+        for r in facts.requests()
+        if (line is None or r["line"] == line)
+        and (executors is None or r["executor"] in executors)
+        and (since is None or r["created_at"] >= since)
+    ]
+
+
+def _made(facts: Facts, line: int, tools: tuple[str, ...]) -> int:
+    """The calls of these tools that worked in a product's cycles (a check-line file counts: it moved)."""
+    if not tools:
+        return 0
+    marks = ", ".join("?" for _ in tools)
+    return int(
+        facts.conn.execute(
+            "SELECT COUNT(*) FROM tool_calls t JOIN cycles c ON c.id = t.cycle_id WHERE c.project_id = ?"
+            f" AND c.session = ? AND c.simulated = ? AND t.tool IN ({marks}) AND t.status = 'ok'",
+            (line, facts.scope.session, 1 if facts.scope.simulated else 0, *tools),
+        ).fetchone()[0]
+    )
+
+
+def _demand_notes(facts: Facts, line: int) -> list[Any]:
+    where, params = facts.scope.where()
+    return list(
+        facts.conn.execute(
+            f"SELECT COUNT(*), MAX(id) FROM demand_notes WHERE {where} AND project_id = ?", (*params, line)
+        ).fetchone()
+    )
+
+
+def _newest_check(facts: Facts, line: int) -> int | None:
+    where, params = facts.scope.where()
+    return facts.conn.execute(
+        f"SELECT MAX(id) FROM quality_checks WHERE {where} AND project_id = ?", (*params, line)
+    ).fetchone()[0]
+
+
+def _have(facts: Facts, line: int, kind: str) -> int:
+    """How many of what a counted check needs a product has: its live listings, or the pins, Bluesky posts and blog
+    posts live that link one of them."""
+    if kind == "live":
+        return facts.live(line)
+    funnel = facts.funnel(line)
+    return 0 if funnel is None else {"pin": funnel.pins, "post": funnel.bluesky, "blog": funnel.posts}[kind]
+
+
+def _executors(kind: str | None, spec: Mapping[str, Any]) -> tuple[str, ...]:
+    """The executors of the requests a check counts (CHECK_EXECUTORS; a request check names its own)."""
+    if kind == "any":
+        return tuple(dict.fromkeys(e for s in spec.get("of", ()) for e in _executors(s.get("check"), s)))
+    if kind == "request":
+        return (str(spec["executor"]),) if spec.get("executor") else ()
+    return CHECK_EXECUTORS.get(kind or "", ())
+
+
+def _requested(facts: Facts, row: Mapping[str, Any], line: int) -> str | None:
+    """What a step of Ember's waits on while its own requests are on their way and they are all its check still needs
+    (two pins: live or asked for): 'owner' while one waits for the owner's decision, 'approved' while the approved
+    ones are carried out (by Ember's code, or the owner's own hand). None while it needs more than is asked, and for a
+    check a request made passes (Ember's code closes it)."""
+    return _flying(facts, line, row["check_kind"], _spec(row))
+
+
+def _flying(facts: Facts, line: int, kind: str | None, spec: Mapping[str, Any]) -> str | None:
+    if kind == "any":
+        return next((w for s in spec.get("of", ()) if (w := _flying(facts, line, s.get("check"), s))), None)
+    if kind == "request" and spec.get("status") != "done":
+        return None
+    executors = _executors(kind, spec)
+    mine = [
+        r for r in facts.requests() if r["line"] == line and r["executor"] in executors and r["status"] in IN_FLIGHT
+    ]
+    if not mine:
+        return None
+    if kind in ("pin", "post", "blog", "live") and _have(facts, line, kind) + len(mine) < int(spec.get("count", 1)):
+        return None  # more to ask for
+    return "owner" if any(r["status"] == "pending" for r in mine) else "approved"
+
+
+def _owners(facts: Facts, row: Mapping[str, Any], line: int | None) -> str:
+    """What an owner's step waits on: the owner ('owner'), while one of the requests its check reads is on its way or
+    it reads none (keep or drop a product, back a venture); else the step of Ember's before it ('step'): "You approve
+    it, and it goes live" waits for a listing proposed again (live, it waited on the owner while no request did)."""
+    executors = _executors(row["check_kind"], _spec(row))
+    if not executors or line is None:
+        return "owner"
+    flying = any(
+        r["line"] == line and r["executor"] in executors and r["status"] in IN_FLIGHT for r in facts.requests()
+    )
+    return "owner" if flying else "step"
+
+
+def busy(conn: sqlite3.Connection, scope: AgentScope, steered: Steer, now: str, cycle_id: int | None = None) -> bool:
+    """Whether a cycle's plan had work worth the owner's shortest sleep (slack.sleep): a step ready when it began that a
+    cycle can advance. The cycle's own step (``cycle_id``: the cycle) counts only if something moved for it during the
+    cycle (otherwise it waits now); another only if something moved since a cycle last took it, or none did (ready
+    again the next day, a step that moved nothing gets its try without cutting a sleep). Live on 2026-10-09, a step no
+    cycle could advance cut every sleep to 30 minutes until the daily cap was spent."""
+    tried = {c.step.id for c in steered.found if c.tried}
+    own = steered.step.id if steered.step is not None else None
+    for step, _ in steered.pick.ranked:
+        if step.id == own:
+            row = node(conn, scope, step.id)
+            if steered.mark is None or row is None or mark(Facts(conn, scope, now), row) != steered.mark:
+                return True
+            if cycle_id is not None and _made_in(conn, cycle_id, row):
+                return True
+        elif step.id not in tried:
+            return True
+    return False
 
 
 def _fields(step: weights.Step) -> dict[str, Any]:
@@ -1912,12 +2316,15 @@ def settings() -> dict[str, Any]:
 class Steer:
     """0.35.0: what the tree decided for a cycle: its step (None when nothing is ready), what the cycle is ('ordinary',
     'marketing' or 'venture', 0.37.0: for a step of the ventures: lines.py's kinds), every candidate it was chosen
-    from, and (0.37.0) the venture a venture step is about (None: a brainstorm, or another kind of cycle)."""
+    from, and (0.37.0) the venture a venture step is about (None: a brainstorm, or another kind of cycle). 0.37.6: what
+    the step's check read when the cycle took it (``mark``) and the owner's day (``day``), kept with the pick."""
 
     pick: weights.Pick
     found: tuple[Candidate, ...]
     kind: str
     venture: int | None = None
+    mark: str | None = None
+    day: str | None = None
 
     @property
     def step(self) -> weights.Step | None:
@@ -1945,11 +2352,12 @@ def steer(
     a new product, or end)."""
     pick, found = choose(conn, scope, now, today, channels, exploring=exploring, before=cycle_id)
     row = node(conn, scope, pick.step.id) if pick.step is not None else None
+    taken = {"mark": mark(Facts(conn, scope, now), row) if row is not None else None, "day": today.isoformat()}
     if row is not None and row["template"] in VENTURE_TEMPLATES:
-        return Steer(pick, tuple(found), "venture", venture_of(conn, scope, int(row["id"])))
+        return Steer(pick, tuple(found), "venture", venture_of(conn, scope, int(row["id"])), **taken)
     if pick.step is not None and (pick.step.kind == "market" or _markets(row)):
-        return Steer(pick, tuple(found), "marketing")
-    return Steer(pick, tuple(found), "ordinary")
+        return Steer(pick, tuple(found), "marketing", **taken)
+    return Steer(pick, tuple(found), "ordinary", **taken)
 
 
 def on_channel(conn: sqlite3.Connection, scope: AgentScope, step: weights.Step | None) -> bool:
@@ -1974,11 +2382,12 @@ def _markets(row: Mapping[str, Any] | None) -> bool:
 
 
 def record(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int, now: str, steered: Steer) -> None:
-    """A cycle's pick, with its weight's parts and the ranking it came from, so a week can be re-scored offline."""
+    """A cycle's pick, with its weight's parts and the ranking it came from, so a week can be re-scored offline; 0.37.6:
+    and what its step's check read then, on the owner's day (the brake: ``candidates``)."""
     logged = steered.pick.json()
     conn.execute(
         "INSERT INTO plan_picks (mode, session, cycle_id, created_at, kind, line, node_id, product, decided, weight,"
-        " parts, ranked) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " parts, ranked, mark, day) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             scope.mode,
             scope.session,
@@ -1992,6 +2401,8 @@ def record(conn: sqlite3.Connection, scope: AgentScope, cycle_id: int, now: str,
             logged["weight"],
             json.dumps(logged["parts"]) if logged["parts"] else None,
             json.dumps(logged["ranked"], ensure_ascii=False),
+            steered.mark if steered.step is not None else None,
+            steered.day,
         ),
     )
     step = steered.step
@@ -2008,14 +2419,20 @@ TAKEN = {  # 0.37.0: a promise or an owner's decision is weighed like any step (
 }
 WAITS = {
     "owner": "your owner",
+    "approved": "an approved request being carried out",  # 0.37.6
     "channel": "a channel that isn't set up",
     "upgrade": "an upgrade",
     "date": "a date",
     "step": "another step",
     "hold": "a hold",
+    "tried": "a change since a cycle took it today",  # 0.37.6: the brake
 }
 QUESTIONS = "This week's questions (keep them in mind; not steps to take):"
 NEW_PRODUCT = "Start a new product (project_create): Ember's code lays it out with its stages and steps."
+TRIED = (  # 0.37.6: no step ready, as the brake holds steps a cycle took today without anything moving
+    "Nothing new starts while steps of yours wait for a change or tomorrow (a cycle took them today and nothing they"
+    " are checked by moved): deal with what is owed, then end the cycle."
+)
 
 
 def check_words(kind: str | None, spec: Mapping[str, Any]) -> str:
@@ -2026,7 +2443,10 @@ def check_words(kind: str | None, spec: Mapping[str, Any]) -> str:
     for name, value in spec.items():
         shown = ", ".join(str(v) for v in value) if isinstance(value, list) else str(value)
         text = text.replace(f"`{name}`", shown)
-    return re.sub(r"`(\w+)`", r"\1", text)
+    said = re.sub(r"`(\w+)`", r"\1", text)
+    if kind == "request" and spec.get("since"):  # 0.37.6: a step proposing it again (_again)
+        said += f", a new one made since {str(spec['since'])[:10]}"
+    return said
 
 
 def step_text(
@@ -2114,6 +2534,8 @@ def step_text(
                 f"Nothing new starts: your owner holds new things ({_cut(held, 80)}): deal with what is owed, then end"
                 " the cycle."
             )
+        elif explore and any(c.waiting == "tried" for c in steered.found):
+            lines.append(TRIED)  # 0.37.6: a step that waits for tomorrow is still the plan's work, not room for new
         else:
             lines.append(
                 NEW_PRODUCT
@@ -2137,7 +2559,8 @@ VENTURE_DONE = {  # 0.37.0: when a venture's step is done (Ember's code reads th
     "triage": "you researched it (stage researching) or parked it with why (venture_update).",
     "appraise": (
         "you saved what your research found (evidence, venture_update learned) and rescored it; once its research is"
-        " done, its business case (venture_case, stage proposed) or parked with why."
+        " done, its business case (venture_case, stage proposed) or parked with why. 0.37.6: a cycle that saves no"
+        " evidence, case or stage leaves the step until tomorrow (a note or a rescore alone moves nothing)."
     ),
     "answer": "you answered the critic with evidence or new numbers (venture_case), or parked it with why.",
     "brainstorm": "your brainstorm (the brainstorm tool) added its ideas to your tree.",
@@ -2261,10 +2684,11 @@ def plan_text(
     facts = Facts(conn, scope, now)
     for top, products in grouped(conn, scope, "status = 'open'"):
         lines.append(f"{top['title']}: " + " · ".join(_product_line(conn, scope, facts, p) for p in products))
-    owners = [
+    owners = [  # 0.37.6: those with something for them to decide (live, "You approve it" with no request waiting)
         f"#{s['id']} {_cut(s['title'], 50)} (line #{s['project_id']})"
         for s in nodes(conn, scope, "level = 'step' AND status = 'open' AND kind = ?", (templates.OWNER_KIND,))
-        if s["project_id"] is None or _product_open(conn, scope, int(s["project_id"]))
+        if (s["project_id"] is None or _product_open(conn, scope, int(s["project_id"])))
+        and _owners(facts, s, s["project_id"]) == "owner"
     ]
     if owners:
         lines.append("Waiting on your owner: " + " · ".join(owners[:6]))

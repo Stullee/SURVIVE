@@ -270,6 +270,17 @@ columns and a template's column formulas, and no longer calls quarterly sums
 wrong. A CSV of rows may start with the columns' titles, and an empty field gets
 its column's formula.
 
+0.37.6: the plan has a brake. Nothing noticed that a cycle took a step and nothing
+changed: on 10-09 a step whose pins waited for you took a cycle every 30 minutes,
+$5.88 of the $7 cap by 12:35, and the other products got none. Now a step a cycle
+took without anything it is checked by moving waits until something moves (your
+decision, its numbers) or the next day, a step whose own requests wait for you
+waits on them by itself, and only steps a cycle can advance cut Ember's sleep. An
+Owner promise of pins is a marketing cycle's. A product whose listing request
+expired, was withdrawn, rejected or failed gets **Propose the listing again**:
+until now it never had a step ready again (the codebase analysis of 0.37.0,
+sections 3.1 and 3.2).
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

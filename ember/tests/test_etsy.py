@@ -465,9 +465,10 @@ def test_only_etsy_can_be_reached() -> None:
 
 
 def proposed(data_dir: Path) -> tuple[Any, FakeTransport, int]:
-    """A dry-run agent whose fourth cycle proposed an Etsy listing."""
+    """A dry-run agent whose fourth cycle proposed an Etsy listing (0.37.6: its founder routine works on line #1 by the
+    cycle's number, without the plan's brake: test_loop_shapes.unbraked)."""
     fake = FakeTransport()
-    agent, _ = run(data_dir, fake, cycles=4)
+    agent, _ = run(data_dir, fake, cycles=4, brake=False)
     found = rows(agent, "SELECT id FROM approvals WHERE executor = 'etsy_listing'")
     assert found, "the fake proposes a listing in its fourth cycle"
     return agent, fake, found[0]["id"]

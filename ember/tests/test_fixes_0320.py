@@ -48,7 +48,7 @@ def approve(agent: Any, request: int) -> None:
 def poster(data_dir: Path) -> tuple[Any, int]:
     """A dry-run agent with Printify, Bluesky and Pinterest on (their fake accounts), the fake shop's first listing
     live, and a poster Printify made of a product of Ember's live at Etsy: its listing's number."""
-    agent, _ = run(data_dir, FakeTransport(), cycles=4, settings=EVERYWHERE)
+    agent, _ = run(data_dir, FakeTransport(), cycles=4, settings=EVERYWHERE, brake=False)  # test_etsy.proposed
     listing = rows(agent, "SELECT id FROM approvals WHERE executor = 'etsy_listing'")[0]["id"]
     approve(agent, listing)
     assert agent.execute_approved() == [(listing, "active")]
