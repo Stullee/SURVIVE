@@ -220,7 +220,16 @@ to you and your decisions are weighed too: worth more than most products,
 heavier as their day nears, and no longer first whatever else waits; one about
 no product is a step of the plan's Owner project.
 
-0.37.1: Ember can read her Bluesky posts' numbers in any cycle but a venture
+0.37.1: your promises weigh about what a product does, and press as their day
+nears. On 0.37.0's first evening every promise weighed at least 15 and no step of
+a product more than about 12, so they still came first: the pins you put first
+for the week ranked tenth, behind nine promises and decisions, four of them one
+KDP job (see [the analysis](analysis-0.37.0/ember-analysis-0.37.0.md)). A
+promise is worth 3 now and urgent only from two days before its day; one taken
+three times in a day without being kept weighs its worth alone until the day is
+over.
+
+0.37.2: Ember can read her Bluesky posts' numbers in any cycle but a venture
 cycle. Since 0.35.0 `bluesky_posts` was offered only with the marketing tools,
 so an ordinary cycle (the one that answers you) couldn't say how a post did.
 Now it lists each post by its request number with its likes, reposts, replies

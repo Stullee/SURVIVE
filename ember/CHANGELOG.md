@@ -3,7 +3,7 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
-## 0.37.1
+## 0.37.2
 
 You can read your Bluesky posts' numbers in any cycle but a venture cycle.
 
@@ -15,6 +15,21 @@ You can read your Bluesky posts' numbers in any cycle but a venture cycle.
 - An ordinary cycle's BLUESKY keeps one line: the account, its followers and your live posts' reactions. Proposing a
   post stays a marketing cycle's.
 - Your daily review hears the same numbers under CHANNELS READY, so it can judge the channel.
+
+## 0.37.1
+
+Your promises weigh about what a product does now, and press as their day nears.
+
+- On 0.37.0's first evening every promise and every decision of your owner's weighed at least 5 × (1 + 2) = 15, and
+  no step of a product more than about 12, so they still came first whatever else waited. Nine were open (four of them
+  the Haushaltsbuch redo, two of them the same report, one due in 9 days), and the pins your owner put first for the
+  week were tenth: no cycle had taken a launch pin. Now a promise is worth 3 (its product's worth when that is more),
+  with no urgency until two days before its day: then 2, the day before 3, on its day 9, and 11 once it slipped. Until
+  then it weighs its worth and its waiting: at first less than a live product's first pins.
+- One you took three times in a day without keeping it (your owner's decision: once) weighs its worth alone until the
+  day is over: in 0.37.0 it kept its urgency's floor, which still outweighed every step of a product.
+- So the day you give a promise (message_owner's due) is when it presses: a report on its day, with that day's numbers;
+  work that takes several cycles gets them from two days before its day, so name the day it must be done by.
 
 ## 0.37.0
 

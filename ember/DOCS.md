@@ -234,12 +234,13 @@ it runs one **wake cycle**:
    the product its words name: a listing's number, KDP) is a step of that
    product in the plan tree, and since 0.37.0 one about no product is a step of
    the plan's **Owner** project. Your decision on a product's request is a step
-   too. Since 0.37.0 each is weighed like any step: worth at least 5 (more than
-   most products), more urgent as its day nears, until cycles took it three
-   times in a day without keeping it (your decision once): then it weighs at the
-   floor until that day is over, so one Ember can't keep yet doesn't take every
-   cycle. (0.35.0 to 0.36.0 they came first.) A missed milestone decides
-   nothing.
+   too. Since 0.37.0 each is weighed like any step: since 0.37.1 worth at least
+   3 (a little more than most products), urgent from two days before its day
+   and more as it nears, until cycles took it three times in a day without
+   keeping it (your decision once): then it weighs its worth alone until that
+   day is over, so one Ember can't keep yet doesn't take every cycle. (0.35.0 to
+   0.36.0 they came first; in 0.37.0, worth 5 and always urgent, they still
+   did.) A missed milestone decides nothing.
    A message of the agent's that promises later work in words
    only ("next cycle I'll ...") comes back to it once, to record the promise.
    Any cycle may keep another line's record up to date (a note, its hypothesis,
@@ -985,7 +986,7 @@ books and sends no email.
 An ordinary cycle doesn't carry the marketing tools, and its plan doesn't show
 Pinterest, Bluesky or the blog, with three exceptions: a channel that waits for
 your setup still says so (so Ember doesn't ask you again), an ordinary cycle on
-a channel's own product (setting it up) keeps that channel, and (since 0.37.1)
+a channel's own product (setting it up) keeps that channel, and (since 0.37.2)
 Bluesky's numbers stay: the plan keeps one line with the account's followers
 and the live posts' reactions, and `bluesky_posts` reads each post's, so Ember
 can tell you how a post did (proposing posts stays a marketing cycle's). The
@@ -1074,10 +1075,14 @@ weight is that worth times its kind (shipping, launching, fixing and marketing
 1, creating 0.8) times its channel's results (since 0.35.3 only of the pins and
 posts live a week or more), times one plus its urgency, its age (0.5 for each
 day it has waited ready) and momentum (1 for the product worked on last). A
-promise to you and your decision (0.37.0) are worth at least 5, whatever their
-product is worth, and urgent as their day nears: 2 until the day before, 3 then,
-9 on the day and 11 once it has passed; once cycles took one three times in a
-day without keeping it (your decision once) it is 2 until that day is over. A
+promise to you and your decision (0.37.0) are worth at least 3 (0.37.1; 5
+before), whatever their product is worth, and urgent only near their day:
+nothing until two days before it, 2 then, 3 the day before, 9 on the day and 11
+once it has passed; once cycles took one three times in a day without keeping
+it (your decision once) it has no urgency until that day is over. Until two days
+before its day a promise weighs its worth and its waiting, at first less than a
+live product's first pins: in 0.37.0 every promise weighed at least 15, more than any
+step of a product, whenever its day was. A
 venture's step (0.37.0) is a creating step, worth as [Ventures](#ventures) says,
 urgent by 2 when you asked for it and by 1 when Ember's code parks the venture
 within a week. The other urgencies: since 0.35.3 a defect the critic found (a
@@ -2176,7 +2181,7 @@ To stop Ember's access, delete the app password at Bluesky.
   each post's likes, reposts, replies and quotes, and any label Bluesky's
   moderation put on them. The agent's plan shows them (BLUESKY), and the
   metrics `bluesky_posts_live` and `bluesky_reactions` can measure a milestone.
-  Since 0.37.1 the agent reads them with `bluesky_posts` in any cycle but a
+  Since 0.37.2 the agent reads them with `bluesky_posts` in any cycle but a
   venture cycle (until then only in a marketing cycle): each post by its
   request number and day, with the account's followers and the posts made
   today against the daily limit. An ordinary cycle's plan and the daily review
@@ -2544,7 +2549,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.37.1 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.37.2 (by /u/your name)`.
 
 ## Amazon KDP
 
