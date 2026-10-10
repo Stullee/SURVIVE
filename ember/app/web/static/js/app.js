@@ -321,7 +321,7 @@
   }
 
   function agentName() { return (ui.data && ui.data.agent && ui.data.agent.name) || "Ember"; }
-  // 0.37.1: while the agent is paused or waits for money no unlock acts, and a veto window starts again once it runs
+  // 0.37.3: while the agent is paused or waits for money no unlock acts, and a veto window starts again once it runs
   function vetoWaits() { var s = ui.data && ui.data.agent ? ui.data.agent.state : ""; return s === "paused" || s === "unfunded" || s === "dead"; }
 
   // ------------------------------------------------------------------ status vocabularies (icon + label, never color alone)
@@ -3047,7 +3047,7 @@
     var name = agentName();
     var limit = limitText(email);
     var detail;
-    // 0.37.1: while Ember's mailbox can't be read, the email waits for it (a reply asking to stop may be there)
+    // 0.37.3: while Ember's mailbox can't be read, the email waits for it (a reply asking to stop may be there)
     if (st === "waiting") detail = [ex.result ? endSentence(sentence(ex.result)) : name + " sends it by itself shortly; it checks for approved emails every few minutes."];
     else if (st === "waiting_limit") detail = [name + " has sent " + (limit === null ? "its emails" : "its " + plural(limit, "email")) + " for today, so this one waits for tomorrow's send limit."];
     else if (st === "running") detail = ex.started_at ? ["Sending since ", timeEl(ex.started_at), "."] : ["Sending now."];

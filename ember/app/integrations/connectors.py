@@ -13,7 +13,7 @@ Now:
 * ``begin`` / ``finish`` / ``record``: the shared journal (``action_journal``). The email executor and the Etsy
   publisher write through it at the moments they write their own records (their behaviour is unchanged): the class,
   the request, what it acts on, the state before and after, how it ended, and what would undo it (``undo_of``);
-* ``halted`` (0.37.1): whether the kill switch is on, which every executor reads again before it begins an item.
+* ``halted`` (0.37.3): whether the kill switch is on, which every executor reads again before it begins an item.
 """
 
 from __future__ import annotations
@@ -235,12 +235,12 @@ def _json(value: Any) -> str | None:
     return None if value is None else json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
-# 0.37.1: what a run says of the item it didn't begin because the kill switch came on (the item waits, approved)
+# 0.37.3: what a run says of the item it didn't begin because the kill switch came on (the item waits, approved)
 HALTED = "halted"
 
 
 def halted(conn: sqlite3.Connection) -> bool:
-    """0.37.1: whether the kill switch is on, as every executor reads it before it begins an item: in the transaction
+    """0.37.3: whether the kill switch is on, as every executor reads it before it begins an item: in the transaction
     that records the item's 'running' row (a kill can't come between the check and the row), and before work of the
     item's own outside it (a page read from the owner's server). The scheduler's round checked the life state once,
     before it began (Agent.executor_blocked): 2 of 3 approved emails went out after the owner pressed the switch. What

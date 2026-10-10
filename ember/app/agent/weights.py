@@ -8,10 +8,10 @@ step it would have picked next to what READY picked, so a week of real cycles ca
 steers (plan.py keeps the tree; this module only weighs and chooses, without a database).
 
 A step's weight = worth × kind × channel × (1 + urgency + age + momentum), and a product's worth = what it could
-earn × its chance; the owner's own worth replaces it. Each cycle takes the first of: a step the owner pinned, a promise
-or an owner's decision due within 24 hours (no margin), (0.35.1) any other promise to the owner, the soonest due
-first, else the highest weight, where a step of another product must be 25% better than the best of the product
-worked on last (for up to 3 cycles in a row). A step carries the weight of
+earn × its chance; the owner's own worth replaces it. Each cycle takes a step the owner pinned, else the highest
+weight, where a step of another product must be 25% better than the best of the product worked on last (for up to 3
+cycles in a row); 0.37.0: a promise to the owner or their decision is weighed like any step (until then one came
+first, below). A step carries the weight of
 the most important step waiting on it. Age has no cap: it only lifts an older step over newer ones (two steps that
 waited equally long keep their order by worth), and it doesn't run while a step is blocked or its product is on hold.
 
@@ -30,6 +30,15 @@ share of the day's spending: live, 10 of 24 cycles, which Ember, told "nothing n
 made the share want more of them). Exploring is one more step of the tree now (plan.py's Explore step: worth
 EXPLORE_WORTH unless the owner sets one, a wish of the owner's ASKED, a venture about to be parked PARK_SOON), weighed
 like any other and held by the owner's word.
+
+0.37.1: live on 2026-10-09, the first day of 0.37.0, every open promise weighed at least 5 × (1 + 2) = 15 and no
+product step more than about 12, so the promises still came first whatever else waited: nine were open (four of them
+one KDP job, two of them one report, the latest due in 9 days), and the pins the owner had put first for the week ranked
+tenth. A promise is worth PROMISE_WORTH now (3, its product's worth when that is more) and urgent only from
+PROMISE_NEAR_DAYS before its day: until then it weighs its worth and its waiting, at first below a live product's
+launch marketing; two days before its day it weighs 9, the day before 12, on its day 30. plan.py: one taken
+PROMISE_TRIES times in a day without being kept weighs its worth alone until the day is over (it kept the floor, which
+still outweighed every product step).
 """
 
 from __future__ import annotations
@@ -50,6 +59,7 @@ KIND = {"ship": 1.0, "launch": 1.0, "fix": 1.0, "market": 1.0, "create": 0.8, "c
 CHANNEL_MIN, CHANNEL_MAX = 0.2, 1.5
 URGENCY_CAP = 12.0
 PROMISE_FLOOR, PROMISE_SCALE, PROMISE_SLIP = 2.0, 4.5, 2.0
+PROMISE_NEAR_DAYS = 2  # 0.37.1: a promise is urgent from this many days before its day (before them: its worth alone)
 # 0.35.3: the critic's verdicts and a product's first buyers, a ladder: a defect, a missed views bar, a live product's
 # launch marketing, the critic's suggestions (each improve verdict counted as a defect until 0.35.2)
 DEFECT = 5.0  # the critic found a defect (a score of DEFECT_SCORE or less): fixed before more buyers see it
@@ -70,8 +80,9 @@ STREAK_CAP = 3  # cycles in a row on one product with momentum and the margin (p
 MARGIN = 1.25
 # 0.37.0: a promise to the owner, and their decision on a request, are weighed like any step (until 0.36.0 taken first
 # when due within a day, or up to three times a day): worth at least this, whatever its product is worth (a promise is
-# the owner's), and urgent as its day nears (promise_urgency)
-PROMISE_WORTH = 5.0
+# the owner's), and urgent as its day nears (promise_urgency). 0.37.1: 3, a little more than a product that could earn
+# $5 a month (it was 5: with the floor's urgency every promise outweighed every product step, whenever its day was)
+PROMISE_WORTH = 3.0
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -104,7 +115,11 @@ def worth(
 
 
 def promise_urgency(days_left: float, slips: int = 0) -> float:
-    """A promise to the owner: at least 2, more as its date nears, +2 for each time it slipped."""
+    """A promise to the owner: at least 2, more as its date nears, +2 for each time it slipped. 0.37.1: none while its
+    day is more than PROMISE_NEAR_DAYS off (``days_left`` counts its day as ½, as plan.py does: 2.5 is two days before
+    it), so until then it weighs its worth and its waiting alone."""
+    if slips <= 0 and days_left > PROMISE_NEAR_DAYS + 0.5:
+        return 0.0
     return min(URGENCY_CAP, max(PROMISE_FLOOR, PROMISE_SCALE / max(days_left, 0.25)) + PROMISE_SLIP * max(slips, 0))
 
 

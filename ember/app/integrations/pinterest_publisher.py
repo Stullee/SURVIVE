@@ -258,7 +258,7 @@ class Publisher:
                     outcome = self._one(account, scope, approval_id)
                     done.append((approval_id, outcome))
                     if outcome == connectors.HALTED:
-                        return done  # 0.37.1: the kill switch came on: the rest waits
+                        return done  # 0.37.3: the kill switch came on: the rest waits
                     if outcome == "waiting_limit":
                         break  # the rest waits for tomorrow too, in order
                 for approval_id in self._approved(scope, "pinterest_delete"):
@@ -368,7 +368,7 @@ class Publisher:
             if row is None or row["status"] not in ("approved", "approved_with_changes") or started is not None:
                 return "skipped"  # cancelled or decided meanwhile
             if connectors.halted(conn):
-                return connectors.HALTED  # 0.37.1: the kill switch came on while this round ran
+                return connectors.HALTED  # 0.37.3: the kill switch came on while this round ran
             if created_today(conn, self.clock, scope) >= self.settings.pinterest_pins_per_day:
                 return "waiting_limit"
             try:
@@ -519,7 +519,7 @@ class Publisher:
             if row is None or row["status"] not in ("approved", "approved_with_changes"):
                 return "skipped"
             if connectors.halted(conn):
-                return connectors.HALTED  # 0.37.1: an Undo neither, once the kill switch is on
+                return connectors.HALTED  # 0.37.3: an Undo neither, once the kill switch is on
             try:
                 pin_id = str(json.loads(row["action"])["pin_id"])
             except (ValueError, KeyError, TypeError):
@@ -566,7 +566,7 @@ class Publisher:
             if row is None or row["status"] not in ("approved", "approved_with_changes") or started is not None:
                 return "skipped"  # cancelled or decided meanwhile
             if connectors.halted(conn):
-                return connectors.HALTED  # 0.37.1: the kill switch came on while this round ran
+                return connectors.HALTED  # 0.37.3: the kill switch came on while this round ran
             connectors.begin(conn, approval_id, stamp)
             try:
                 if account is None:

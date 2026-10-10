@@ -220,7 +220,25 @@ to you and your decisions are weighed too: worth more than most products,
 heavier as their day nears, and no longer first whatever else waits; one about
 no product is a step of the plan's Owner project.
 
-0.37.1 closes three gaps in timing at the approval boundary that the codebase
+0.37.1: your promises weigh about what a product does, and press as their day
+nears. On 0.37.0's first evening every promise weighed at least 15 and no step of
+a product more than about 12, so they still came first: the pins you put first
+for the week ranked tenth, behind nine promises and decisions, four of them one
+KDP job (see [the analysis](analysis-0.37.0/ember-analysis-0.37.0.md)). A
+promise is worth 3 now and urgent only from two days before its day; one taken
+three times in a day without being kept weighs its worth alone until the day is
+over.
+
+0.37.2: near the bottom of the balance a workshop run can no longer end Ember's
+life below zero, your Anthropic account paying the rest. Since 0.33.0 a run kept
+back no more than the day had left, but that limit also held a fifth of the
+balance, so the rule that a run needs 5 times its hold above the last will's
+reserve always passed: in the codebase analysis of 0.37.0 (finding 3.4), a run
+went ahead holding $0.62 with $3.10 left, cost $3.21, and Ember died at -$0.08
+without its last will. Now only the day limits what a run keeps back, and the
+balance counts all of it.
+
+0.37.3 closes three gaps in timing at the approval boundary that the codebase
 analysis of 0.37.0 found (its 4.1.1 to 4.1.3). An approved email goes out only
 after Ember's code has read its mailbox since your approval: a "stop" that came
 while the kill switch was on, the app was down or reading failed was read after
@@ -297,7 +315,7 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   pinned key and only a post, the blog's list and the link page
   (`ember/app/integrations/sftp.py`, `site_publisher.py`). With the live view on
   (0.16.0), it uploads the live page, its banner and its chart there every 15
-  minutes (never while the kill switch is on, 0.37.1), made from Ember's own
+  minutes (never while the kill switch is on, 0.37.3), made from Ember's own
   numbers, with the agent's titles and last will only as the owner approved
   each one (`live_view.py`). With Bluesky on
   (0.19.0), Ember's code logs in to `bsky.social` with the account's app
@@ -306,11 +324,11 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
 - **Outside actions.** The agent has no tool that sends or posts anything. An
   email it proposes is sent by Ember's code only after the owner approves it,
   exactly as approved, once, to one recipient, with a footer saying an AI wrote
-  it and within a daily limit, and (0.37.1) only after Ember's code read its
+  it and within a daily limit, and (0.37.3) only after Ember's code read its
   mailbox since the approval, so a "stop" waiting there is seen first; a send is
   recorded before it starts and never retried
   (`ember/app/integrations/executor.py`). The kill switch stops whatever
-  Ember's code hasn't begun, also in the middle of a round (0.37.1). A Reddit
+  Ember's code hasn't begun, also in the middle of a round (0.37.3). A Reddit
   post becomes a link the owner opens and posts from their own account; a KDP
   book (0.25.0) becomes a package the owner publishes at KDP from their own
   account (Ember's code never reaches Amazon).

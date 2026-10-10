@@ -2518,7 +2518,7 @@ def _sources(response: dict[str, Any]) -> list[str]:
 
 def expire_requests(db: Database, scope: AgentScope, clock: Clock) -> int:
     """0.12.0: the requests the owner didn't decide within their type's days expire (news for the agent), each said in
-    the System log. 0.37.1: at a cycle's start and, before the owner's unlocks act, in every round of the scheduler
+    the System log. 0.37.3: at a cycle's start and, before the owner's unlocks act, in every round of the scheduler
     (Agent.run_policy). Returns how many expired."""
     with db.transaction() as conn:
         expired = store.expire_requests(conn, scope, to_iso(clock.now()))

@@ -455,7 +455,7 @@ class Publisher:
                         outcome = self._publish(server, scope, approval_id)
                     done.append((approval_id, outcome))
                     if outcome == connectors.HALTED:
-                        break  # 0.37.1: the kill switch came on: the rest waits
+                        break  # 0.37.3: the kill switch came on: the rest waits
             finally:
                 if server is not self.fake:
                     server.close()
@@ -511,7 +511,7 @@ class Publisher:
         if row is None or row["status"] not in ("approved", "approved_with_changes"):
             return "skipped"
         if stopped:
-            return connectors.HALTED  # 0.37.1: the kill switch came on while this round ran (the server isn't read)
+            return connectors.HALTED  # 0.37.3: the kill switch came on while this round ran (the server isn't read)
         action = _action(row)
         path = str(action.get("path") or "")
         content = bytes(upload["content"]) if upload is not None and upload["content"] is not None else b""
@@ -553,7 +553,7 @@ class Publisher:
             if started is not None:
                 return "skipped"
             if connectors.halted(conn):
-                return connectors.HALTED  # 0.37.1: pressed while the server was read
+                return connectors.HALTED  # 0.37.3: pressed while the server was read
             fingerprints = {name: (blog.sha256(data) if data is not None else None) for name, data in before.items()}
             connectors.begin(conn, approval_id, stamp, subject=path or None, before={"pages": fingerprints})
             if problem is not None:
@@ -705,7 +705,7 @@ class Publisher:
             if row is None or row["status"] not in ("approved", "approved_with_changes"):
                 return "skipped"
             if connectors.halted(conn):
-                return connectors.HALTED  # 0.37.1: an Undo neither, once the kill switch is on (the server isn't read)
+                return connectors.HALTED  # 0.37.3: an Undo neither, once the kill switch is on (the server isn't read)
             action = _action(row)
             original = int(action.get("approval_id") or 0)
             ups = {
@@ -751,7 +751,7 @@ class Publisher:
             if current is None or current["status"] not in ("approved", "approved_with_changes"):
                 return "skipped"
             if connectors.halted(conn):
-                return connectors.HALTED  # 0.37.1: pressed while the server was read
+                return connectors.HALTED  # 0.37.3: pressed while the server was read
             fingerprints = {name: (blog.sha256(data) if data is not None else None) for name, data in before.items()}
             connectors.begin(conn, approval_id, stamp, subject=path or None, before={"pages": fingerprints})
             if problem is not None:

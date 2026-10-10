@@ -1,4 +1,4 @@
-"""0.37.1: three timing defects at the approval boundary (analysis-0.37.0, 4.1.1 to 4.1.3; its reproductions are
+"""0.37.3: three timing defects at the approval boundary (analysis-0.37.0, 4.1.1 to 4.1.3; its reproductions are
 repro/outside/r6_stop_before_send.py, r1_kill_mid_round.py and r2_expired_veto.py).
 
 - A "stop" in Ember's mailbox was read after the first round's sends: nothing read the mailbox while the kill switch

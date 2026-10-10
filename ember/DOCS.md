@@ -234,12 +234,13 @@ it runs one **wake cycle**:
    the product its words name: a listing's number, KDP) is a step of that
    product in the plan tree, and since 0.37.0 one about no product is a step of
    the plan's **Owner** project. Your decision on a product's request is a step
-   too. Since 0.37.0 each is weighed like any step: worth at least 5 (more than
-   most products), more urgent as its day nears, until cycles took it three
-   times in a day without keeping it (your decision once): then it weighs at the
-   floor until that day is over, so one Ember can't keep yet doesn't take every
-   cycle. (0.35.0 to 0.36.0 they came first.) A missed milestone decides
-   nothing.
+   too. Since 0.37.0 each is weighed like any step: since 0.37.1 worth at least
+   3 (a little more than most products), urgent from two days before its day
+   and more as it nears, until cycles took it three times in a day without
+   keeping it (your decision once): then it weighs its worth alone until that
+   day is over, so one Ember can't keep yet doesn't take every cycle. (0.35.0 to
+   0.36.0 they came first; in 0.37.0, worth 5 and always urgent, they still
+   did.) A missed milestone decides nothing.
    A message of the agent's that promises later work in words
    only ("next cycle I'll ...") comes back to it once, to record the promise.
    Any cycle may keep another line's record up to date (a note, its hypothesis,
@@ -630,7 +631,12 @@ calls in 14 days (what they are known to cost, interrupted ones included),
 under the daily cap and the balance. Since 0.33.0 a run keeps back no more than
 the day has left, and never less than its own worst case: live, a $2.76 hold
 refused every run once the day's spending passed about $3, though each run was
-priced below what was left. **Reset
+priced below what was left. The balance still counts all of it: a run needs 5
+times what it would keep back without the day's limit left above the last
+will's reserve (see [Money](#money)). Until 0.37.2 the day's limit included a
+fifth of the balance, so near the bottom a run kept back that fifth and always
+passed: one that cost $3.21 holding $0.62 would have ended Ember below zero
+without its last will. **Reset
 estimates** doesn't clear those runs; they stop counting after 14 days. A call
 can still cost more than all of this; Ember then books what it cost, makes no
 more workshop calls in that cycle, and raises the workshop's estimates. Runs
@@ -1071,10 +1077,14 @@ weight is that worth times its kind (shipping, launching, fixing and marketing
 1, creating 0.8) times its channel's results (since 0.35.3 only of the pins and
 posts live a week or more), times one plus its urgency, its age (0.5 for each
 day it has waited ready) and momentum (1 for the product worked on last). A
-promise to you and your decision (0.37.0) are worth at least 5, whatever their
-product is worth, and urgent as their day nears: 2 until the day before, 3 then,
-9 on the day and 11 once it has passed; once cycles took one three times in a
-day without keeping it (your decision once) it is 2 until that day is over. A
+promise to you and your decision (0.37.0) are worth at least 3 (0.37.1; 5
+before), whatever their product is worth, and urgent only near their day:
+nothing until two days before it, 2 then, 3 the day before, 9 on the day and 11
+once it has passed; once cycles took one three times in a day without keeping
+it (your decision once) it has no urgency until that day is over. Until two days
+before its day a promise weighs its worth and its waiting, at first less than a
+live product's first pins: in 0.37.0 every promise weighed at least 15, more than any
+step of a product, whenever its day was. A
 venture's step (0.37.0) is a creating step, worth as [Ventures](#ventures) says,
 urgent by 2 when you asked for it and by 1 when Ember's code parks the venture
 within a week. The other urgencies: since 0.35.3 a defect the critic found (a
@@ -1343,7 +1353,7 @@ no longer shown); a study that failed three times stops until you press
   with its files, Copy buttons and a button that opens your KDP Bookshelf (see
   [Amazon KDP](#amazon-kdp)). A request you don't decide **expires**
   (emails and posts after 7 days, spending after 14, the rest after 30; the
-  card says when; 0.37.1: checked every minute, before your unlocks act: only
+  card says when; 0.37.3: checked every minute, before your unlocks act: only
   a wake cycle's start expired them, and on Resume after a long pause an
   unlock approved a reply past its days), the agent can **withdraw** one that
   is outdated (with its reason), and each kind has its own limit of waiting
@@ -1382,7 +1392,7 @@ no longer shown); a study that failed three times stops until you press
   time it will be approved, and you can still reject it. While Ember is
   paused or waits for money no unlock acts, and its card says it is approved
   12 hours after Ember runs again: once it runs, each request held this way
-  gets the whole 12 hours again (0.37.1: one whose window ran out during a
+  gets the whole 12 hours again (0.37.3: one whose window ran out during a
   pause was approved the minute you resumed Ember). **Run at once**
   approves it when it is made. Each rule has a daily limit and a budget of
   actions. An unlock carries only a request that passes the checks its card
@@ -1577,7 +1587,7 @@ no longer shown); a study that failed three times stops until you press
   approves nothing an unlock held. The dashboard keeps working. To undo it,
   change **Kill switch reset** in the app's **Configuration** tab to any other
   number, save and restart the app. It also stops Ember's code in the middle
-  of carrying out what you approved (0.37.1: 2 of 3 approved emails went out
+  of carrying out what you approved (0.37.3: 2 of 3 approved emails went out
   after the switch was pressed): what has begun runs on, once (an email being
   handed over, a listing being created), and nothing else begins. What you
   approved waits and is carried out after the reset (an email once Ember has
@@ -1697,7 +1707,7 @@ included: encrypt your backups.
   day. While an email waits, **Cancel sending** stops it.
 - Before an approved email goes out, Ember reads its mailbox, unless a read
   that began after your approval, at most 5 minutes before, left nothing to
-  read (0.37.1): a "stop" that came while the kill switch was on, the app was
+  read (0.37.3): a "stop" that came while the kill switch was on, the app was
   down or reading failed was read only after the first round had sent to its
   writer. While the mailbox can't be read, or new mail is left to read, every
   approved email waits, and its card says why.
@@ -2482,7 +2492,7 @@ The page has your site's head, header and footer and refreshes itself every 5
 minutes in an open tab. The page and the banner say when they were made (date
 and time) and that a time more than an hour old means Ember is offline: they
 can't tell by themselves when uploads stop (the app is down, the connection
-fails, a dry run, and since 0.37.1 the kill switch, which stops every upload
+fails, a dry run, and since 0.37.3 the kill switch, which stops every upload
 until you reset it). A part you switch off is replaced on your server by a
 version saying so (a banner you switched off doesn't keep showing an old
 balance), and switching **Ember live** off replaces the page, the banner and
@@ -2557,7 +2567,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.37.1 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.37.3 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -2811,7 +2821,8 @@ bottom of the balance such a call could still cost more than is left, and
 Ember would die below zero without its last will, your Anthropic account
 paying the rest: so a workshop or research call needs 5 times what it keeps
 back (or more, if one ever cost more than that many times its hold) left
-above the last will's reserve (0.21.0). If a call ever costs more than its
+above the last will's reserve (0.21.0); a workshop run's hold counts in full,
+however little of the day is left (0.37.2). If a call ever costs more than its
 worst case, Ember scales up the estimates for that kind of call (planning, a
 work step, the reflection, research, ...) on that model, up to 8 times; the
 other kinds keep theirs. That kind of call makes no more calls in the cycle,

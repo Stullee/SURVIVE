@@ -93,7 +93,7 @@ def fetch(db: Database, clock: Clock, scope: Scope, mailbox: Mailbox, budget: fl
     db.set_meta(meta_key(scope.mode, "failures"), "0")
     db.set_meta(meta_key(scope.mode, "last_fetch_at"), now)
     db.set_meta(meta_key(scope.mode, "last_error"), "")
-    db.set_meta(meta_key(scope.mode, "left"), str(result.waiting))  # 0.37.1: what it left for the next read (read_at)
+    db.set_meta(meta_key(scope.mode, "left"), str(result.waiting))  # 0.37.3: what it left for the next read (read_at)
     if result.waiting:
         events.record(db, "info", "email", f"{result.waiting} more new email(s) wait for the next check of the mailbox")
     return result
@@ -183,7 +183,7 @@ def due(db: Database, clock: Clock, mode: str, every: int) -> bool:
 
 
 def read_at(db: Database, mode: str) -> str | None:
-    """0.37.1: when the mailbox was last read through: the start of the last read that worked and left no new email for
+    """0.37.3: when the mailbox was last read through: the start of the last read that worked and left no new email for
     the next one (None: never, or the last read that worked left some, so a "stop" may still wait unread)."""
     if _int(db.get_meta(meta_key(mode, "left"))):
         return None

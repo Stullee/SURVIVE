@@ -146,7 +146,8 @@ def test_the_plan_trees_weights_settings_are_listed(ingress_client: TestClient) 
     heading = "\n-- plan tree: its weights' settings (weights.py and plan.py, as this version runs them)\n"
     shown = json.loads(records.split(heading, 1)[1].split("\n-- ", 1)[0])
     assert shown == plan_tree.settings()  # whole: nothing masked or cut
-    for name in ("MARGIN", "STREAK_CAP", "AGE_PER_DAY", "MOMENTUM", "PROMISE_FLOOR", "KIND", "STAGE_CHANCE"):
+    named = ("MARGIN", "STREAK_CAP", "AGE_PER_DAY", "MOMENTUM", "PROMISE_FLOOR", "KIND", "STAGE_CHANCE")
+    for name in (*named, "PROMISE_WORTH", "PROMISE_NEAR_DAYS"):  # 0.37.1: what a promise is worth, and when it presses
         assert shown["weights.py"][name] == getattr(weights, name), name
     assert shown["plan.py"]["PROMISE_TRIES"] == plan_tree.PROMISE_TRIES
     assert shown["plan.py"]["OBLIGATION_HOURS"] == plan_tree.OBLIGATION_HOURS

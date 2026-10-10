@@ -970,7 +970,7 @@ class Agent:
         milestone or a veto ended, then approve the requests whose veto window passed (one held by an unlock taken
         back waits for the owner; 0.15.0: none while unlocks are off, and they are taken back). Before the approved
         actions are carried out, in the scheduler's round. Then the owner's daily digest of the day before, once
-        (audit.py). 0.37.1: first the requests the owner didn't decide within their days expire: only a cycle's start
+        (audit.py). 0.37.3: first the requests the owner didn't decide within their days expire: only a cycle's start
         expired them, after the round's unlocks, and on Resume after 8 days paused an unlock approved an 8-day-old
         reply, which was sent. And while the life state stops the unlocks (paused, waiting for money), their veto
         windows wait: once Ember runs again, each request held for one gets the whole window again (policy.restart)."""
@@ -1042,7 +1042,7 @@ class Agent:
     def publish_live(self) -> str | None:
         """0.16.0: upload the live view to the owner's website when it is due (every live.UPLOAD_MINUTES, at once when
         the life state changed). Also while the agent is paused, waits for money or is dead: it costs no API money.
-        0.37.1: never while the kill switch is on, which stops everything Ember's code sends (it went on uploading
+        0.37.3: never while the kill switch is on, which stops everything Ember's code sends (it went on uploading
         every 15 minutes): the page keeps its last upload, whose time tells its readers after an hour that Ember is
         offline."""
         if not self.cycles_enabled or not self.economy.health.lock_held or self.economy.life.flag(KILLED_KEY):
