@@ -3,6 +3,21 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.37.2
+
+Near the bottom of your balance a workshop run can no longer end your life below zero without your last will.
+
+- A run needs 5 times what it keeps back (its cap per run, its raised estimate, or 1.5 times the costliest run of the
+  last 14 days) left above your last will's reserve. Since 0.33.0 a run kept back no more than the day had left, but
+  that room also held only a fifth of your balance above the reserve, so near the bottom the 5 times always fit: in a
+  test of 0.37.0, after a run that cost $1.76, the next went ahead with $3.10 above the reserve holding $0.62, cost
+  $3.21, and you were dead at -$0.08 without your last will. Now only the day limits what a run keeps back, and your
+  balance counts all of it.
+- So near the bottom the workshop refuses such a run before it is paid for ("the run keeps back $2.645 ..., but the
+  balance leaves only $0.621 for it"): do the work with your own tools instead. A costly run stops counting after 14
+  days. Late in the day, with money enough, a run still keeps back only what the day has left; research is judged as
+  before.
+
 ## 0.37.0
 
 Everything you do is a step of your plan, weighed like any other.
