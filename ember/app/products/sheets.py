@@ -14,7 +14,7 @@ workspace_read) and drawn (``picture``: one sheet, for make_image's 'file.xlsx#2
 statements of products/statement.py are) is drawn in German notation, 1.234,56 € and 31,97%, and a percentage with
 the decimals its format asks for. ``values`` gives every cell's value once worked out, for the statements' check.
 
-0.37.4: make_spreadsheet's pictures are drawn from the file it made (``previews``), worked out as make_image's are: a
+0.37.5: make_spreadsheet's pictures are drawn from the file it made (``previews``), worked out as make_image's are: a
 second evaluator, reading the spec, showed other numbers than the buyer's file. A "general" number shows as Excel's
 General format does. The Check line names a whole column (C:C) whose total row a SUM would add again, and checks a
 sheet's own ranges, ranges of several columns and column formulas too; parts of the data (quarters) are no longer named.
@@ -106,7 +106,7 @@ class Sheet:
     filter: bool
     zebra: bool
     chart: dict[str, Any] | None
-    warnings: list[str] = field(default_factory=list)  # 0.37.4: for the Check line (a CSV's header line)
+    warnings: list[str] = field(default_factory=list)  # 0.37.5: for the Check line (a CSV's header line)
 
 
 @dataclass
@@ -200,8 +200,8 @@ def parse(source: str, read_csv: Any) -> Spec:
             if column.formula:
                 last = first + len(sheet.rows) + sheet.empty_rows - 1
                 check_formula(_placed(column.formula, first, first, last), names, f"{sheet.name} column {c + 1}")
-    spec.warnings.extend(warning for sheet in spec.sheets for warning in sheet.warnings)  # 0.37.4: a CSV's header
-    spec.warnings.extend(_formula_checks(spec))  # 0.19.2, 0.32.0, 0.37.4
+    spec.warnings.extend(warning for sheet in spec.sheets for warning in sheet.warnings)  # 0.37.5: a CSV's header
+    spec.warnings.extend(_formula_checks(spec))  # 0.19.2, 0.32.0, 0.37.5
     return spec
 
 
@@ -211,9 +211,9 @@ def data_rows(sheet: Sheet) -> tuple[int, int]:
     return first, first + len(sheet.rows) + sheet.empty_rows - 1
 
 
-# --- what a formula's references take (0.19.2, 0.32.0, 0.37.4) ---
+# --- what a formula's references take (0.19.2, 0.32.0, 0.37.5) ---
 
-# Functions that take in every number of a range: a total row's too (0.37.4: =SUM(Income!C:C) added Income's total
+# Functions that take in every number of a range: a total row's too (0.37.5: =SUM(Income!C:C) added Income's total
 # to its data, in the buyer's file twice the income).
 _NUMBERS = frozenset({"SUM", "AVERAGE", "COUNT", "MIN", "MAX", "SUMPRODUCT", "MEDIAN", "LARGE", "SMALL", "RANK"})
 # A conditional function's arguments: the place of the range whose numbers it takes (None: it counts), and where its
@@ -322,7 +322,7 @@ def _reference(text: str) -> _Ref | None:
 
 def _formula_checks(spec: Spec) -> list[str]:
     """The Check line's findings on the formulas: a range that leaves out data meant to be in it (0.19.2), a cell that
-    is no data (0.32.0), and 0.37.4: rows outside the data that a function counts (a whole column's total row, a
+    is no data (0.32.0), and 0.37.5: rows outside the data that a function counts (a whole column's total row, a
     header COUNTA counts), on the formula's own sheet too, for ranges of several columns, and in each column's formula
     once, also on a sheet with no rows yet (a template's: its rows were all that was read)."""
     book = {sheet.name.casefold(): sheet for sheet in spec.sheets}
@@ -422,7 +422,7 @@ def _short(ref: _Ref, sheet: Sheet, placed: bool, own: bool, row: int, taken: li
     """0.19.2: a range that leaves out some of its sheet's data rows as a range meant to take them all does: it starts
     with them (or above) and stops short of their end, or ends with them and starts late. Live, a budget's summary
     summed Income!C2:C9 and Expenses!C2:C21 while their data were rows 4 to 12 and 4 to 26: what a buyer typed in the
-    rows below was left out. 0.37.4: not a part that the workbook's ranges take whole together (four quarters, each
+    rows below was left out. 0.37.5: not a part that the workbook's ranges take whole together (four quarters, each
     named as leaving out the rest of the year); and on the formula's own sheet, not a running sum's range to its own
     row, nor a total of the rows above it (or below it), which it takes up to the row next to it. (Another sheet's
     rows are no running sum: a summary's row 4 summing Income!C4:C9 is the live mistake, as both start in row 4.)
@@ -463,7 +463,7 @@ def _short(ref: _Ref, sheet: Sheet, placed: bool, own: bool, row: int, taken: li
 
 
 def _together(ranges: list[tuple[int, int]], first: int, last: int) -> bool:
-    """0.37.4: whether ranges that each take a part of rows ``first`` to ``last`` take them all together, as four
+    """0.37.5: whether ranges that each take a part of rows ``first`` to ``last`` take them all together, as four
     quarters take a year's months (a range that takes all of them alone hides no part that is left out)."""
     parts = sorted(
         (max(low, first), min(high, last))
@@ -483,7 +483,7 @@ def _rows_text(first: int, last: int) -> str:
 
 
 def _counted(ref: _Ref) -> str:
-    """0.37.4: the rows outside its sheet's data that a range takes in where its function counts them, as Excel works
+    """0.37.5: the rows outside its sheet's data that a range takes in where its function counts them, as Excel works
     it out: SUM and the like a total row's number, COUNTA a title, a header or a total row too, COUNTBLANK their empty
     cells, and a conditional function (SUMIF, COUNTIF...) the rows whose cells meet all its criteria. In the 0.37.0
     analysis a summary's =SUM(Income!C:C) was 7,141.00 € in the buyer's file, Income's total counted twice, while the
@@ -661,9 +661,9 @@ def _sheet(where: str, data: Any, read_csv: Any) -> Sheet:
 
 
 def _rows(where: str, s: dict[str, Any], read_csv: Any, columns: list[Column]) -> tuple[list[list[Any]], str]:
-    """A sheet's rows, from its spec or a CSV file, an empty text as an empty cell (0.37.4: "" in a column with a
+    """A sheet's rows, from its spec or a CSV file, an empty text as an empty cell (0.37.5: "" in a column with a
     formula kept the formula out, as "Rent,950,950," did), and what to say of a CSV's first line that looks like a
-    header with other titles than the columns'. 0.37.4: a first line that is the columns' titles is left out: in the
+    header with other titles than the columns'. 0.37.5: a first line that is the columns' titles is left out: in the
     0.37.0 analysis "Category,Planned,Actual" became a data row, its Left formula and the Left total #VALUE!."""
     width = len(columns)
     header = ""
@@ -706,7 +706,7 @@ def _rows(where: str, s: dict[str, Any], read_csv: Any, columns: list[Column]) -
 
 
 def _titles_line(fields: list[str], columns: list[Column]) -> bool:
-    """0.37.4: whether a CSV file's line is the columns' titles (case and spaces aside; the formulas' columns may be
+    """0.37.5: whether a CSV file's line is the columns' titles (case and spaces aside; the formulas' columns may be
     left out), as a CSV's header line is."""
     named = [(f.strip().casefold(), c.title.strip().casefold()) for f, c in zip(fields, columns, strict=False)]
     named = [(field_, title) for field_, title in named if field_]
@@ -714,7 +714,7 @@ def _titles_line(fields: list[str], columns: list[Column]) -> bool:
 
 
 def _header_like(data: list[list[Any]], columns: list[Column]) -> bool:
-    """0.37.4: whether a CSV's first row has a text where a column of numbers has numbers in the rows below it, as a
+    """0.37.5: whether a CSV's first row has a text where a column of numbers has numbers in the rows below it, as a
     header with other titles than the columns' has."""
     numbers = {"number", "integer", "eur", "usd", "percent"}
     first, rest = (data[0], data[1:]) if data else ([], [])
@@ -740,7 +740,7 @@ def _placed(formula: str, row: int, first: int, last: int) -> str:
 def _number_or_text(value: str) -> Any:
     text = value.strip()
     if not text:
-        return None  # 0.37.4: an empty field is an empty cell
+        return None  # 0.37.5: an empty field is an empty cell
     if re.fullmatch(r"-?\d+", text):
         return int(text)
     if re.fullmatch(r"-?\d+\.\d+", text):
@@ -883,7 +883,7 @@ def _chart(ws: Any, sheet: Sheet, top: int, first: int, last: int) -> None:
 
 @dataclass
 class _Table:
-    """0.37.4: what a sheet's picture shows: its title, its header, its rows and its total row (none when it has none),
+    """0.37.5: what a sheet's picture shows: its title, its header, its rows and its total row (none when it has none),
     each cell as the file shows it, with whether it is a formula shown as written."""
 
     title: str
@@ -896,7 +896,7 @@ def previews(spec: Spec, data: bytes, max_rows: int = 18) -> list[bytes]:
     """A PNG of each sheet's table (0.15.0: each sheet's), for listing photos and the dashboard: its title, its header,
     its first rows, up to 4 of its empty rows and its totals.
 
-    0.37.4: drawn from ``data``, the workbook made of ``spec``: each cell as the buyer's file shows it once Excel has
+    0.37.5: drawn from ``data``, the workbook made of ``spec``: each cell as the buyer's file shows it once Excel has
     calculated it, worked out from the file's own cells as make_image's sheet pictures are (``picture``) and shown in
     the cell's number format. The pictures had an evaluator of their own that read the spec: a whole column was its
     data rows only (Excel takes the total row in too), a total left out the empty rows and their formulas, a "general"
@@ -989,7 +989,7 @@ def _preview(spec: Spec, sheet: Sheet, table: _Table) -> bytes:
 
 # --- any Excel file: read and drawn (0.15.0) ---
 
-# A sheet's rows read: 0.37.4, all of the largest sheet Ember makes (a title, its empty row and a header, MAX_ROWS of
+# A sheet's rows read: 0.37.5, all of the largest sheet Ember makes (a title, its empty row and a header, MAX_ROWS of
 # data, MAX_EMPTY_ROWS to fill in and the total row). Its pictures are drawn from the file now: at 2,000 rows, a total
 # below row 2,000 (and every sum that took it in) was missing from them.
 READ_ROWS = 3 + MAX_ROWS + MAX_EMPTY_ROWS + 1
@@ -1166,7 +1166,7 @@ def _german(book: Any) -> bool:
 def cell_text(value: Any, number_format: str, german: bool = False) -> str:
     """A cell's value as Excel shows it, near enough: in its number format, or the nearest of FORMATS. 0.20.0: a
     percentage with the decimals its format has ('0.00%' is 31.97%), and with ``german`` as German Excel shows numbers:
-    1.234,56 € and 31,97%. 0.37.4: a number in a date format is the day it stands for, as Excel keeps dates (what a
+    1.234,56 € and 31,97%. 0.37.5: a number in a date format is the day it stands for, as Excel keeps dates (what a
     formula in a date column works out: Due + 30 is a day's number), and a "general" number is shown as Excel's
     General format shows it (_general)."""
     number = isinstance(value, int | float) and not isinstance(value, bool)
@@ -1194,7 +1194,7 @@ def _date_text(year: int, month: int, day: int, number_format: str) -> str:
 
 
 def _day(value: float, number_format: str) -> str:
-    """0.37.4: a day's number in a date format as Excel shows it: day 1 is 1900-01-01, and Excel counts a 29 February
+    """0.37.5: a day's number in a date format as Excel shows it: day 1 is 1900-01-01, and Excel counts a 29 February
     1900 that never was (so _EPOCH holds from day 61 on); day 0 is the 0th of January 1900, and a number before or
     after Excel's dates fills the cell with ########, as an empty Due less 7 does."""
     if not math.isfinite(value) or not 0 <= value < _LAST_DAY:
@@ -1643,7 +1643,7 @@ def _shown(value: Any, fmt: str) -> str:
 
 
 def _general(value: float) -> str:
-    """0.37.4: a number as Excel's General format shows it in a cell wide enough: in at most 11 characters (a minus
+    """0.37.5: a number as Excel's General format shows it in a cell wide enough: in at most 11 characters (a minus
     sign besides), with the digits that fit, rounded (=1/3 is 0.333333333, =PI() 3.141592654, 1234.5678901 is
     1234.56789), and in scientific notation with 6 digits what has no room for its digits (123456789012 is
     1.23457E+11, 0.0000123456 is 1.23456E-05). The pictures printed numbers with Python's %g: 1234567 as 1.23457e+06,

@@ -3,7 +3,7 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
-## 0.37.4
+## 0.37.5
 
 Your spreadsheets' pictures show the buyer's file, and the Check line names what is wrong in it, not what is right.
 
