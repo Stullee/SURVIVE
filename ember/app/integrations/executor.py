@@ -5,11 +5,16 @@ when the owner decides on such a request). For every approved email of the curre
 first:
 
 1. At the daily send limit (counted per local day) it waits for tomorrow.
-2. A recipient who asked not to get emails: the request is closed as failed.
-3. The email is built from the approved action (the owner's text if approved with changes), with a footer
+2. 0.37.3: Ember's mailbox is read first, unless a read that began at or after the newest of the emails'
+   approvals, at most FRESH_MINUTES ago, read it through (``_unread``): a reply asking to stop is seen before
+   anything goes out. While it can't be read, every email waits. The mailbox went unread for hours while the
+   kill switch was on, the app was down or reading failed, and the first round after that sent before it read.
+3. A recipient who asked not to get emails: the request is closed as failed.
+4. The email is built from the approved action (the owner's text if approved with changes), with a footer
    the model can't remove: plain text, one recipient, no copies, no attachments.
-4. A 'running' row in ``email_actions`` is committed before anything is sent, and the approval is re-checked
-   in that same transaction (the owner may have cancelled it). Then it is sent once. A failure before the
+5. A 'running' row in ``email_actions`` is committed before anything is sent, and the approval is re-checked
+   in that same transaction (the owner may have cancelled it), and (0.37.3) the kill switch: once it is on, the
+   run ends and the rest waits (connectors.halted). Then it is sent once. A failure before the
    email was handed over is 'failed'; anything during or after that is 'unclear', and nothing is ever sent
    again automatically. A row still 'running' after a restart becomes 'unclear' too.
 
@@ -26,18 +31,18 @@ import logging
 import sqlite3
 import threading
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.headerregistry import Address
 from email.message import EmailMessage
 from email.utils import format_datetime, make_msgid
 from typing import Any
 
 from .. import events
-from ..agent import netguard, policy
+from ..agent import agenda, netguard, policy
 from ..agent.store import AgentScope
 from ..config import Settings
 from ..db import Database
-from ..economy.clock import Clock, to_iso
+from ..economy.clock import Clock, from_iso, to_iso
 from . import connectors, mail, mailstore
 from .mail import Mailbox, MailError, NotSent, Unclear
 
@@ -51,6 +56,13 @@ UNCLEAR = (
     "It is unclear whether it was sent ({error}). Ember won't resend it; check the Sent folder at your mail provider."
 )
 INTERRUPTED = "the app stopped while sending"
+# 0.37.3: how old the newest read of Ember's mailbox may be when an approved email goes out (and it began after the
+# email's approval); an older one is read again first (``Executor._unread``)
+FRESH_MINUTES = 5
+UNREAD = (
+    "Ember's mailbox {why}, and a reply asking not to be emailed may wait there: it goes out once the mailbox is read"
+)
+WAITING_MAIL = "waiting_mail"  # 0.37.3: a run's outcome while the approved emails wait for the mailbox to be read
 
 
 def _cap(text: str | None, limit: int) -> str | None:
@@ -150,7 +162,10 @@ def execution(
     if row["status"] not in APPROVED:
         return None
     status = "waiting_limit" if sent_today(conn, clock, scope) >= daily_limit else "waiting"
-    return {"status": status, "started_at": None, "finished_at": None, "result": None, "error": None}
+    failed = conn.execute("SELECT value FROM meta WHERE key = ?", (mailstore.meta_key(scope.mode, "last_error"),))
+    error = (failed.fetchone() or [""])[0]  # 0.37.3: while the mailbox can't be read, it waits (Executor._unread)
+    held = UNREAD.format(why=f"can't be read ({error})") if status == "waiting" and error else None
+    return {"status": status, "started_at": None, "finished_at": None, "result": held, "error": None}
 
 
 def integration(
@@ -222,24 +237,49 @@ class Executor:
             with self.db.connection() as conn:
                 if conn.in_transaction:
                     raise RuntimeError("the executor must not run inside a database transaction")
-                ids = [
-                    r[0]
-                    for r in conn.execute(
-                        f"SELECT id FROM approvals WHERE {where} AND executor = 'email' AND status IN {APPROVED}"
-                        " AND NOT EXISTS (SELECT 1 FROM email_actions x WHERE x.approval_id = approvals.id)"
-                        " ORDER BY id",
-                        params,
-                    )
-                ]
+                due = conn.execute(
+                    f"SELECT id, decided_at FROM approvals WHERE {where} AND executor = 'email'"
+                    f" AND status IN {APPROVED}"
+                    " AND NOT EXISTS (SELECT 1 FROM email_actions x WHERE x.approval_id = approvals.id)"
+                    " ORDER BY id",
+                    params,
+                ).fetchall()
+                limited = sent_today(conn, self.clock, scope) >= self.settings.email_daily_limit
+            ids = [int(r["id"]) for r in due]
+            # 0.37.3: a "stop" waiting in the mailbox is read before anything goes out (none goes out at the limit)
+            if ids and not limited and self._unread(scope, max(str(r["decided_at"] or "") for r in due)):
+                return [(ids[0], WAITING_MAIL)]  # they all wait, in order
             done = []
             for approval_id in ids:
                 outcome = self._one(scope, approval_id)
                 done.append((approval_id, outcome))
-                if outcome == "waiting_limit":
-                    break  # the rest waits for tomorrow too, in order
+                if outcome in ("waiting_limit", connectors.HALTED):
+                    break  # the rest waits too, in order (for tomorrow, or 0.37.3 the kill switch's reset)
             return done
         finally:
             self._lock.release()
+
+    def _unread(self, scope: AgentScope, decided: str) -> str | None:
+        """0.37.3: why the approved emails wait for Ember's mailbox to be read (None: they may go out). They may once a
+        read that began at or after ``decided`` (their newest approval), at most FRESH_MINUTES ago, read it through
+        (mailstore.read_at); else it is read now, a failing mailbox no sooner than its wait allows (mailstore.due).
+        Reads happened only between cycles (not while the kill switch was on) and at a cycle's start: after a reset,
+        a restart or hours of failing reads, the first round sent to someone whose "stop" was still unread."""
+        assert self.mailbox is not None
+        read = mailstore.read_at(self.db, scope.mode)
+        fresh = timedelta(minutes=FRESH_MINUTES)
+        if read is not None and read >= decided and self.clock.now() - from_iso(read) <= fresh:
+            return None
+        if not mailstore.due(self.db, self.clock, scope.mode, agenda.MAIL_MINUTES):
+            return UNREAD.format(why=f"can't be read ({mailstore.last_fetch(self.db, scope.mode)[1]})")
+        # The fake mailbox of a dry run never needs the network: sealed, it couldn't reach it either.
+        with netguard.sealed() if self.mailbox.simulated else contextlib.nullcontext():
+            fetched = mailstore.fetch(self.db, self.clock, scope, self.mailbox)
+        if fetched.error is not None:
+            return UNREAD.format(why=f"can't be read ({fetched.error})")
+        if fetched.waiting:
+            return UNREAD.format(why=f"has {fetched.waiting} new email{'s' if fetched.waiting != 1 else ''} to read")
+        return None
 
     def _one(self, scope: AgentScope, approval_id: int) -> str:
         assert self.mailbox is not None
@@ -253,6 +293,8 @@ class Executor:
             started = conn.execute("SELECT 1 FROM email_actions WHERE approval_id = ?", (approval_id,)).fetchone()
             if row is None or row["status"] not in APPROVED or started is not None:
                 return "skipped"  # cancelled or decided meanwhile
+            if connectors.halted(conn):
+                return connectors.HALTED  # 0.37.3: the kill switch came on while this round sent
             if sent_today(conn, self.clock, scope) >= self.settings.email_daily_limit:
                 return "waiting_limit"
             try:
