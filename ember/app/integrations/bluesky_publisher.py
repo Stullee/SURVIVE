@@ -169,7 +169,7 @@ def execution(
 
 
 def summary(conn: sqlite3.Connection, scope: AgentScope) -> str:
-    """0.37.2: the live posts and their reactions in one line, for an ordinary cycle's BLUESKY and the daily review:
+    """0.37.3: the live posts and their reactions in one line, for an ordinary cycle's BLUESKY and the daily review:
     what the channel is judged by (an ordinary cycle's plan had none of its numbers, so the agent couldn't tell its
     owner)."""
     live, reacted = totals(conn, scope)
@@ -182,7 +182,7 @@ def summary(conn: sqlite3.Connection, scope: AgentScope) -> str:
 
 
 def text(conn: sqlite3.Connection, scope: AgentScope, limit: int = 6) -> str:
-    """The plan's BLUESKY: Ember's newest posts with their numbers. 0.37.2: each by its request's number and day, as the
+    """The plan's BLUESKY: Ember's newest posts with their numbers. 0.37.3: each by its request's number and day, as the
     owner and the agent name it (its record key at Bluesky said nothing to either)."""
     recent = posts(conn, scope, limit)
     if not recent:

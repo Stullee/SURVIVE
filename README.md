@@ -229,7 +229,16 @@ promise is worth 3 now and urgent only from two days before its day; one taken
 three times in a day without being kept weighs its worth alone until the day is
 over.
 
-0.37.2: Ember can read her Bluesky posts' numbers in any cycle but a venture
+0.37.2: near the bottom of the balance a workshop run can no longer end Ember's
+life below zero, your Anthropic account paying the rest. Since 0.33.0 a run kept
+back no more than the day had left, but that limit also held a fifth of the
+balance, so the rule that a run needs 5 times its hold above the last will's
+reserve always passed: in the codebase analysis of 0.37.0 (finding 3.4), a run
+went ahead holding $0.62 with $3.10 left, cost $3.21, and Ember died at -$0.08
+without its last will. Now only the day limits what a run keeps back, and the
+balance counts all of it.
+
+0.37.3: Ember can read her Bluesky posts' numbers in any cycle but a venture
 cycle. Since 0.35.0 `bluesky_posts` was offered only with the marketing tools,
 so an ordinary cycle (the one that answers you) couldn't say how a post did.
 Now it lists each post by its request number with its likes, reposts, replies
