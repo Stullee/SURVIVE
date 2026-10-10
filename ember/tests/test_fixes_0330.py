@@ -172,8 +172,8 @@ def test_the_daily_review_hears_which_channels_are_ready(data_dir: Path) -> None
     settings = test_fixes_0320.EVERYWHERE
     assert (
         f"CHANNELS READY (their tools work now): Pinterest: ember-dry-run, at most {settings.pinterest_pins_per_day}"
-        f" pins a day; Bluesky: at most {settings.bluesky_posts_per_day} posts a day; Printify: at most"
-        f" {settings.printify_products_per_day} products a day." in card
+        f" pins a day; Bluesky: 0 followers, no post live, at most {settings.bluesky_posts_per_day} posts a day;"
+        f" Printify: at most {settings.printify_products_per_day} products a day." in card
     )
     assert "CHANNELS NOT READY" not in card
 

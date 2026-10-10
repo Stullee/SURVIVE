@@ -627,6 +627,7 @@ class CycleRunner:
             self.bluesky.handle() or "Ember's account",
             self.settings.bluesky_posts_per_day,
             website.address(self.settings),  # the owner's website, which a post may link
+            self.bluesky.followers(),  # 0.37.7: bluesky_posts says them
         )
         self.bluesky_on = True
 
@@ -804,9 +805,17 @@ class CycleRunner:
             blog_text = site_publisher.text(conn, self.db, self.scope, self.settings) if self.blog_on else ""
             if self.marketing_apart and kind == lines.ORDINARY:
                 # 0.35.0: a ready channel's account, posts and tools are a marketing cycle's; one waiting for the
-                # owner's setup still says so (live, the agent asked its owner for the same setup again and again)
+                # owner's setup still says so (live, the agent asked its owner for the same setup again and again).
+                # 0.37.7: Bluesky's numbers stay in one line, with bluesky_posts: an ordinary cycle judges the channel
+                # and answers the owner about it (live, it told them it couldn't report on their posts)
                 pins = "" if self.pinterest_on else pins
-                posted = "" if self.bluesky_on else posted
+                if self.bluesky_on and self.bluesky is not None:
+                    live = bluesky_publisher.summary(conn, self.scope)
+                    posted = (
+                        _bluesky_head(self.bluesky, self.settings.bluesky_posts_per_day)
+                        + f"{live[:1].upper()}{live[1:]}. Posting is a marketing cycle's; bluesky_posts reads each"
+                        " post's numbers."
+                    )
                 blog_text = ""
             books = (  # 0.25.0
                 kdp.text(conn, self.scope, self.clock.now(), self.settings.kdp_author) if self.kdp_on else ""
@@ -1204,7 +1213,7 @@ class CycleRunner:
             critic=judged,
         )
 
-    def _review_channels(self) -> str:
+    def _review_channels(self, conn: Any) -> str:
         """0.24.0: the channels switched on that wait for the owner's setup, for the daily review (as the plan shows
         them, _waiting). Live, four reviews in a row ordered "send the Pinterest request today" while no Pinterest tool
         could, and the owner had said three times that Pinterest still had to approve their app. 0.33.0: and the ones
@@ -1218,7 +1227,13 @@ class CycleRunner:
         elif self.pinterest is not None:
             waits.append(("Pinterest", _waiting("Pinterest", self.pinterest.status(), self._etsy_state())))
         if self.bluesky is not None and self.bluesky_on:
-            ready.append(f"Bluesky: at most {self.settings.bluesky_posts_per_day} posts a day")
+            # 0.37.7: with its numbers, which the review judges the channel by
+            followers = self.bluesky.followers()
+            known = "" if followers is None else f"{followers} follower{'' if followers == 1 else 's'}, "
+            ready.append(
+                f"Bluesky: {known}{bluesky_publisher.summary(conn, self.scope)}, at most"
+                f" {self.settings.bluesky_posts_per_day} posts a day"
+            )
         elif self.bluesky is not None:
             waits.append(("Bluesky", _waiting("Bluesky", self.bluesky.status(), "ok", venture=False)))
         if self.printify is not None and self.printify_on:
@@ -1252,7 +1267,7 @@ class CycleRunner:
                 self.economy.life.scope(),
                 status,
                 dry_run=self.dry_run,
-                channels=self._review_channels(),
+                channels=self._review_channels(conn),
             )
         request = prompts.review_request(self.settings, card.text)
         if not context.fits(request, REVIEW_CALL.input_tokens):

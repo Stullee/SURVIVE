@@ -1015,9 +1015,12 @@ marketing cycle makes no documents, spreadsheets, new listings, products or
 books and sends no email.
 
 An ordinary cycle doesn't carry the marketing tools, and its plan doesn't show
-Pinterest, Bluesky or the blog, with two exceptions: a channel that waits for
-your setup still says so (so Ember doesn't ask you again), and an ordinary
-cycle on a channel's own product (setting it up) keeps that channel. The
+Pinterest, Bluesky or the blog, with three exceptions: a channel that waits for
+your setup still says so (so Ember doesn't ask you again), an ordinary cycle on
+a channel's own product (setting it up) keeps that channel, and (since 0.37.7)
+Bluesky's numbers stay: the plan keeps one line with the account's followers
+and the live posts' reactions, and `bluesky_posts` reads each post's, so Ember
+can tell you how a post did (proposing posts stays a marketing cycle's). The
 **Activity** list marks each cycle with its kind and its line (*Marketing · #4
 Nebenkosten*, *Product line · #7 …*).
 
@@ -2271,6 +2274,11 @@ To stop Ember's access, delete the app password at Bluesky.
   each post's likes, reposts, replies and quotes, and any label Bluesky's
   moderation put on them. The agent's plan shows them (BLUESKY), and the
   metrics `bluesky_posts_live` and `bluesky_reactions` can measure a milestone.
+  Since 0.37.7 the agent reads them with `bluesky_posts` in any cycle but a
+  venture cycle (until then only in a marketing cycle): each post by its
+  request number and day, with the account's followers and the posts made
+  today against the daily limit. An ordinary cycle's plan and the daily review
+  show the live posts' reactions, in all and per post.
   A live post that links one of Ember's listings (by either link) counts as
   reach for its product line. Bluesky doesn't say how many people clicked a
   link: watch the listings' views on Etsy.
@@ -2635,7 +2643,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.37.6 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.37.7 (by /u/your name)`.
 
 ## Amazon KDP
 

@@ -273,7 +273,9 @@ class Snapshot:
     review: str = ""  # today's daily review, as the planner sees it ("" before it is made)
     etsy: str = ""  # the ETSY SHOP section ("" without a shop)
     pinterest: str = ""  # the PINTEREST section ("" while off; 0.15.0: one line while not set up), 0.13.0
-    bluesky: str = ""  # the BLUESKY section ("" while off; one line while not set up), 0.19.0
+    # the BLUESKY section ("" while off; one line while not set up), 0.19.0; 0.37.7: the account's line with the live
+    # posts' reactions in an ordinary cycle while marketing steps have cycles of their own
+    bluesky: str = ""
     printify: str = ""  # the PRINTIFY section ("" while off; 0.15.0: one line while not set up), 0.13.0
     website: str = ""  # the WEBSITE section ("" while the owner's website is off), 0.13.0
     blog: str = ""  # the BLOG section ("" while the owner's blog is off), 0.14.0

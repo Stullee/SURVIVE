@@ -281,6 +281,14 @@ expired, was withdrawn, rejected or failed gets **Propose the listing again**:
 until now it never had a step ready again (the codebase analysis of 0.37.0,
 sections 3.1 and 3.2).
 
+0.37.7: Ember can read her Bluesky posts' numbers in any cycle but a venture
+cycle. Since 0.35.0 `bluesky_posts` was offered only with the marketing tools,
+so an ordinary cycle (the one that answers you) couldn't say how a post did.
+Now it lists each post by its request number with its likes, reposts, replies
+and quotes, the account's followers and the posts made today against the daily
+limit, and an ordinary cycle's plan and the daily review show the live posts'
+reactions, in all and per post.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

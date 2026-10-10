@@ -193,10 +193,13 @@ ORDINARY_TOOLS = (
     | MAIL_TOOLS
     | KDP_TOOLS
 )
+# 0.37.7: reading a channel's numbers brings no buyer: any cycle with the account but a venture cycle has it. Live, an
+# ordinary cycle the owner asked how posts #43 and #44 did had no bluesky_posts, and answered that it couldn't say.
+CHANNEL_READS = frozenset({"bluesky_posts"})
 # 0.28.0: the tools that bring buyers to a line's listings (a pin, a Bluesky post, a blog post, the link page): a
 # marketing cycle's (lines.py), and an ordinary cycle's only while no marketing cycles run (the owner's share is 0, the
 # burn mode, nothing live to market). A Reddit post stays an ordinary cycle's too (a first test of demand, often).
-MARKETING_TOOLS = PINTEREST_TOOLS | BLUESKY_TOOLS | BLOG_TOOLS
+MARKETING_TOOLS = (PINTEREST_TOOLS | BLUESKY_TOOLS | BLOG_TOOLS) - CHANNEL_READS
 # 0.28.0: what a marketing cycle doesn't carry: making documents, spreadsheets and statements, the workshop, new
 # listings and products, KDP, email and the owner's site pages (an ordinary cycle's work).
 BUILDING_TOOLS = (
@@ -1075,8 +1078,8 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "bluesky_posts",
-            "Read Ember's Bluesky account and your newest posts with their likes, reposts, replies and quotes (at the "
-            "last sync). Free.",
+            "Read Ember's Bluesky account (followers, posts today, the daily limit) and your newest posts by request "
+            "number with their likes, reposts, replies and quotes (at the last sync). Free.",
             {},
             per_cycle=3,
         ),
@@ -1483,6 +1486,7 @@ class BlueskyAccess:
     handle: str
     daily_limit: int
     site_url: str = ""  # the owner's website ("": none set)
+    followers: int | None = None  # 0.37.7: at the last sync (None before one)
 
 
 @dataclass(frozen=True)
@@ -4526,10 +4530,26 @@ def _bluesky(ctx: ToolContext) -> BlueskyAccess:
 
 
 def _bluesky_posts(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    """0.37.7: with the followers, the posts made today and the reactions per post, each post by its request's number,
+    and what Bluesky doesn't count (views, clicks): what the channel is judged by."""
     account = _bluesky(ctx)
     made = bluesky_publisher.posts(conn, ctx.scope, 12)
-    head = f"Ember's Bluesky account: @{account.handle} (at most {account.daily_limit} posts a day)."
-    return Outcome(True, f"{head}\n{bluesky_publisher.text(conn, ctx.scope, 12)}", f"{len(made)} posts")
+    n = account.followers
+    followers = "" if n is None else f"{n} follower{'' if n == 1 else 's'}; "
+    today = bluesky_publisher.created_today(conn, ctx.clock, ctx.scope)
+    head = (
+        f"Ember's Bluesky account: @{account.handle} ({followers}{today} posted today, at most {account.daily_limit}"
+        " a day)"
+    )
+    if not made:
+        return Outcome(True, f"{head}.\nNo post of yours yet.", "0 posts")
+    synced = max((str(r["synced_at"]) for r in made if r["synced_at"]), default=None)
+    read = f"Numbers as Ember's code read them at {_local(ctx, synced)}" if synced else "Numbers not read yet"
+    text = (
+        f"{head}; {bluesky_publisher.summary(conn, ctx.scope)}.\n{bluesky_publisher.text(conn, ctx.scope, 12)}\n"
+        f"{read}. Bluesky counts no views or clicks: the listings a post links show their views (etsy_listing)."
+    )
+    return Outcome(True, text, f"{len(made)} posts")
 
 
 def _post_link(ctx: ToolContext, conn: Any, raw: str, what: str = "link") -> tuple[str, str, str, etsy.Upload | None]:
@@ -4682,7 +4702,7 @@ def _repeated_post(conn: Any, scope: AgentScope, text: str) -> str | None:
     only a request waiting with exactly the same post was caught: one repeating a live post reached the owner."""
     where, params = scope.where("a")
     rows = conn.execute(
-        f"SELECT a.id, a.status, a.action, p.rkey, p.text, p.status AS posted FROM approvals a LEFT JOIN bluesky_posts"
+        f"SELECT a.id, a.status, a.action, p.text, p.status AS posted FROM approvals a LEFT JOIN bluesky_posts"
         f" p ON p.approval_id = a.id WHERE {where} AND a.executor = 'bluesky_post' AND (a.status IN ('pending',"
         " 'approved', 'approved_with_changes') OR p.status IN ('running', 'active', 'unclear')) ORDER BY a.id DESC",
         params,
@@ -4693,7 +4713,7 @@ def _repeated_post(conn: Any, scope: AgentScope, text: str) -> str | None:
             said.append(bluesky.post_from_action(row["action"]).text)
         if any(bluesky.same_words(text, words) for words in said if words):
             if row["posted"] in ("running", "active", "unclear"):
-                return f"your post {row['rkey'] or 'of request #' + str(row['id'])} on Bluesky"
+                return f"your post of request #{row['id']} on Bluesky"  # 0.37.7: as bluesky_posts names it
             return f"request #{row['id']}, which waits for your owner"
     return None
 

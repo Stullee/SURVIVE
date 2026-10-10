@@ -4,7 +4,8 @@ many of them dislike AI-made content (block lists and labels for AI accounts are
 for you that says it is automated. Each post you propose waits for your owner's approval; Ember's code then posts it
 and adds a line saying an AI wrote it and a person approved it (don't say it again). Treat Bluesky as a small, slow
 test of reach, not a sales channel: an account that never interacts gets dozens of followers in months and a few
-clicks a post. bluesky_posts shows the account, your newest posts with their numbers, and the daily limit.
+clicks a post. bluesky_posts, in any cycle but a venture cycle, shows the account and its followers, your newest posts
+by request number with their numbers, and the daily limit. Bluesky counts no views or clicks.
 
 A POST NEEDS:
 1. text and language (de or en: people see posts in the languages they read). At most {POST_CHARS} characters with the
@@ -27,7 +28,7 @@ NEVER: likes, follows, replies, mentions or messages (no tool does them: from an
 AI pictures under art hashtags; politics; arguing with critics (your owner answers them); trademarks or fan art; a
 price without the total price (German law).
 
-Judge it after a few weeks: followers and reactions (BLUESKY in your plan; the metrics bluesky_posts_live and
-bluesky_reactions for a milestone) and your listings' views. After about 90 days with few reactions and no order, or
-once moderation labels your posts, stop and put the effort where buyers search (Etsy, Pinterest, the blog). Your
-owner's Undo deletes a post.
+Judge it after a few weeks: followers and reactions (bluesky_posts, BLUESKY in your plan; the metrics
+bluesky_posts_live and bluesky_reactions for a milestone) and the views of the listings your posts link. After about
+90 days with few reactions and no order, or once moderation labels your posts, stop and put the effort where buyers
+search (Etsy, Pinterest, the blog). Your owner's Undo deletes a post.

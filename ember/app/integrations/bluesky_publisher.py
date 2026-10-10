@@ -168,8 +168,22 @@ def execution(
     }
 
 
+def summary(conn: sqlite3.Connection, scope: AgentScope) -> str:
+    """0.37.7: the live posts and their reactions in one line, for an ordinary cycle's BLUESKY and the daily review:
+    what the channel is judged by (an ordinary cycle's plan had none of its numbers, so the agent couldn't tell its
+    owner)."""
+    live, reacted = totals(conn, scope)
+    if not live:
+        return "no post live"
+    return (
+        f"{live} post{'' if live == 1 else 's'} live with {reacted} reaction{'' if reacted == 1 else 's'}"
+        f" ({reacted / live:.1f} a post)"
+    )
+
+
 def text(conn: sqlite3.Connection, scope: AgentScope, limit: int = 6) -> str:
-    """The plan's BLUESKY: Ember's newest posts with their numbers."""
+    """The plan's BLUESKY: Ember's newest posts with their numbers. 0.37.7: each by its request's number and day, as the
+    owner and the agent name it (its record key at Bluesky said nothing to either)."""
     recent = posts(conn, scope, limit)
     if not recent:
         return "No post of yours yet."
@@ -186,7 +200,8 @@ def text(conn: sqlite3.Connection, scope: AgentScope, limit: int = 6) -> str:
         words = " ".join(str(r["text"]).split())[:60]
         link = f" -> {r['link']}" if r["link"] else ""
         link += f" and {r['second_link']}" if r["second_link"] else ""  # 0.25.1
-        lines.append(f"- post {r['rkey'] or '-'} ({r['status']}): {words}{link}: {numbers}")
+        day = str(r["finished_at"] or r["started_at"])[:10]
+        lines.append(f"- request #{r['approval_id']}, {day} ({r['status']}): {words}{link}: {numbers}")
     return "\n".join(lines)
 
 
