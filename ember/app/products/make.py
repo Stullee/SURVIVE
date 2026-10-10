@@ -164,7 +164,8 @@ def spreadsheet(jail: Jail, source: str, output: str) -> Made:
         spec = sheets.parse(text, jail.read)
         data = sheets.build(spec)
         # 0.15.0: a picture of each sheet (the workshop was paid $1.84 to draw three); the first keeps its old name.
-        pictures = [sheets.preview(spec, index=index) for index in range(len(spec.sheets))]
+        # 0.37.5: drawn from the file just made, as Excel shows it: the spec's own evaluator showed other numbers.
+        pictures = sheets.previews(spec, data)
     except sheets.SheetError as exc:
         raise ProductError(f"{source}: {exc}") from None
     made = Made()

@@ -464,13 +464,13 @@ BUDGET = {
 
 def test_the_sheet_pictures_work_out_iferror_if_countif_sumif_and_other_sheets() -> None:
     spec = sheets.parse(json.dumps(BUDGET), lambda path: "")
-    assert spec.warnings == []
-    book = sheets._spec_book(spec)
-    summary, year, counts = book["summary"], book["year overview"], book["counts"]
-    assert [summary.cell(i, 1) for i in range(5)] == [2800.0, 1232.5, 1567.5, 850.0, "Saving"]
-    assert [year.cell(i, 3) for i in range(2)] == [300 / 2800, 0.0]  # IFERROR: a division by zero is 0
-    assert [counts.cell(i, 1) for i in range(2)] == [2.0, 0.0]  # COUNTIF in any case, as Excel does
+    assert spec.warnings == []  # 0.37.5: a SUMIF of "Rent" over whole columns counts no total row
     data = sheets.build(spec)
+    book = sheets.values(data)  # 0.37.5: the pictures are drawn from the file, worked out as these are
+    summary, year, counts = book["Summary"], book["Year Overview"], book["Counts"]
+    assert [summary[(r, 2)] for r in range(4, 9)] == [2800.0, 1232.5, 1567.5, 850.0, "Saving"]
+    assert [year[(r, 4)] for r in (2, 3)] == [300 / 2800, 0.0]  # IFERROR: a division by zero is 0
+    assert [counts[(r, 2)] for r in (2, 3)] == [2.0, 0.0]  # COUNTIF in any case, as Excel does
     assert "=IFERROR(C3/B3,0) → 0" in sheets.workbook_text(data)
     number, picture = sheets.picture(data, "Summary")
     assert number == 3 and picture.width > 300
@@ -482,7 +482,7 @@ def test_a_formula_that_cant_be_worked_out_is_still_shown_as_written() -> None:
         json.dumps({"sheets": [{"name": "S", "columns": [{"title": "A"}], "rows": [['=TEXT(TODAY(),"yyyy")']]}]}),
         lambda path: "",
     )
-    assert sheets._spec_book(spec)["s"].cell(0, 0) == '=TEXT(TODAY(),"yyyy")'
+    assert sheets.values(sheets.build(spec))["S"][(2, 1)] == '=TEXT(TODAY(),"yyyy")'
 
 
 def test_a_range_on_another_sheet_that_misses_its_data_is_reported() -> None:
@@ -495,7 +495,8 @@ def test_a_range_on_another_sheet_that_misses_its_data_is_reported() -> None:
     assert spec.warnings == [
         "Summary row 4: Income!C2:C9 leaves out some of the data of Income (rows 4 to 12; its total is in row 13): "
         "Income!C4:C12 takes them all",
-        "Summary row 5: Expenses!C4:C27 counts the total row of Expenses (row 26) besides its data",
+        "Summary row 5: Expenses!C4:C27 counts the total row (row 26) of Expenses besides its data: Expenses!C4:C25 "
+        "takes the data alone",
     ]
 
 
