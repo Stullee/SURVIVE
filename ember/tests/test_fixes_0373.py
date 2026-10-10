@@ -1,130 +1,306 @@
-"""0.37.3: bluesky_posts in an ordinary cycle, and each post by its request's number.
+"""0.37.3: three timing defects at the approval boundary (analysis-0.37.0, 4.1.1 to 4.1.3; its reproductions are
+repro/outside/r6_stop_before_send.py, r1_kill_mid_round.py and r2_expired_veto.py).
 
-Live, the owner asked how posts #43 and #44 did on Bluesky, and Ember answered that it couldn't say: since 0.35.0 a
-ready channel's tools and section are a marketing cycle's, and bluesky_posts went with them, so the ordinary cycle that
-answered the owner (and any that judged the channel against its stop rule) had none of the posts' numbers, though the
-guide and its own plan named the tool. Reading them brings no buyer: bluesky_posts is in every cycle with the account
-but a venture cycle, an ordinary cycle's BLUESKY keeps the account's line with its live posts' reactions, and the daily
-review hears them. The tool names each post by its request's number (its record key at Bluesky said nothing to anyone),
-with the followers, the posts made today, the reactions a post and what Bluesky doesn't count.
+- A "stop" in Ember's mailbox was read after the first round's sends: nothing read the mailbox while the kill switch
+  was on, the app was down or reading failed, and the executor checked only the opt-outs it had stored.
+- The kill switch was checked once, before a round: 2 of 3 approved emails went out after the owner pressed it, and
+  the live page went on uploading every 15 minutes.
+- Requests expired only at a cycle's start, after the round's unlocks: on Resume after 8 days paused, an unlock
+  approved an 8-day-old reply, and it was sent.
 """
 
 from __future__ import annotations
 
-from dataclasses import replace
+import sqlite3
+from datetime import timedelta
+from email.message import EmailMessage
 from pathlib import Path
-from typing import Any
 
 import pytest
 
-pytest.importorskip("httpx2")
+from app.agent import agenda, policy, store
+from app.agent.owner import apply_kill_switch_reset, kill
+from app.agent.service import Agent
+from app.economy.clock import to_iso
+from app.integrations import connectors, executor, mail, mailstore
+from app.products import live
+from tests.test_agent import rows
+from tests.test_agent import tools as calls
+from tests.test_etsy import a_change, listed, shop_context
+from tests.test_executor import REPLY, FakeSMTP, approval, approve, dashboard_row, ids, live_approved, proposing
+from tests.test_executor import smtp as smtp  # noqa: F401 - the fixture
+from tests.test_fixes_0140_unlock_safety import answer, status_of, unlock
+from tests.test_live_view import agent_with
+from tests.test_mail import PASSWORD, FakeIMAP, live_agent, mail_cycle
+from tests.test_mail import imap as imap  # noqa: F401 - the fixture
+from tests.test_owner_loop import owner
+from tests.test_policy import a_milestone
 
-from app.agent import plan as plan_tree  # noqa: E402
-from app.agent import tools  # noqa: E402
-from app.agent.fake_llm import request_kind  # noqa: E402
-from app.economy.clock import from_iso, to_iso  # noqa: E402
-from app.integrations import bluesky_publisher  # noqa: E402
-from app.integrations.bluesky import FakeBluesky  # noqa: E402
-from tests.test_agent import rows  # noqa: E402
-from tests.test_bluesky import a_post, post_context, posted  # noqa: E402
-from tests.test_etsy import call  # noqa: E402
-
-EVERY = {"mail": True, "workshop": True, "etsy": True, "venture": False, "library": True, "pinterest": True}
-EVERY |= {"bluesky": True, "blog": True, "printify": True, "site": True, "kdp": True}
-NUMBERS = "14 likes, 3 reposts, 2 replies, 1 quotes"  # the fake account's, at a sync a week on
+ANN = "ann@example.org"
+VERIFIED = "mx1.mail.example; dkim=pass header.d=example.org; dmarc=pass header.from=example.org"
 
 
-def ordinary_next(agent: Any) -> int:
-    """The next cycle an ordinary one: the owner's pin of the plan's first open step that needs no channel."""
-    now = to_iso(agent.clock.now())
+def from_ann(uid: int, subject: str, body: str, reply_to: str | None = None) -> bytes:
+    """An email of Ann's, as Ember's mail provider hands it over."""
+    msg = EmailMessage()
+    msg["Authentication-Results"] = VERIFIED
+    msg["From"] = f"Ann <{ANN}>"
+    msg["To"] = "ember@mail.example"
+    msg["Subject"] = subject
+    msg["Date"] = "Mon, 28 Sep 2026 08:00:00 +0200"
+    msg["Message-ID"] = f"<m{uid}@example.org>"
+    if reply_to:
+        msg["In-Reply-To"] = reply_to
+    msg.set_content(body)
+    return msg.as_bytes()
+
+
+def press_kill(agent: Agent) -> None:
+    name = agent.settings.agent_name
+    assert kill(agent.db, agent.economy, name, {"confirm_name": name}, "Stefan").status == 200
+
+
+def scheduler_round(agent: Agent) -> None:
+    """What the scheduler does every round before it decides on a cycle (agent/scheduler.py)."""
+    agent.run_policy()
+    agent.execute_approved()
+    agent.sync_shop()
+    agent.publish_live()
+    agent.check_events()
+
+
+def an_email(agent: Agent, to: str, n: int) -> int:
+    """An email to ``to`` that the owner approved; its request's number."""
+    cycle_id = rows(agent, "SELECT MAX(id) AS id FROM cycles")[0]["id"]
+    action = mail.email_action(to, f"Hello {n}", f"Text {n}")
     with agent.db.transaction() as conn:
-        plan_tree.keep(conn, agent.scope(), now, agent.clock.today(), plan_tree.channels_from(agent.settings))
-        [step, *_] = plan_tree.nodes(
+        made = store.insert_approval(
             conn,
             agent.scope(),
-            "level = 'step' AND status = 'open' AND waiting IS NULL AND channel IS NULL"
-            " AND kind NOT IN ('promise', 'owner', 'market')",
+            cycle_id,
+            to_iso(agent.clock.now()),
+            type="contact",
+            title=f"Email {n}",
+            description="d",
+            payload=f"To: {to}\n\nText {n}",
+            expected_cost="none",
+            expected_benefit="b",
+            executor="email",
+            action=store.canonical(action),
         )
-        plan_tree.pin(conn, agent.scope(), int(step["id"]), True, "Owner", now)
-    return int(step["id"])
+    approve(agent, made)
+    return made
 
 
-def test_reading_the_posts_brings_no_buyer() -> None:
-    assert "bluesky_posts" in tools.CHANNEL_READS and not tools.CHANNEL_READS & tools.MARKETING_TOOLS
-    assert "propose_bluesky_post" in tools.MARKETING_TOOLS
-    for kind in ({}, {"marketing": True}, {"marketing_apart": True}):
-        assert tools.offered("bluesky_posts", **kind, **EVERY), kind
-    assert not tools.offered("propose_bluesky_post", marketing_apart=True, **EVERY)
-    assert not tools.offered("bluesky_posts", **{**EVERY, "venture": True})  # a venture cycle decides a venture
-    assert not tools.offered("bluesky_posts", **{**EVERY, "bluesky": False})  # nor without the account
-    names = {d["name"] for d in tools.definitions(marketing_apart=True, **EVERY)}
-    assert "bluesky_posts" in names and "propose_bluesky_post" not in names
+def events(agent: Agent) -> list[str]:
+    return [r["message"] for r in rows(agent, "SELECT message FROM events ORDER BY id")]
 
 
-def test_an_ordinary_cycle_reads_each_post_by_its_request_s_number(data_dir: Path) -> None:
-    agent, _, request = posted(data_dir)
-    ctx = post_context(agent)
-    ctx.marketing_apart = True  # an ordinary cycle while marketing steps have cycles of their own
-    shown = call(ctx, "bluesky_posts", {})
-    assert shown.ok and shown.text.startswith(
-        f"Ember's Bluesky account: @{FakeBluesky.HANDLE} (1 posted today, at most 2 a day); 1 post live with 0"
-        " reactions (0.0 a post).\n"
+# --- 4.1.1: a "stop" waiting in the mailbox is read before anything is sent ---
+
+
+def test_a_stop_that_came_while_the_kill_switch_was_on_is_read_before_anything_is_sent(
+    data_dir: Path, imap: type[FakeIMAP], smtp: type[FakeSMTP]
+) -> None:
+    imap.mails = {1: from_ann(1, "Hello?", "Do you have the planner in German?")}
+    agent = live_agent(data_dir, proposing({**REPLY, "subject": "Re: Hello?"}))
+    assert agent.run_cycle("schedule").status == "completed"
+    [request] = ids(agent)
+    approve(agent, request)
+    apply_kill_switch_reset(agent.db, agent.economy, 0)  # the option's value at the start
+    press_kill(agent)
+    imap.mails[2] = from_ann(2, "Re: Hello?", "Stop. Please don't email me.", "<m1@example.org>")
+    for _ in range(3):  # a day of rounds while the switch is on: nothing reads the mailbox
+        scheduler_round(agent)
+        agent.clock.advance(hours=8)  # type: ignore[attr-defined]
+    assert len(imap.instances) == 1 and rows(agent, "SELECT address FROM email_suppressions") == []
+    assert apply_kill_switch_reset(agent.db, agent.economy, 1)
+    agent.run_policy()  # the first round after the reset, in the scheduler's order
+    assert agent.execute_approved() == [(request, "failed")]  # before: sent, and her stop read later in the round
+    assert smtp.instances == [] and len(imap.instances) == 2  # read first
+    assert rows(agent, "SELECT address FROM email_suppressions") == [{"address": ANN}]
+    assert approval(agent, request)["result_note"] == f"Not sent: {executor.SUPPRESSED}"
+
+
+def test_a_send_rests_on_a_read_since_its_approval(data_dir: Path, imap: type[FakeIMAP], smtp: type[FakeSMTP]) -> None:
+    imap.mails = {1: from_ann(1, "Hello?", "Do you have the planner in German?")}
+    later = {"to": "bob@example.org", "subject": "Planner", "body": "Hi Bob.", "reason": "r"}
+    agent = live_agent(data_dir, proposing({**REPLY, "subject": "Re: Hello?"}, later))
+    assert agent.run_cycle("schedule").status == "completed"
+    first, second = ids(agent)
+    approve(agent, first)  # in the minute the cycle read the mailbox
+    reads = len(imap.instances)
+    assert agent.execute_approved() == [(first, "sent")] and len(imap.instances) == reads  # fresh: not read again
+    agent.clock.advance(minutes=2)  # type: ignore[attr-defined]
+    approve(agent, second)  # after the last read: a stop may have come since
+    assert agent.execute_approved() == [(second, "sent")] and len(imap.instances) == reads + 1
+    agent.clock.advance(minutes=executor.FRESH_MINUTES + 1)  # type: ignore[attr-defined]
+    assert agent.execute_approved() == [] and len(imap.instances) == reads + 1  # nothing to send: nothing read
+
+
+def test_approved_emails_wait_while_the_mailbox_can_not_be_read(
+    data_dir: Path, imap: type[FakeIMAP], smtp: type[FakeSMTP], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent, request = live_approved(data_dir)
+    agent.clock.advance(minutes=executor.FRESH_MINUTES + 1)  # type: ignore[attr-defined]
+    monkeypatch.setattr(imap, "password", "changed at the provider")  # the login is refused
+    waits = [(request, executor.WAITING_MAIL)]
+    assert agent.execute_approved() == waits
+    assert smtp.instances == [] and rows(agent, "SELECT * FROM email_actions") == []
+    shown = dashboard_row(agent, request)["execution"]
+    assert shown["status"] == "waiting" and shown["result"].startswith("Ember's mailbox can't be read (")
+    assert shown["result"].endswith(
+        "a reply asking not to be emailed may wait there: it goes out once the mailbox is read"
     )
-    assert "Numbers not read yet." in shown.text
-    refused = a_post(agent, ctx, text="Noch ein Planer #Wochenplaner")
-    assert refused.text.startswith("Error: propose_bluesky_post belongs to marketing cycles")  # posting stays theirs
-    agent.clock.advance(hours=24 * 7)
-    assert agent.bluesky_posts.sync(force=True) is None
-    ctx.bluesky = replace(ctx.bluesky, followers=agent.bluesky.followers())  # as the cycle's sync gives them
-    shown = call(ctx, "bluesky_posts", {})
-    [row] = rows(agent, "SELECT finished_at, synced_at FROM bluesky_posts")
-    read = from_iso(row["synced_at"]).astimezone(agent.clock.tz).strftime("%Y-%m-%d %H:%M")
-    with agent.db.connection() as conn:
-        listed = bluesky_publisher.text(conn, agent.scope(), 12)
-    assert shown.text == (
-        f"Ember's Bluesky account: @{FakeBluesky.HANDLE} (3 followers; 0 posted today, at most 2 a day); 1 post live"
-        " with 20 reactions (20.0 a post).\n"
-        f"{listed}\n"
-        f"Numbers as Ember's code read them at {read}. Bluesky counts no views or clicks: the listings a post links"
-        " show their views (etsy_listing)."
-    )
-    assert f"\n- request #{request}, {row['finished_at'][:10]} (active): " in shown.text and NUMBERS in shown.text
+    agent.clock.advance(minutes=1)  # type: ignore[attr-defined]
+    assert agent.execute_approved() == waits  # read again, failed again
+    reads = len(imap.instances)
+    agent.clock.advance(minutes=1)  # type: ignore[attr-defined]
+    assert agent.execute_approved() == waits and len(imap.instances) == reads  # a failing mailbox's wait (0.15.0)
+    monkeypatch.setattr(imap, "password", PASSWORD)
+    agent.clock.advance(minutes=mailstore.wait_minutes(agent.db, agent.mode, agenda.MAIL_MINUTES))  # type: ignore[attr-defined]
+    assert agent.execute_approved() == [(request, "sent")] and len(smtp.instances) == 1
+    assert dashboard_row(agent, request)["execution"]["status"] == "sent"
 
 
-def test_a_repeated_post_names_the_live_one_by_its_request(data_dir: Path) -> None:
-    agent, _, request = posted(data_dir)
-    again = a_post(agent, post_context(agent))
-    assert not again.ok and f"it says what your post of request #{request} on Bluesky" in again.text
+def test_a_stop_at_the_end_of_a_backlog_is_read_before_the_send(
+    data_dir: Path, imap: type[FakeIMAP], smtp: type[FakeSMTP], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mailstore, "MAX_FETCH", 1)  # one email a read, so the mailbox takes three
+    monkeypatch.setattr(mailstore, "FETCH_ROUNDS", 1)
+    imap.mails = {
+        1: from_ann(1, "Hello?", "Do you have the planner in German?"),
+        2: from_ann(2, "Also", "And in A5?"),
+        3: from_ann(3, "Re: Hello?", "Stop. Please don't email me.", "<m1@example.org>"),
+    }
+    agent = live_agent(data_dir, proposing({**REPLY, "subject": "Re: Hello?"}))
+    assert agent.run_cycle("schedule").status == "completed"  # it read email 1, two wait
+    [request] = ids(agent)
+    approve(agent, request)
+    assert agent.execute_approved() == [(request, executor.WAITING_MAIL)]  # read email 2: one still waits
+    assert mailstore.read_at(agent.db, agent.mode) is None and smtp.instances == []
+    assert agent.execute_approved() == [(request, "failed")]  # read through: her stop
+    assert smtp.instances == [] and rows(agent, "SELECT address FROM email_suppressions") == [{"address": ANN}]
 
 
-def test_an_ordinary_cycle_s_plan_and_the_review_keep_bluesky_s_numbers(data_dir: Path) -> None:
-    agent, fake, request = posted(data_dir)
-    agent.clock.advance(hours=24 * 7)
-    ordinary_next(agent)
-    before = len(fake.sent)
-    agent.run_cycle("schedule")
-    [cycle] = rows(agent, "SELECT marketing, venture FROM cycles ORDER BY id DESC LIMIT 1")
-    assert (cycle["marketing"], cycle["venture"]) == (0, 0)
-    sent = list(fake.sent)[before:]
-    plan = next(r for r in sent if request_kind(r) == "plan")
-    text = plan["messages"][0]["content"][0]["text"]
-    assert (
-        f"\n== BLUESKY ==\nEmber's account: @{FakeBluesky.HANDLE} (3 followers; at most 2 posts a day).\n1 post live"
-        " with 20 reactions (20.0 a post). Posting is a marketing cycle's; bluesky_posts reads each post's numbers.\n"
-    ) in text
-    assert NUMBERS not in text  # each post's numbers are bluesky_posts'
-    work = next(r for r in sent if request_kind(r) == "work")
-    offered = {t["name"] for t in work["tools"]}
-    assert "bluesky_posts" in offered and "propose_bluesky_post" not in offered
-    [review] = [r for r in sent if request_kind(r) == "review"]
-    card = review["messages"][0]["content"][0]["text"]
-    assert "Bluesky: 3 followers, 1 post live with 20 reactions (20.0 a post), at most 2 posts a day" in card
+# --- 4.1.2: the kill switch stops a round that is already sending ---
 
 
-def test_the_summary_counts_live_posts_only(data_dir: Path) -> None:
-    agent, _, _ = posted(data_dir)
+def test_the_kill_switch_stops_a_round_that_is_already_sending(data_dir: Path) -> None:
+    agent, _ = mail_cycle(data_dir, calls(("email_inbox", {})))
+    first, second, third = (an_email(agent, f"reader{n}@example.org", n) for n in (1, 2, 3))
+    apply_kill_switch_reset(agent.db, agent.economy, 0)
+    assert agent.mailbox is not None
+    original = agent.mailbox.send
+    pressed: list[bool] = []
+
+    def send(message: EmailMessage, to: str) -> mail.SendResult:
+        if not pressed:  # the owner presses the switch while the first email is handed over
+            press_kill(agent)
+            pressed.append(True)
+        return original(message, to)
+
+    agent.mailbox.send = send  # type: ignore[method-assign]
+    assert agent.execute_approved() == [(first, "simulated"), (second, connectors.HALTED)]
+    assert len(agent.mailbox.sent) == 1  # type: ignore[attr-defined] # before: all three, two after the kill
+    assert rows(agent, "SELECT approval_id FROM email_actions") == [{"approval_id": first}]
+    assert [approval(agent, n)["status"] for n in (second, third)] == ["approved", "approved"]  # they wait
+    assert dashboard_row(agent, second)["execution"]["status"] == "waiting"
+    assert agent.execute_approved() == []  # the next rounds: nothing while the switch is on
+    assert apply_kill_switch_reset(agent.db, agent.economy, 1)
+    assert agent.execute_approved() == [(second, "simulated"), (third, "simulated")]  # the owner approved them
+
+
+def test_the_kill_switch_pressed_while_an_email_goes_out_stops_the_publishers_of_that_round(data_dir: Path) -> None:
+    agent, listing_id = listed(data_dir)
+    change = a_change(agent, shop_context(agent), listing_id, price="3.90")
+    assert owner(agent).decide(change, {"decision": "approve"}, "Stefan").status == 200
+    email = an_email(agent, "reader@example.org", 1)
+    apply_kill_switch_reset(agent.db, agent.economy, 0)
+    assert agent.mailbox is not None
+    original = agent.mailbox.send
+
+    def send(message: EmailMessage, to: str) -> mail.SendResult:
+        press_kill(agent)
+        return original(message, to)
+
+    agent.mailbox.send = send  # type: ignore[method-assign]
+    assert agent.execute_approved() == [(email, "simulated"), (change, connectors.HALTED)]
+    assert agent.etsy.shop().state["listings"][str(listing_id)]["price_cents"] == 450  # type: ignore[union-attr]
+    assert rows(agent, "SELECT * FROM etsy_edits") == []  # not begun: nothing to call unclear
+    assert apply_kill_switch_reset(agent.db, agent.economy, 1)
+    assert agent.execute_approved() == [(change, "done")]
+    assert agent.etsy.shop().state["listings"][str(listing_id)]["price_cents"] == 390  # type: ignore[union-attr]
+
+
+def test_the_live_page_is_not_uploaded_while_the_kill_switch_is_on(data_dir: Path) -> None:
+    agent = agent_with(data_dir)
+    assert agent.publish_live() == "done"
+    fake = agent.blog.fake
+    assert fake is not None
+    before = dict(fake.files)
+    apply_kill_switch_reset(agent.db, agent.economy, 0)
+    press_kill(agent)
+    agent.clock.advance(minutes=live.UPLOAD_MINUTES)  # type: ignore[attr-defined]
+    assert agent.publish_live() is None and fake.files == before  # before: "Angehalten", and every 15 minutes again
+    assert apply_kill_switch_reset(agent.db, agent.economy, 1)
+    assert agent.publish_live() == "done"
+
+
+# --- 4.1.3: a request past its days expires before an unlock can approve it ---
+
+
+def held_reply(data_dir: Path) -> tuple[Agent, int]:
+    """A dry-run agent whose reply to the reader is held for its veto window by the owner's unlock."""
+    agent, transport = mail_cycle(data_dir, calls(("email_inbox", {})))
+    goal = a_milestone(agent)  # of no project: it covers email replies
+    unlock(agent, goal, "email_reply", "veto_window")
+    made = answer(agent, transport, goal)
+    assert made["status"] == "pending" and dashboard_row(agent, made["id"])["veto_until"]
+    return agent, int(made["id"])
+
+
+def test_a_reply_held_through_a_long_pause_expires_instead_of_going_out(data_dir: Path) -> None:
+    agent, request = held_reply(data_dir)
+    agent.economy.set_paused(True, "Stefan")
+    agent.clock.advance(days=8)  # type: ignore[attr-defined]
+    agent.run_policy()  # a round while paused: the unlocks don't act
+    agent.economy.set_paused(False, "Stefan")
+    agent.run_policy()  # the first round after Resume
+    assert status_of(agent, request)["status"] == "expired"  # before: approved by the unlock, and sent
+    assert agent.execute_approved() == [] and agent.mailbox.sent == []  # type: ignore[union-attr]
+    assert f"Request #{request} expired: no decision in 7 days" in events(agent)
+
+
+def test_a_request_past_its_days_is_never_approved_by_an_unlock(data_dir: Path) -> None:
+    agent, request = held_reply(data_dir)
+    agent.clock.advance(days=8)  # type: ignore[attr-defined] # the app was down: no round ran
     with agent.db.transaction() as conn:
-        conn.execute("UPDATE bluesky_posts SET likes = 1, reposts = 1, replies = 0, quotes = 0")
-        assert bluesky_publisher.summary(conn, agent.scope()) == "1 post live with 2 reactions (2.0 a post)"
-        conn.execute("UPDATE bluesky_posts SET status = 'deleted'")
-        assert bluesky_publisher.summary(conn, agent.scope()) == "no post live"
+        assert policy.run_due(conn, agent.scope(), agent.clock) == []
+    assert status_of(agent, request)["status"] == "pending"
+    agent.run_policy()  # expired first
+    assert status_of(agent, request)["status"] == "expired" and agent.execute_approved() == []
+
+
+def test_a_veto_window_that_ran_out_during_a_pause_starts_again_when_ember_runs(data_dir: Path) -> None:
+    agent, request = held_reply(data_dir)
+    agent.economy.set_paused(True, "Stefan")
+    agent.run_policy()  # a round while paused: the unlocks don't act
+    agent.clock.advance(hours=policy.VETO_HOURS + 1)  # type: ignore[attr-defined] # its window runs out meanwhile
+    agent.economy.set_paused(False, "Stefan")
+    agent.run_policy()
+    assert status_of(agent, request)["status"] == "pending"  # before: approved in the first round after Resume
+    until = to_iso(agent.clock.now() + timedelta(hours=policy.VETO_HOURS))
+    assert dashboard_row(agent, request)["veto_until"] == until
+    said = f"Request #{request}: its veto window starts again now that Ember runs again (approved 12 hours from now"
+    assert any(line.startswith(said) for line in events(agent))
+    with pytest.raises(sqlite3.IntegrityError, match="only ever ends later"), agent.db.transaction() as conn:
+        conn.execute(
+            "UPDATE policy_uses SET veto_until = ? WHERE approval_id = ?", (to_iso(agent.clock.now()), request)
+        )
+    agent.run_policy()  # an ordinary round: nothing starts again
+    assert dashboard_row(agent, request)["veto_until"] == until
+    agent.clock.advance(hours=policy.VETO_HOURS)  # type: ignore[attr-defined]
+    agent.run_policy()
+    assert status_of(agent, request)["decided_by"] == policy.POLICY_BY
+    assert agent.execute_approved() == [(request, "simulated")]

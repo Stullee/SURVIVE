@@ -28,6 +28,9 @@ unlocks. The database checks the same (migration 0051); what it refuses is undon
 knows its owner (owner_user_ids) outside safe mode (``off``). An unlock taken back (by the owner, the kill switch or
 Ember's code) also stops what it approved and Ember's code hasn't begun: it waits for the owner again (``_stop``).
 A spent budget only ends an unlock: what it approved runs.
+
+0.37.3: no unlock approves a request past its days (store.REQUEST_DAYS: it expires), and after a time the agent couldn't
+act, each request held for its veto window gets the whole window again (``restart``).
 """
 
 from __future__ import annotations
@@ -45,7 +48,7 @@ from ..economy.clock import Clock, to_iso
 from ..integrations import connectors, etsy, etsy_publisher, mailstore, qa
 from ..products import images
 from . import never, ventures
-from .store import AgentScope
+from .store import AgentScope, expires_at
 
 
 @dataclass(frozen=True)
@@ -552,6 +555,8 @@ def run_due(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, off: str 
         if not _covers(conn, int(use["approval_id"]), int(use["grant_id"])):
             continue  # 0.15.0: held by an unlock of 0.13.0 whose milestone doesn't cover it: it waits
         row = conn.execute("SELECT * FROM approvals WHERE id = ?", (use["approval_id"],)).fetchone()
+        if expires_at(row) <= now:
+            continue  # 0.37.3: its days are over: it expires (store.expire_requests), never approved by an unlock
         held_back = _held_back(conn, row)
         if held_back:  # said once, on its card too
             said = f"Held by your unlock, but not approved when its veto window passed: {held_back}. It waits for you."
@@ -573,6 +578,26 @@ def run_due(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, off: str 
                     )
         except sqlite3.IntegrityError as exc:
             happened.append(f"Request #{use['approval_id']} waits for you: the database refused the unlock ({exc})")
+    return happened
+
+
+def restart(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> list[str]:
+    """0.37.3: after a time the agent couldn't act (paused, or waiting for money: no unlock ran), each request an
+    unlock holds for its veto window gets the whole window again from now, VETO_HOURS for the owner to decide while
+    Ember runs. A window that ran out while Ember was paused approved its request in the first round after the owner
+    resumed it, before they could look. The database lets a window end only later (migration 0092). Returns what
+    happened, for the System log."""
+    until = to_iso(clock.now() + timedelta(hours=VETO_HOURS))
+    happened = []
+    for r in held(conn, scope):
+        if conn.execute(
+            "UPDATE policy_uses SET veto_until = ? WHERE approval_id = ? AND approved_at IS NULL AND veto_until < ?",
+            (until, r["approval_id"], until),
+        ).rowcount:
+            happened.append(
+                f"Request #{r['approval_id']}: its veto window starts again now that Ember runs again (approved"
+                f" {VETO_HOURS} hours from now unless you decide first)"
+            )
     return happened
 
 
