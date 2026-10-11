@@ -617,7 +617,7 @@ def test_a_changed_picture_and_the_daily_limit(data_dir: Path) -> None:
     agent, _, request = proposed(data_dir, image="shop/post-1.png", alt_text="Ein Wochenplaner auf dem Tisch")
     owner(agent).decide(request, {"decision": "approve"}, "Owner")
     agent.settings = agent.bluesky_posts.settings = agent.settings.model_copy(update={"bluesky_posts_per_day": 0})
-    assert agent.execute_approved() == [(request, "waiting_limit")]
+    assert agent.execute_approved() == []  # 0.37.8: the queue holds it for a day with room
     assert views_approval(agent, request)["execution"]["status"] == "waiting_limit"
     agent.settings = agent.bluesky_posts.settings = agent.settings.model_copy(update={"bluesky_posts_per_day": 2})
     agent.roots()[0].write_bytes("shop/post-1.png", picture(1000, 1400))

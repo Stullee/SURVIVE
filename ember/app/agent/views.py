@@ -28,6 +28,7 @@ from ..integrations import (
     pinterest_publisher,
     printify,
     printify_publisher,
+    publish_queue,
     qa,
     reddit,
     site_publisher,
@@ -498,7 +499,34 @@ def plan_view(agent: Agent) -> dict[str, Any]:
             plan.channels_from(agent.settings),
             exploring,
         )
+        for channel in found["channels"]:  # 0.37.8: what each channel's queue makes next, and when
+            if channel["channel"] in publish_queue.CHANNELS:
+                channel["queue"] = _queue_view(conn, agent, str(channel["channel"]))
     return {**found, "unlocks_off": agent.unlocks_off()}
+
+
+def _queue_view(conn: sqlite3.Connection, agent: Agent, channel: str) -> list[dict[str, Any]]:
+    """0.37.8: a channel's publishing queue for the Plan tab: each approved pin or post with its slot and why then."""
+    per_day = agent.settings.pinterest_pins_per_day if channel == "pinterest" else agent.settings.bluesky_posts_per_day
+    scope = agent.scope()
+    slots = publish_queue.slots(conn, scope, agent.clock, channel, per_day)
+    titles = {  # each with the product line it carries on (the listing it links)
+        int(r["id"]): (str(r["title"]), ventures.request_line(conn, scope, r))
+        for r in conn.execute(
+            f"SELECT * FROM approvals WHERE id IN ({', '.join('?' for _ in slots)})",
+            tuple(s.approval_id for s in slots),
+        )
+    }
+    return [
+        {
+            "id": s.approval_id,
+            "title": titles.get(s.approval_id, ("", None))[0],
+            "line": titles.get(s.approval_id, ("", None))[1],
+            "at": to_iso(s.at),
+            "why": publish_queue.why(channel, s.why, per_day, s.language) if s.why != "now" else None,
+        }
+        for s in slots
+    ]
 
 
 def roadmap_view(agent: Agent) -> dict[str, Any]:

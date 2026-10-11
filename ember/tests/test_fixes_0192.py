@@ -36,6 +36,7 @@ from app.agent.fake_llm import FakeTransport, Reply, ToolCalls  # noqa: E402
 from app.integrations import bluesky, etsy, site_publisher  # noqa: E402
 from app.integrations.bluesky import FakeBluesky  # noqa: E402
 from app.products import images, make, sheets  # noqa: E402
+from tests.queue_helpers import slot_comes  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
 from tests.test_bluesky import SITE, a_post, listed, post_context, post_rows  # noqa: E402
 from tests.test_etsy import call, shop_context  # noqa: E402
@@ -151,6 +152,9 @@ def test_an_approved_post_with_a_missing_page_isnt_posted_and_one_without_html_i
     for request in (good, gone):
         assert owner(agent).decide(request, {"decision": "approve"}, "Owner").status == 200
     done = dict(agent.execute_approved())
+    assert done == {good: "active"}  # 0.37.8: one post at a time, the next in its slot
+    slot_comes(agent, "bluesky")
+    done.update(agent.execute_approved())
     assert done == {good: "active", gone: "failed"}
     account = agent.bluesky.account()
     [made] = account.state["posts"].values()

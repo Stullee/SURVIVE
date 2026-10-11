@@ -41,7 +41,7 @@ from .economy.clock import to_iso
 from .economy.costs import micros_to_usd
 from .economy.ledger import Scope
 from .economy.metering import STUDY
-from .integrations import etsy_publisher
+from .integrations import etsy_publisher, publish_queue
 from .logging_setup import redact
 from .version import app_version, build_id
 
@@ -1099,6 +1099,21 @@ def _agent(state: AppState, full: bool = True) -> str:
             )
         except Exception as exc:  # noqa: BLE001 - the report goes on without it
             out.append(f"-- plan tree: unavailable ({type(exc).__name__})")
+        # 0.37.8: the publishing queue: each approved pin and post with its slot and what set it
+        try:
+            settings = agent.settings
+            per_day = {"pinterest": settings.pinterest_pins_per_day, "bluesky": settings.bluesky_posts_per_day}
+            queue = [
+                {"channel": name, "request": s.approval_id, "slot": to_iso(s.at), "why": s.why, "language": s.language}
+                for name in publish_queue.CHANNELS
+                for s in publish_queue.slots(conn, scope, agent.clock, name, per_day[name])
+            ]
+            out.append(
+                "-- publishing queue (0.37.8: each approved pin and post with its slot; why: now, gap, link, hours or"
+                " limit)\n" + _rows(queue, ["channel", "request", "slot", "why", "language"])
+            )
+        except Exception as exc:  # noqa: BLE001 - the report goes on without it
+            out.append(f"-- publishing queue: unavailable ({type(exc).__name__})")
         if full:  # what the study learned: Ember's words, but drawn from the owner's documents (full report only)
             learned = conn.execute(
                 f"SELECT document_id, part, topic, text FROM learnings WHERE {where} ORDER BY id DESC LIMIT 20", params

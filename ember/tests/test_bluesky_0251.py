@@ -21,6 +21,7 @@ from app.agent import reach, tools  # noqa: E402
 from app.integrations import bluesky, bluesky_publisher, etsy  # noqa: E402
 from app.integrations.bluesky import DISCLOSURE, Post, Upload  # noqa: E402
 from tests.economy_helpers import START  # noqa: E402
+from tests.queue_helpers import slot_comes  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
 from tests.test_bluesky import LISTING, SITE, a_post, listed, post_context, post_rows  # noqa: E402
 from tests.test_fixes_0192 import blog_post  # noqa: E402
@@ -241,6 +242,7 @@ def test_a_live_post_counts_for_the_product_line_its_second_link_links(data_dir:
     assert a_post(agent, ctx, text="Der Wochenplaner zum Ausdrucken.", link=f"{LISTING_URL} {PAGE}").ok
     second = requests(agent)[-1]
     assert owner(agent).decide(second, {"decision": "approve"}, "Owner").status == 200
+    slot_comes(agent, "bluesky")  # 0.37.8: a page's next post two days on
     assert agent.execute_approved() == [(second, "active")]
     with agent.db.connection() as conn:
         [funnel] = reach.funnels(conn, scope).values()

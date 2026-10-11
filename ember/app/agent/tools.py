@@ -60,6 +60,7 @@ from ..integrations import (
     pinterest_publisher,
     printify,
     printify_publisher,
+    publish_queue,
     qa,
     reddit,
     site_publisher,
@@ -3284,6 +3285,9 @@ def _request_approval(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
         return Outcome(
             True, f"Approval request #{existing} with this payload is already waiting.", f"duplicate of #{existing}"
         )
+    own = _own_tool(ctx, args)  # 0.37.8
+    if own:
+        raise ToolError(own)
     _room_for_request(ctx, conn, args["type"])
     project_id = args.get("project_id")
     if project_id is not None and store.project(conn, ctx.scope, project_id) is None:
@@ -3296,6 +3300,33 @@ def _request_approval(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
         f"#{approval_id} {args['type']}: {args['title'][:60]}",
         project_id,
     )
+
+
+# 0.37.8: the publishing that has a tool of its own, which Ember's code carries out in its slot and the plan counts:
+# what it names, the words of a request for it (its title says what it is), what it is, the tool and what Ember's code
+# does then. Live, a Bluesky post went to the owner through request_approval (#91): approved, nothing posted it, and
+# its step went on asking for two posts.
+OWN_TOOLS = (
+    (r"\b(?:bluesky|bsky)\b", r"\bpost", "a Bluesky post", "propose_bluesky_post", "bluesky", "posts it in its slot"),
+    (r"\b(?:pinterest|pins?)\b", r"\bpins?\b", "a pin", "propose_pin", "pinterest", "makes it in its slot"),
+    (r"\bblog\b", r"\b(?:blog ?posts?|articles?|beitrag)\b", "a blog post", "propose_blog_post", "blog", "uploads it"),
+)
+
+
+def _own_tool(ctx: ToolContext, args: dict[str, Any]) -> str:
+    """0.37.8: why a request to publish what has a tool of its own is refused ("" when it isn't such a request, or its
+    channel isn't set up: then only the owner's hand can publish it)."""
+    if args["type"] != "publish":
+        return ""
+    words = f"{args['title']}\n{args['payload']}"
+    ready = {"bluesky": ctx.bluesky is not None, "pinterest": ctx.pinterest is not None, "blog": ctx.blog is not None}
+    for channel, thing, what, tool, name, does in OWN_TOOLS:
+        if ready[name] and re.search(channel, words, re.IGNORECASE) and re.search(thing, args["title"], re.IGNORECASE):
+            return (
+                f"{what} goes through {tool} (a marketing cycle's tool): Ember's code {does} once your owner approves"
+                " it, and your plan counts it; a request_approval only asks your owner to publish it by hand"
+            )
+    return ""
 
 
 def _room_for_request(ctx: ToolContext, conn: Any, kind: str) -> None:
@@ -4428,7 +4459,9 @@ def _pinterest_boards(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
     account = _account(ctx)
     made = pinterest_publisher.boards(conn, ctx.scope)
     head = f"Your owner's Pinterest account: {account.username} (at most {account.daily_limit} pins a day)."
-    return Outcome(True, f"{head}\n{pinterest_publisher.text(conn, ctx.scope, 12)}", f"{len(made)} boards")
+    queue = publish_queue.text(conn, ctx.scope, ctx.clock, "pinterest", account.daily_limit)  # 0.37.8
+    text = f"{head}\n{pinterest_publisher.text(conn, ctx.scope, 12)}" + (f"\n{queue}" if queue else "")
+    return Outcome(True, text, f"{len(made)} boards")
 
 
 def _propose_pin(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
@@ -4491,10 +4524,17 @@ def _propose_pin(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
         board_name=board_name,
     )
     reason = args["reason"].strip()
+    payload = pinterest.payload(pin, board)
+    replaced: list[int] = []
+    if store.pending_approval_by_payload(conn, ctx.scope, store.sha256(payload)) is None:  # that one: as before
+        replaced = _repeated_pin(conn, ctx.scope, pin)  # 0.37.8
+        _room_in_queue(ctx, conn, "pinterest", replaced)
+        for old in replaced:
+            store.withdraw_request(conn, ctx.scope, old, REPLACED_PIN, ctx.cycle_id, ctx.now())
     made_id = _new_request(
         ctx,
         conn,
-        pinterest.payload(pin, board),
+        payload,
         pin.to_action(),
         type="publish",
         title=_cut(f"Pin: {pin.title}", 120),
@@ -4509,13 +4549,88 @@ def _propose_pin(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
         f"Approval request #{made_id} is waiting for your owner. Nothing is on Pinterest yet. If they approve it, "
         f"Ember's code makes the pin on {account.username}'s account"
         + (f" and the board {board_name!r} first" if board_name else "")
-        + f" (at most {account.daily_limit} pins a day) and you hear the result."
+        + f" in its slot: {_slot_words(ctx, conn, 'pinterest', account.daily_limit, made_id)}. You hear the result."
     )
+    if replaced:
+        text += f" It replaces request {_numbers(replaced)} (withdrawn): a pin of this listing in the same words."
     short = qa.defects("pinterest.create_pin", pin)  # the QA registry: your owner sees it too
     if short:
-        text += f" QA (Ember's code): {'; '.join(short)}: make one with make_image (shape pin) and propose it again."
+        # 0.37.8: "propose it again" made a second pin of the first (#89 and #90 went out 2 seconds apart, live)
+        text += (
+            f" QA (Ember's code): {'; '.join(short)}: make one with make_image (shape pin) and propose the pin again,"
+            f" in the same words: it replaces #{made_id}."
+        )
     text += _unlocked(ctx)
     return Outcome(True, text, f"#{made_id} pin: {_cut(pin.title, 60)}")
+
+
+REPLACED_PIN = "replaced by a new request for a pin of the same listing in the same words"
+
+
+def _slot_words(ctx: ToolContext, conn: Any, channel: str, per_day: int, approval_id: int) -> str:
+    """0.37.8: when a request just made would go out if the owner approved it now, after the channel's queue, with
+    the queue's rules."""
+    slot = publish_queue.if_approved_now(conn, ctx.scope, ctx.clock, channel, per_day, approval_id)
+    rules = publish_queue.rules(channel, per_day)
+    if slot is None:
+        return rules
+    at = publish_queue.when(ctx.clock, slot.at)
+    then = "it would go out at once" if at == "now" else f"it would go out {at}"
+    cause = publish_queue.why(channel, slot.why, per_day, slot.language)
+    return f"{rules}; approved now, {then}" + (f" ({cause})" if slot.why not in ("now", "gap") else "")
+
+
+def _room_in_queue(ctx: ToolContext, conn: Any, channel: str, replaced: list[int]) -> None:
+    """0.37.8: a channel takes no more of the agent's requests while publish_queue.WAITING of them wait for the owner or
+    for their slot (what a day of it holds): a long queue would publish days later what was planned for now."""
+    found = [n for n in publish_queue.waiting(conn, ctx.scope, channel) if n not in replaced]
+    if len(found) >= publish_queue.WAITING:
+        one, many = publish_queue.THINGS[channel]
+        raise ToolError(
+            f"{len(found)} {many} of yours already wait for your owner or for their slot (request {_numbers(found)}):"
+            f" propose the next {one} once one of them is out"
+        )
+
+
+def _same_pin(pin: pinterest.Pin, other: pinterest.Pin) -> str:
+    """0.37.8: what ``pin`` repeats of another pin of its listing ("" when nothing): its picture or its words."""
+    if pin.image.sha256 == other.image.sha256:
+        return "picture"
+    if bluesky.same_words(pin.title, other.title):
+        return "title"
+    return "description" if bluesky.same_words(pin.description, other.description) else ""
+
+
+def _repeated_pin(conn: Any, scope: AgentScope, pin: pinterest.Pin) -> list[int]:
+    """0.37.8: the requests ``pin`` repeats, for the same listing (its picture, its title or its description): one that
+    waits for the owner it replaces (returned, to withdraw); one approved, being made or live refuses it. Live on 10-10,
+    propose_pin's QA note said "propose it again" after it had queued #89, and #90 went out 2 seconds after it: the
+    same words for the same listing, which Pinterest reads as spam and shows less."""
+    where, params = scope.where("a")
+    rows = conn.execute(
+        f"SELECT a.id, a.status, a.action, p.status AS made FROM approvals a LEFT JOIN pinterest_pins p ON"
+        f" p.approval_id = a.id WHERE {where} AND a.executor = 'pinterest_pin' AND (a.status IN ('pending', 'approved',"
+        " 'approved_with_changes') OR p.status IN ('running', 'active', 'unclear')) ORDER BY a.id DESC",
+        params,
+    ).fetchall()
+    replaced = []
+    for row in rows:
+        try:
+            other = pinterest.pin_from_action(row["action"])
+        except pinterest.PinterestError:
+            continue
+        what = _same_pin(pin, other) if other.link == pin.link else ""
+        if not what:
+            continue
+        if row["status"] == "pending" and row["made"] is None:
+            replaced.append(int(row["id"]))
+            continue
+        state = "is on Pinterest" if row["made"] else "waits for its slot in the queue"
+        raise ToolError(
+            f"it repeats the {what} of request #{row['id']}'s pin of this listing, which {state}: a listing's next pin"
+            " needs a new picture and new words (or none)"
+        )
+    return replaced
 
 
 _ETSY_LISTING = re.compile(
@@ -4542,14 +4657,16 @@ def _bluesky_posts(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
         " a day)"
     )
     if not made:
-        return Outcome(True, f"{head}.\nNo post of yours yet.", "0 posts")
+        queue = publish_queue.text(conn, ctx.scope, ctx.clock, "bluesky", account.daily_limit)  # 0.37.8
+        return Outcome(True, f"{head}.\nNo post of yours yet." + (f"\n{queue}" if queue else ""), "0 posts")
     synced = max((str(r["synced_at"]) for r in made if r["synced_at"]), default=None)
     read = f"Numbers as Ember's code read them at {_local(ctx, synced)}" if synced else "Numbers not read yet"
     text = (
         f"{head}; {bluesky_publisher.summary(conn, ctx.scope)}.\n{bluesky_publisher.text(conn, ctx.scope, 12)}\n"
         f"{read}. Bluesky counts no views or clicks: the listings a post links show their views (etsy_listing)."
     )
-    return Outcome(True, text, f"{len(made)} posts")
+    queue = publish_queue.text(conn, ctx.scope, ctx.clock, "bluesky", account.daily_limit)  # 0.37.8
+    return Outcome(True, text + (f"\n{queue}" if queue else ""), f"{len(made)} posts")
 
 
 def _post_link(ctx: ToolContext, conn: Any, raw: str, what: str = "link") -> tuple[str, str, str, etsy.Upload | None]:
@@ -4670,6 +4787,7 @@ def _propose_bluesky_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
         repeated = _repeated_post(conn, ctx.scope, text)
         if repeated:
             raise ToolError(f"it says what {repeated} says: never the same post twice; write a new one (or none)")
+        _room_in_queue(ctx, conn, "bluesky", [])  # 0.37.8
     reason = args["reason"].strip()
     made_id = _new_request(
         ctx,
@@ -4687,8 +4805,9 @@ def _propose_bluesky_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
         return Outcome(True, made_id, "duplicate post")
     answer = (
         f"Approval request #{made_id} is waiting for your owner. Nothing is on Bluesky yet. If they approve it, "
-        f"Ember's code posts it on @{account.handle} (at most {account.daily_limit} posts a day) and you hear the "
-        f"result. It has {left} characters to spare."
+        f"Ember's code posts it on @{account.handle} in its slot: "
+        f"{_slot_words(ctx, conn, 'bluesky', account.daily_limit, made_id)}. You hear the result. It has {left}"
+        " characters to spare."
     )
     short = qa.defects("bluesky.create_post", post)  # the QA registry: your owner sees it too
     if short:

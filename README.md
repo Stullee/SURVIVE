@@ -289,6 +289,18 @@ and quotes, the account's followers and the posts made today against the daily
 limit, and an ordinary cycle's plan and the daily review show the live posts'
 reactions, in all and per post.
 
+0.37.8: approved pins and Bluesky posts go out from a queue, one at a time, each
+in its slot. Until now every approval was carried out at the next round, so a
+batch went out in seconds (two identical pins 2 seconds apart on 10-10), which
+Pinterest reads as spam. Now pins go out from 8:00 to 22:00, English posts from
+14:00 to 23:00 (German ones 8:00 to 22:00), at least 3 hours apart, a listing at
+most every 2 days, within the daily limit; the Approvals tab and the Plan tab's
+Channels show when each goes out. Also fixed: a pin repeating another of its
+listing is refused (or replaces the one still waiting), request_approval no
+longer takes a Bluesky post or pin that nothing would publish, a German-only
+product gets no English Bluesky steps, the Plan tab counts the blog by its own
+switch and names each step's product.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

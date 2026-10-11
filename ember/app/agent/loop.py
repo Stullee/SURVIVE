@@ -56,6 +56,7 @@ from ..integrations import (
     mailstore,
     pinterest_publisher,
     printify_publisher,
+    publish_queue,
     site_publisher,
 )
 from ..integrations.bluesky_connection import BlueskyConnection
@@ -745,6 +746,12 @@ class CycleRunner:
         local = self.clock.now().astimezone(self.clock.tz).strftime("%A %Y-%m-%d %H:%M %Z")
         with self.db.connection() as conn:
             fresh = news.collect(conn, self.db, self.scope, app_version())
+            fresh.slots = publish_queue.slot_words(  # 0.37.8: when the approved pins and posts go out
+                conn,
+                self.scope,
+                self.clock,
+                {"pinterest": self.settings.pinterest_pins_per_day, "bluesky": self.settings.bluesky_posts_per_day},
+            )
             # 0.35.0: an ordinary or marketing plan's YOUR STEP: the step the plan tree took for it (plan.steer);
             # 0.37.0: a venture plan's too, in place of the decision desk's READY (0.13.0)
             asked = lines.questions(conn, self.scope, self.clock.today()) if kind == lines.ORDINARY else []
@@ -778,10 +785,12 @@ class CycleRunner:
             pins = ""
             if self.pinterest_on and self.pinterest is not None:  # 0.13.0 (Phase E2)
                 account = self.pinterest.username() or "your owner's account"
-                pins = (
-                    f"Your owner's account: {account} (at most {self.settings.pinterest_pins_per_day} pins a day).\n"
-                    + pinterest_publisher.text(conn, self.scope)
+                per_day = self.settings.pinterest_pins_per_day
+                pins = f"Your owner's account: {account} (at most {per_day} pins a day).\n" + pinterest_publisher.text(
+                    conn, self.scope
                 )
+                queue = publish_queue.text(conn, self.scope, self.clock, "pinterest", per_day)  # 0.37.8
+                pins += f"\n{queue}" if queue else ""
             elif self.pinterest is not None:  # 0.15.0: switched on, but not set up
                 pins = _waiting("Pinterest", self.pinterest.status(), self._etsy_state())
             posted = ""
@@ -789,6 +798,8 @@ class CycleRunner:
                 posted = _bluesky_head(self.bluesky, self.settings.bluesky_posts_per_day) + bluesky_publisher.text(
                     conn, self.scope
                 )
+                queue = publish_queue.text(conn, self.scope, self.clock, "bluesky", self.settings.bluesky_posts_per_day)
+                posted += f"\n{queue}" if queue else ""  # 0.37.8
             elif self.bluesky is not None:  # switched on, but not set up (or Bluesky refused the login)
                 posted = _waiting("Bluesky", self.bluesky.status(), "ok", venture=False)
             pod = ""

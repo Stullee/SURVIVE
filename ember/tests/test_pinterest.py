@@ -41,6 +41,7 @@ from app.integrations.pinterest_connection import PinterestConnection  # noqa: E
 from app.integrations.pinterest_live import LiveAccount, _Allowlist, connect  # noqa: E402
 from app.logging_setup import redact  # noqa: E402
 from app.products import images  # noqa: E402
+from tests.queue_helpers import slot_comes  # noqa: E402
 from tests.test_agent import ROOMY, rows  # noqa: E402
 from tests.test_etsy import Etsy, call, market_next, shop_context, views_approval  # noqa: E402
 from tests.test_loop_shapes import run  # noqa: E402
@@ -57,8 +58,8 @@ LISTING = 900_000_001  # the fake shop's first listing
 BOARD, PIN = "1000000001", "1000000002"  # the fake account's first numbers
 
 
-def picture(width: int = 1000, height: int = 1500) -> bytes:
-    return images.png(Image.new("RGB", (width, height), (240, 230, 220)))
+def picture(width: int = 1000, height: int = 1500, shade: int = 0) -> bytes:
+    return images.png(Image.new("RGB", (width, height), (240 - shade, 230, 220)))
 
 
 def listed(data_dir: Path) -> tuple[Any, FakeTransport]:
@@ -81,7 +82,10 @@ def a_pin(agent: Any, ctx: tools.ToolContext, write: bool = True, **args: Any) -
     """A proposed pin; its picture (2:3) is made first unless ``write`` is False or it exists."""
     image = str(args.pop("image", "shop/pin-1.png"))
     if write and agent.roots()[0].size_of(image) is None:
-        agent.roots()[0].write_bytes(image, picture())
+        # 0.37.8: each file its own picture (a listing's pin that repeats another's picture is refused)
+        agent.roots()[0].write_bytes(
+            image, picture(shade=0 if image == "shop/pin-1.png" else 1 + sum(image.encode()) % 30)
+        )
     fields = {
         "listing_id": LISTING,
         "image": image,
@@ -92,6 +96,13 @@ def a_pin(agent: Any, ctx: tools.ToolContext, write: bool = True, **args: Any) -
         **args,
     }
     return call(ctx, "propose_pin", {k: v for k, v in fields.items() if v is not None})
+
+
+# 0.37.8: a listing's next pin in other words (the same words repeat its first pin and are refused)
+OTHER_WORDS = {
+    "title": "Printable meal plan for busy weeks",
+    "description": "Seven dinners, one shopping list: print the plan and stick it on the fridge.",
+}
 
 
 def proposed(data_dir: Path, **args: Any) -> tuple[Any, FakeTransport, int]:
@@ -461,7 +472,7 @@ def test_an_approved_pin_makes_its_board_first_and_is_never_made_twice(data_dir:
     ctx = pin_context(agent)
     same = a_pin(agent, ctx, board_name="meal planning PRINTABLES", image="shop/pin-2.png")
     assert not same.ok and f"give its board_id, {BOARD}" in same.text
-    assert a_pin(agent, ctx, board_id=BOARD, image="shop/pin-2.png").ok
+    assert a_pin(agent, ctx, board_id=BOARD, image="shop/pin-2.png", **OTHER_WORDS).ok
     [second] = rows(agent, f"SELECT * FROM approvals WHERE executor = 'pinterest_pin' AND id > {request}")
     with agent.db.connection() as conn:
         assert never.reasons(conn, second) == []
@@ -469,11 +480,16 @@ def test_an_approved_pin_makes_its_board_first_and_is_never_made_twice(data_dir:
 
 def test_two_pins_naming_the_same_new_board_share_it(data_dir: Path) -> None:
     agent, _, first = proposed(data_dir)
-    assert a_pin(agent, pin_context(agent), board_name="Meal planning printables", image="shop/pin-2.png").ok
+    made = a_pin(
+        agent, pin_context(agent), board_name="Meal planning printables", image="shop/pin-2.png", **OTHER_WORDS
+    )
+    assert made.ok, made.text
     second = rows(agent, "SELECT MAX(id) AS id FROM approvals WHERE executor = 'pinterest_pin'")[0]["id"]
     for request in (first, second):
         assert owner(agent).decide(request, {"decision": "approve"}, "Owner").status == 200
-    assert agent.execute_approved() == [(first, "active"), (second, "active")]
+    assert agent.execute_approved() == [(first, "active")]  # 0.37.8: one at a time, each in its slot
+    slot_comes(agent, "pinterest")
+    assert agent.execute_approved() == [(second, "active")]
     assert len(agent.pinterest.account().state["boards"]) == 1
     assert {r["board_id"] for r in pin_rows(agent)} == {BOARD}
 
@@ -506,9 +522,10 @@ def test_the_owner_s_undo_deletes_the_pin(data_dir: Path) -> None:
 
 def test_a_pin_deleted_at_pinterest_is_noted_and_the_others_are_still_read(data_dir: Path) -> None:
     agent, _, first = pinned(data_dir)
-    assert a_pin(agent, pin_context(agent), board_id=BOARD, image="shop/pin-2.png").ok
+    assert a_pin(agent, pin_context(agent), board_id=BOARD, image="shop/pin-2.png", **OTHER_WORDS).ok
     second = rows(agent, "SELECT MAX(id) AS id FROM approvals WHERE executor = 'pinterest_pin'")[0]["id"]
     owner(agent).decide(second, {"decision": "approve"}, "Owner")
+    slot_comes(agent, "pinterest")  # 0.37.8: a listing's next pin two days on
     assert agent.execute_approved() == [(second, "active")]
     agent.pinterest.account().delete_pin(PIN)  # the owner deleted the first pin at Pinterest
     agent.clock.advance(hours=24 * 3)
@@ -536,7 +553,7 @@ def test_a_changed_image_and_the_daily_limit(data_dir: Path) -> None:
     agent, _, request = proposed(data_dir)
     owner(agent).decide(request, {"decision": "approve"}, "Owner")
     agent.settings = agent.pins.settings = agent.settings.model_copy(update={"pinterest_pins_per_day": 0})
-    assert agent.execute_approved() == [(request, "waiting_limit")]
+    assert agent.execute_approved() == []  # 0.37.8: the queue holds it for a day with room
     assert views_approval(agent, request)["execution"]["status"] == "waiting_limit"
     agent.settings = agent.pins.settings = agent.settings.model_copy(update={"pinterest_pins_per_day": 3})
     agent.roots()[0].write_bytes("shop/pin-1.png", picture(1000, 1400))

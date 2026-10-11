@@ -1070,7 +1070,16 @@ Ember's records: a demand note, a request to you, a live listing, pins, Bluesky
 posts and blog posts that link the product. A later stage done closes the ones
 before it. Once a product's stages before maintain are done, its maintain stage
 gets a recurring step for each channel its audience uses, and a fix whenever
-the quality check says improve (the step quotes what the critic said). A promise
+the quality check says improve (the step quotes what the critic said). A
+product's audience (English, German or both) comes from its words: since 0.37.8
+a German market (Germany, Deutsch, a lone "DE") makes it German and only an
+English one English, and when the words change, Ember's code drops its steps
+for a channel that doesn't reach the audience (an English Bluesky post for a
+German product) and adds its template's for one that does, saying why in the
+day's changes. The blog counts as a channel by **Blog** alone (until 0.37.8
+the Plan tab also asked for **Website**, and took the blog for off while
+Ember's cycles wrote its posts). The Plan tab names each step's product, as
+every product's steps have the same titles. A promise
 Ember makes you about a product becomes a step of that product, and so does your
 decision on one of its requests. Since 0.37.0 the tree also has the **Ventures**
 project, where each venture being explored is a node and its next decision a
@@ -2164,10 +2173,17 @@ there is no test pin; the **System log** says so.
   or a new board's name. The approval card shows every word, the picture's
   path and size, and what the QA check finds short (a picture that isn't
   portrait).
-- **Approve** and Ember makes it: a new board first when the pin names one,
-  then the pin. Pinterest charges nothing. A pin can only be approved as it is
-  or rejected (say what should change: the agent proposes a better one).
-  **Cancel** stops an approved pin before Ember makes it.
+- **Approve** and Ember makes it in its slot of the
+  [publishing queue](#the-publishing-queue): a new board first when the pin
+  names one, then the pin. Pinterest charges nothing. A pin can only be
+  approved as it is or rejected (say what should change: the agent proposes a
+  better one). **Cancel** stops an approved pin before Ember makes it, also
+  while it waits for its slot.
+- A pin that repeats a pin of the same listing (its picture, its title or its
+  description) is refused while that one is live or approved; one that
+  repeats a pin still waiting for you replaces it, and that request is
+  withdrawn (since 0.37.8: a pin proposed "again" with a better picture went
+  out as a second pin two seconds after the first).
 - The pin that makes Ember's **first board** always waits for your click,
   whatever you unlocked: it is a new public presence of yours.
 - If the picture changed after you approved, or its listing is no longer live
@@ -2186,6 +2202,32 @@ there is no test pin; the **System log** says so.
   during the test, the test is dropped, and a new one starts when it is back.
 - **Undo** on the pin's entry under **What Ember's code did** deletes it at
   Pinterest.
+
+### The publishing queue
+
+Since 0.37.8 an approved pin or Bluesky post doesn't go out at once: it waits
+in its channel's queue for its slot, and Ember's code makes one at a time.
+Until then every approval was carried out at the next round, so a batch of
+approvals went out within seconds (on 10-10 a post and two pins in 15 seconds,
+then two identical pins 2 seconds apart): Pinterest reads bursts, and one link
+pinned again and again, as spam, and on Bluesky a second post at once buries
+the first. A slot is:
+
+- **When**: in the channel's hours, your time: pins from 8:00 to 22:00, an
+  English Bluesky post from 14:00 to 23:00 (Europe's afternoon, America's day),
+  a German one from 8:00 to 22:00.
+- **How often**: at least 3 hours after the channel's last pin or post, and a
+  few minutes more (the same for a request every time, so its slot holds); a
+  listing or page at most once in 2 days on a channel; at most **Pins per day**
+  or **Bluesky posts per day** a day.
+- **What next**: the oldest approval, unless its listing must still wait: then
+  the next listing's goes first. One that fails its checks before anything is
+  sent (a listing no longer live) takes no slot.
+
+The approval card says when each goes out and why then (**In the queue**), and
+the Plan tab's **Channels** list the queue with each one's time. The agent
+hears the time with your approval, sees the queue in its plan, and proposes no
+more pins (or posts) while 3 of them wait for you or their slot.
 
 ## Bluesky
 
@@ -2251,7 +2293,8 @@ To stop Ember's access, delete the app password at Bluesky.
   address twice), and a picture of its own with alt text if it likes. The
   approval card shows the post exactly as it will appear, the links and the
   picture's path, and what the QA check finds short (more than three hashtags).
-- **Approve** and Ember posts it. Bluesky charges nothing. With a picture, the
+- **Approve** and Ember posts it in its slot of the
+  [publishing queue](#the-publishing-queue). Bluesky charges nothing. With a picture, the
   link is clickable at the end of the words; without one, a listing shows as a
   card with its title and main photo (a listing Printify made: its title only),
   and a blog post of Ember's with its title and description. A second link is
@@ -2260,7 +2303,8 @@ To stop Ember's access, delete the app password at Bluesky.
   metadata, so a large one is sent smaller.
   A post can only be approved as it is or rejected (say what should change: the
   agent proposes a better one). **Cancel** stops an approved post before Ember
-  makes it.
+  makes it, also while it waits for its slot. A Bluesky post asked for with
+  `request_approval` is refused since 0.37.8: nothing would post it.
 - A post that says what a live post or a waiting request already says (the
   same words, give or take a hashtag) is refused before it reaches you (since
   0.24.0).
@@ -2643,7 +2687,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.37.7 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.37.8 (by /u/your name)`.
 
 ## Amazon KDP
 
