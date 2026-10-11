@@ -561,8 +561,8 @@ a higher burn lower each of them a little. Hence about 2 % at your current setti
 
 ## 10. Code health (code)
 
-- **Tests:** the full suite (about 50,000 lines, `python -m pytest -W error -n 4`, as CI runs it) was still running
-  when this report was committed; a follow-up commit adds its result.
+- **Tests:** all 2,960 pass at `25f96ee` with `python -m pytest -W error -n 4`, as CI runs them (10 min 37 s on 4
+  CPUs). `ruff check` and `ruff format --check` are clean.
 - **The README's security section is out of date** (section 3.4).
 - **What is strong** is in section 6.5.
 - **The risks in this report are economic and structural, not defects.**
