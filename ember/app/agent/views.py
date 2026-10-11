@@ -498,6 +498,7 @@ def plan_view(agent: Agent) -> dict[str, Any]:
             agent.clock.today(),
             plan.channels_from(agent.settings),
             exploring,
+            day_start=to_iso(agent.clock.day_start(agent.clock.today())),  # 0.37.9: the owner's limits
         )
         for channel in found["channels"]:  # 0.37.8: what each channel's queue makes next, and when
             if channel["channel"] in publish_queue.CHANNELS:

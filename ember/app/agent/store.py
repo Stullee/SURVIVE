@@ -322,6 +322,9 @@ def count_rows(conn: sqlite3.Connection, table: str, scope: AgentScope, conditio
 # listings block an email reply), and after how many days a request the owner hasn't decided expires.
 PENDING_CAPS = {"sell": 6, "contact": 5, "publish": 3, "create_account": 3, "spend_money": 3, "other": 4}
 REQUEST_DAYS = {"contact": 7, "publish": 7, "spend_money": 14, "sell": 30, "create_account": 30, "other": 30}
+# 0.12.0: messages to the owner a day that answer none of theirs (the rule was only prose); message_owner refuses more.
+# 0.37.9: kept here, beside PENDING_CAPS, as the plan reads both (plan.limits): a step that would need more waits.
+MESSAGES_PER_DAY = 2
 
 
 def pending_of_type(conn: sqlite3.Connection, scope: AgentScope, kind: str) -> int:
@@ -330,6 +333,18 @@ def pending_of_type(conn: sqlite3.Connection, scope: AgentScope, kind: str) -> i
         f"SELECT COUNT(*) FROM approvals WHERE {where} AND status = 'pending' AND type = ?", (*params, kind)
     )
     return int(row.fetchone()[0])
+
+
+def unasked_since(conn: sqlite3.Connection, scope: AgentScope, since: str) -> int:
+    """The agent's messages since ``since`` that answered none of the owner's (MESSAGES_PER_DAY counts them from the
+    start of the owner's day; 0.37.9: here, as the plan counts them too)."""
+    where, params = scope.where("m")
+    row = conn.execute(
+        f"SELECT COUNT(*) FROM messages m WHERE {where} AND m.sender = 'agent' AND m.created_at >= ?"
+        " AND NOT EXISTS (SELECT 1 FROM messages o WHERE o.answered_by = m.id)",
+        (*params, since),
+    ).fetchone()
+    return int(row[0])
 
 
 def expires_at(row: Any) -> str:

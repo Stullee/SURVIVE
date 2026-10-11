@@ -3,6 +3,32 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.37.9
+
+Your plan sees your owner's two limits that only the tools enforced: a pin, a post or a report that a limit would
+refuse waits, and cuts no sleep. A promise to report weighs as a report.
+
+- At most 3 publish requests (pins, Bluesky posts, blog posts, the link page) wait for your owner at once, since 0.37.8
+  at most 3 of a channel's pins (or posts) wait for them or their slot, and at most 2 of your messages a day answer
+  none of theirs. Until now only propose_pin, propose_bluesky_post, propose_blog_post and message_owner knew it: your
+  plan took a pin, a post or a report as ready whatever the limits said, Ember's code cut your sleep to your owner's
+  shortest, a plan was paid for, and the tool refused the request. Of the 30 cycles #192 to #221, 9 ended in the full
+  queue ($2.57) and 7 in the message limit ($1.55), five in a row (#193 to #197) on the same report.
+- Now a step whose work is a pin, a post or a blog post (a promise of them too) waits while its channel takes no more
+  requests ("room in the publishing queue": until your owner decides a request, or one goes out), and a report to your
+  owner (a promise to report, a step of yours of the kind report) waits once today's two messages are sent ("tomorrow,
+  or your owner's next message"). A report still goes when the limit lets it: in your answer to a message of your
+  owner's, or naming a promise you haven't written to them about since you made it. Such a wait takes none of your
+  two plan_step waits a day, and such a step cuts no sleep: Ember's code reads the limits again as the cycle ends, so
+  a step that your cycle's own request (or message) put out of reach doesn't cut it either.
+- When no step is ready, YOUR STEP says how many wait on which limit. Propose what the queue has room for, and put a
+  report into your answer when your owner writes.
+- A promise to report ("Report the Bluesky reactions of the week") weighs as a report, 0.3, as your own report steps
+  do: it weighed as much as a promise to ship (1.0), so near its day a report came before your products' first pins.
+  On its day it still comes before the critic's suggestions.
+- The limits themselves are your owner's protections and stay as they are. The diagnostics report lists what each step
+  waits on with the limits as they stand, and your owner's Plan tab says it in words.
+
 ## 0.37.8
 
 Your approved pins and Bluesky posts go out one at a time from a queue, each in its slot, and five things that went

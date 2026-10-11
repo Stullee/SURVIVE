@@ -39,6 +39,10 @@ PROMISE_NEAR_DAYS before its day: until then it weighs its worth and its waiting
 launch marketing; two days before its day it weighs 9, the day before 12, on its day 30. plan.py: one taken
 PROMISE_TRIES times in a day without being kept weighs its worth alone until the day is over (it kept the floor, which
 still outweighed every product step).
+
+0.37.9 (analysis-0.37.8, 6.3 2): a promise to report weighs as a report (KIND['report']; plan._kind): told in a
+message, it weighed as a promise to ship, so near its day a report came before a live product's first pins (7 of the
+first 18 promises were reports). On its day it still weighs more than the critic's suggestions.
 """
 
 from __future__ import annotations

@@ -29,6 +29,12 @@ advance (its pins waited for the owner): 21 cycles from midnight to 12:35, $5.88
 now (plan.py): a step a cycle took with nothing its check reads moving waits until that moves or the next day, and the
 cut counts only steps a cycle can advance (plan.busy): not one taken before with nothing moved since, nor the cycle's
 own step if it moved nothing.
+
+0.37.9 (analysis-0.37.8, 6.3 1): nor a step whose work one of the owner's limits would refuse, which only the tools
+read until then: a pin, a post or a blog post while the publish requests that may wait for the owner wait, a report
+once the day's messages that answer none of theirs are sent. Of the 30 cycles #192 to #221, 16 ($4.12) ended in such
+a refusal after the sleep was cut for them. plan.busy reads the limits as the cycle ends (plan.limits): a cycle whose
+own request filled the queue has nothing left it can advance there.
 """
 
 from __future__ import annotations
