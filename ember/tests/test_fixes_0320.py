@@ -32,6 +32,7 @@ from tests import (  # noqa: E402
     test_venture_stages,
     test_ventures,
 )
+from tests.queue_helpers import slot_comes  # noqa: E402
 from tests.test_agent import ROOMY, rows  # noqa: E402
 from tests.test_etsy import call, shop_context, started  # noqa: E402
 from tests.test_loop_shapes import run  # noqa: E402
@@ -118,6 +119,7 @@ def test_a_post_and_a_pin_link_a_poster_printify_made_and_are_carried_out(data_d
     [pinned] = rows(agent, "SELECT id FROM approvals WHERE executor = 'pinterest_pin'")
     approve(agent, request["id"])
     approve(agent, pinned["id"])
+    slot_comes(agent, "bluesky")  # 0.37.8: an English post in America's day
     # Ember's code checks the listing again when it carries them out: still Ember's, still live
     assert sorted(agent.execute_approved()) == [(request["id"], "active"), (pinned["id"], "active")]
     assert rows(agent, "SELECT status FROM bluesky_posts") == [{"status": "active"}]

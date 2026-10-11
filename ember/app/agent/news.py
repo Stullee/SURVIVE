@@ -225,6 +225,8 @@ class News:
     # first, and the unlocks that stand now on each milestone (policy.standing)
     unlocks: list[sqlite3.Row] = field(default_factory=list)
     standing: dict[int, list[sqlite3.Row]] = field(default_factory=dict)
+    # 0.37.8: when each approved pin and post goes out, by its request (its slot in the publishing queue, in words)
+    slots: dict[int, str] = field(default_factory=dict)
 
     def approval_lines(self) -> list[str]:
         lines = []
@@ -257,6 +259,9 @@ class News:
                     head += ". Your owner posts it and reports back"
                 elif executor == "kdp_package":  # 0.25.0
                     head += ". Your owner publishes it at KDP and reports back with its link"
+                elif int(r["id"]) in self.slots:  # 0.37.8: a pin or a post waits for its slot in the queue
+                    slot = self.slots[int(r["id"])]
+                    head += f". Ember's code carries it out in its slot, {slot}; you'll hear the result"
                 elif executor in connectors.EXECUTORS:  # 0.19.2: a Bluesky post was "your owner will carry it out"
                     head += ". Ember's code carries it out and you'll hear the result"
                 else:

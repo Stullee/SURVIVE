@@ -214,14 +214,20 @@ def infer_template(
 
 def infer_audience(project: Mapping[str, Any]) -> str:
     """Who a product's marketing speaks to: English, German or both, from its words (Release 2c: the owner sets it).
-    No record holds a listing's language yet."""
+    No record holds a listing's language yet. 0.37.8: a German market or a lone "DE" names German buyers, a lone "EN"
+    English ones: live, "Nebenkostenabrechnung Excel Template (DE landlord utility bill tool)" for "landlords in
+    Germany" was taken for both, as its words were English, and got English Bluesky posts its buyers don't read."""
     text = f"{project['title']} {project['hypothesis']}"
     low = text.lower()
-    if re.search(r"\b(en\s*\+\s*de|de\s*\+\s*en|bilingual|zweisprachig)\b", low):
+    if re.search(r"\b(en\s*[+/&]\s*de|de\s*[+/&]\s*en|bilingual|zweisprachig)\b", low):
         return "both"
     german, english = len(_GERMAN.findall(text)), len(_ENGLISH.findall(text))
-    if re.search(r"\b(german|deutsch)\b", low) and not re.search(r"\benglish\b", low):
+    names_german = bool(re.search(r"\b(german|germany|deutsch|deutschland)\b", low) or re.search(r"\bDE\b", text))
+    names_english = bool(re.search(r"\benglish\b", low) or re.search(r"\bEN\b", text))
+    if names_german and not names_english:
         return "de"
+    if names_english and not names_german:
+        return "en"
     if german >= 2 and english == 0:
         return "de"
     if english >= 2 and german == 0:
@@ -397,6 +403,44 @@ def _retemplate(
     ]
 
 
+AUDIENCE_WORDS = {"en": "English", "de": "German", "both": "English and German"}
+
+
+def _reaudience(
+    conn: sqlite3.Connection, scope: AgentScope, product: Mapping[str, Any], project: Mapping[str, Any], now: str
+) -> list[str]:
+    """0.37.8: a product speaks to the audience its words name now (infer_audience): Ember's code's steps of a channel
+    that doesn't reach it (an English Bluesky post for a German product) drop out, and the template's steps of the open
+    stages for a channel that does reach it now come in. The agent's own steps, promises and steps done stay."""
+    audience, before = infer_audience(project), str(product["audience"] or "both")
+    if audience == before:
+        return []
+    _update(conn, product["id"], now, audience=audience)
+    template = templates.by_key(product["template"])
+    line = int(product["project_id"])
+    why = f"Ember's code: its buyers read {AUDIENCE_WORDS[audience]}"
+    dropped, added = [], []
+    for stage in _stages(conn, scope, product["id"]):
+        steps = _steps(conn, scope, stage["id"])
+        for step in steps:
+            fits = audience in CHANNEL_AUDIENCES.get(str(step["channel"]), (audience,))
+            if step["status"] == "open" and step["source"] in ("template", "code") and step["channel"] and not fits:
+                _close(conn, step["id"], now, "dropped", f"{why}: {step['channel']} doesn't reach them")
+                dropped.append(int(step["id"]))
+        stage_t = next((t for t in template.stages if t.stage == stage["stage"]), None)
+        if stage["status"] != "open" or stage_t is None or _replaced(stage, product):
+            continue
+        have = {str(s["template"]) for s in steps if s["status"] != "dropped"}
+        for number, step_t in enumerate(templates.steps_for(stage_t, audience)):
+            if f"{template.key}/{stage_t.stage}/{step_t.key}" not in have:
+                added.append(_template_step(conn, scope, now, stage["id"], line, template, stage_t, step_t, number))
+    change(conn, scope, int(product["id"]), None, "code", "replace", f"{why} (it was {AUDIENCE_WORDS[before]})", now)
+    said = f"Plan tree: line #{line}'s buyers read {AUDIENCE_WORDS[audience]}"
+    said += f"; its steps {', '.join(f'#{n}' for n in dropped)} for other readers dropped" if dropped else ""
+    said += f"; steps {', '.join(f'#{n}' for n in added)} for its channels added" if added else ""
+    return [said + "."]
+
+
 # --- the checks ---
 
 
@@ -562,6 +606,9 @@ def keep(conn: sqlite3.Connection, scope: AgentScope, now: str, today: date, cha
             earn = could_earn(conn, scope, project, template.could_earn)
             if earn != product["could_earn"]:
                 _update(conn, product["id"], now, could_earn=earn)
+            if product["id"] not in laid:
+                said += _reaudience(conn, scope, product, project, now)  # 0.37.8
+                product = node(conn, scope, int(product["id"])) or product
         closed = _close_done(facts, product, now)
         said += closed if product["id"] not in laid else []  # a new product's stages already done: no news
         said += _promises(facts, product, now)
@@ -2419,7 +2466,7 @@ TAKEN = {  # 0.37.0: a promise or an owner's decision is weighed like any step (
 }
 WAITS = {
     "owner": "your owner",
-    "approved": "an approved request being carried out",  # 0.37.6
+    "approved": "an approved request waiting for its slot or being carried out",  # 0.37.6; 0.37.8: the queue
     "channel": "a channel that isn't set up",
     "upgrade": "an upgrade",
     "date": "a date",
@@ -3690,19 +3737,31 @@ def _picks(conn: sqlite3.Connection, scope: AgentScope, places: Mapping[int, Pla
 
 
 def stamp(conn: sqlite3.Connection, scope: AgentScope) -> str:
-    """Changes whenever the tree, its words or its picks do (the tab reloads then)."""
+    """Changes whenever the tree, its words or its picks do (the tab reloads then); 0.37.8: and the publishing queue
+    its Channels show (a pin or post approved, decided otherwise or made)."""
     where, params = scope.where()
     tree = conn.execute(f"SELECT COUNT(*), MAX(updated_at) FROM plan_nodes WHERE {where}", params).fetchone()
     picks = conn.execute(f"SELECT MAX(id) FROM plan_picks WHERE {where}", params).fetchone()
     words = conn.execute(f"SELECT MAX(id) FROM plan_words WHERE {where}", params).fetchone()
     freezes = conn.execute(f"SELECT MAX(id), MAX(lifted_at) FROM plan_freezes WHERE {where}", params).fetchone()
-    return f"{tree[0]}:{tree[1] or ''}:{picks[0] or 0}:{words[0] or 0}:{freezes[0] or 0}:{freezes[1] or ''}"
+    queue = conn.execute(
+        f"SELECT COUNT(*), MAX(version), MAX(decided_at), MAX(closed_at) FROM approvals WHERE {where}"
+        " AND executor IN ('pinterest_pin', 'bluesky_post')",
+        params,
+    ).fetchone()
+    return (
+        f"{tree[0]}:{tree[1] or ''}:{picks[0] or 0}:{words[0] or 0}:{freezes[0] or 0}:{freezes[1] or ''}"
+        f":{queue[0]}:{queue[1] or 0}:{queue[2] or ''}:{queue[3] or ''}"
+    )
 
 
 def channels_from(settings: Any) -> dict[str, bool]:
-    """Which channels Ember can market in now, from the owner's options."""
+    """Which channels Ember can market in now, from the owner's options. 0.37.8: the blog by its own switch alone, as
+    the cycles take it (loop.blog_on): since 0.34.0 it also needed the owner's website (site_enabled), another option,
+    so with the website off the Plan tab and the keeper took the blog for off while the cycles wrote its posts (live,
+    the tab's next steps were not the cycles')."""
     return {
         "pinterest": bool(getattr(settings, "pinterest_enabled", False)),
         "bluesky": bool(getattr(settings, "bluesky_enabled", False)),
-        "blog": bool(getattr(settings, "blog_enabled", False)) and bool(getattr(settings, "site_enabled", False)),
+        "blog": bool(getattr(settings, "blog_enabled", False)),
     }

@@ -5,8 +5,10 @@ An approved pin (executor 'pinterest_pin') is carried out once, like an Etsy lis
 start marks what a crash left running). A pin that goes on a new board makes the board first (pinterest_boards,
 journaled as pinterest.create_board), then the pin (pinterest_pins, journaled as pinterest.create_pin: the owner's
 Undo deletes it). The image must be exactly the file the owner approved (its SHA-256). At most pinterest_pins_per_day
-pins a day. The owner's Undo of a pin is a request of theirs (executor 'pinterest_delete'), carried out here too. The
-sync reads each live pin's numbers (impressions, saves, outbound clicks) at most every SYNC_HOURS.
+pins a day. 0.37.8: an approved pin waits for its slot in the publishing queue (publish_queue.py: in the channel's
+hours, hours after the last pin, a listing at most every two days) and goes out alone. The owner's Undo of a pin is a
+request of theirs (executor 'pinterest_delete'), carried out here too, at once. The sync reads each live pin's numbers
+(impressions, saves, outbound clicks) at most every SYNC_HOURS.
 
 0.30.2: the sandbox's test pin (executor 'pinterest_test_pin'), for the video of the owner's Standard access request:
 a request of Ember's code, put on the owner's list when they connect with the sandbox option on (``request_test``):
@@ -35,7 +37,7 @@ from ..config import Settings
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
 from ..products import images
-from . import connectors, etsy, etsy_publisher, pinterest
+from . import connectors, etsy, etsy_publisher, pinterest, publish_queue
 from .pinterest import Account, Gone, NotSent, Pin, PinterestError, pin_from_action, pin_url
 
 log = logging.getLogger(__name__)
@@ -164,6 +166,10 @@ def execution(
             }
     if row["status"] not in ("approved", "approved_with_changes"):
         return None
+    if row["executor"] == "pinterest_pin":  # 0.37.8: its slot in the publishing queue
+        slot = publish_queue.slot_of(conn, scope, clock, "pinterest", daily_limit, int(row["id"]))
+        if slot is not None and slot.at > clock.now():
+            return publish_queue.scheduled(slot, "pinterest", daily_limit)
     limited = row["executor"] == "pinterest_pin" and created_today(conn, clock, scope) >= daily_limit
     return {
         "status": "waiting_limit" if limited else "waiting",
@@ -244,9 +250,9 @@ class Publisher:
         self._lock = threading.Lock()  # one run (or sync) at a time in this process
 
     def run(self, undos: bool = False) -> list[tuple[int, str]]:
-        """Carry out the approved pins (and the owner's Undos of pins) that are due; with ``undos`` (0.15.0: while the
-        agent is paused or waits for money), only the Undos. 0.30.2: and the sandbox's test pin, which is the owner's
-        too."""
+        """Carry out the approved pin whose slot has come (0.37.8: the publishing queue's, one a round; until then every
+        approved pin at once) and the owner's Undos of pins; with ``undos`` (0.15.0: while the agent is paused or
+        waits for money), only the Undos. 0.30.2: and the sandbox's test pin, which is the owner's too."""
         account, sandbox = self.account(), self.sandbox()
         if (account is None and sandbox is None) or not self._lock.acquire(blocking=False):
             return []
@@ -254,7 +260,12 @@ class Publisher:
             scope = self.scope()
             done = []
             if account is not None:
-                for approval_id in [] if undos else self._approved(scope, "pinterest_pin"):
+                tried: set[int] = set()
+                # 0.37.8: the pin whose slot has come; the next one's comes hours later, unless this one went out to
+                # nobody (refused by its checks before Pinterest heard of it), which takes no slot
+                while not undos and (due := self._slotted(scope)) and due[0] not in tried:
+                    approval_id = due[0]
+                    tried.add(approval_id)
                     outcome = self._one(account, scope, approval_id)
                     done.append((approval_id, outcome))
                     if outcome == connectors.HALTED:
@@ -335,6 +346,11 @@ class Publisher:
                     (*params, executor),
                 )
             ]
+
+    def _slotted(self, scope: AgentScope) -> list[int]:
+        """0.37.8: the approved pin whose slot in the publishing queue has come, if any."""
+        with self.db.connection() as conn:
+            return publish_queue.due(conn, scope, self.clock, "pinterest", self.settings.pinterest_pins_per_day)
 
     @staticmethod
     def _listing(conn: sqlite3.Connection, scope: AgentScope, link: str, now: str) -> None:

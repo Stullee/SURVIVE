@@ -17,7 +17,14 @@ A PIN NEEDS:
    unlocked: it is a new public presence of theirs.
 6. alt_text: what the picture shows, for people who can't see it.
 
+WHEN IT GOES OUT (the publishing queue): an approved pin waits for its slot and goes out alone, never in a burst
+(Pinterest reads bursts and one link pinned again and again as spam): from 8:00 to 22:00 your owner's time, at least 3
+hours after your last pin, a listing at most once in 2 days, at most the daily limit. The oldest approval goes first
+unless its listing must wait; then the next listing's pin goes. propose_pin says when a pin would go out, and the
+queue is in PINTEREST and pinterest_boards. While 3 of your pins wait for your owner or their slot, propose no more.
+
 RULES: only your own pictures and listings; no claim the listing doesn't make; one pin per listing and picture (a
-listing's next pin needs a new picture). Pins count slowly: judge them after a few weeks, by their clicks to the
-listings (PINTEREST in your plan, the metrics pins_live and pin_clicks). A pin can be taken back: your owner's Undo
-deletes it.
+listing's next pin needs a new picture and new words: one that repeats a live or approved pin of its listing is
+refused, one that repeats a pin still waiting for your owner replaces it). Pins count slowly: judge them after a few
+weeks, by their clicks to the listings (PINTEREST in your plan, the metrics pins_live and pin_clicks). A pin can be
+taken back: your owner's Undo deletes it.

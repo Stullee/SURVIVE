@@ -69,7 +69,7 @@
     rm: { data: null, byId: {}, stamp: null, busy: false, again: false, error: null, selected: null, saving: false },
     // 0.34.0: the plan tree (a preview): loaded while its tab is open, again whenever the dashboard's plan stamp
     // changes; selected: the product opened below the tree; view: the network's zoom and position.
-    pl: { data: null, stamp: null, busy: false, again: false, error: null, selected: null, view: null, size: null, dragged: false, centred: false },
+    pl: { data: null, stamp: null, busy: false, again: false, error: null, selected: null, view: null, size: null, dragged: false, centred: false, lineNames: {} },
     // 0.29.0: the owner's goal: its form is being saved, its removal is being confirmed or sent
     goal: { saving: false, removing: false },
     // The library (0.12.0): loaded while its tab is open, again whenever the dashboard's library stamp changes.
@@ -3062,9 +3062,17 @@
       h("p", { class: "execution-detail" }, detail));
   }
 
+  // 0.37.8: an approved pin or post in the publishing queue: when its slot comes, and what set it (the channel's hours,
+  // the gap after the last one, a listing's last pin or post, the daily limit).
+  function queuedDetail(ex) {
+    var due = ex.due_at ? [timeEl(ex.due_at, fmtDateTime(ex.due_at)), " (", relTime(ex.due_at), ")"] : "in its slot";
+    return ["Goes out ", due, ex.result ? ": " + endSentence(String(ex.result)) : "."];
+  }
+
   // 0.13.0 (Phase E2): a pin, or the owner's Undo of one, as Ember's code carries it out.
   var PIN_EXECUTION = {
     waiting: { icon: "◔", label: "Waiting", tone: "accent" },
+    scheduled: { icon: "◷", label: "In the queue", tone: "accent" },
     waiting_limit: { icon: "◔", label: "Waiting for tomorrow's limit", tone: "warning" },
     running: { icon: "●", label: "At Pinterest now", tone: "accent" },
     active: { icon: "✓", label: "Pinned", tone: "good" },
@@ -3078,6 +3086,7 @@
     var name = agentName();
     var detail;
     if (st === "waiting") detail = [name + (executorOf(a) === "pinterest_delete" ? " deletes it" : " makes it") + " by itself shortly; it checks every few minutes."];
+    else if (st === "scheduled") detail = queuedDetail(ex);
     else if (st === "waiting_limit") detail = [name + " has made its pins for today, so this one waits for tomorrow's limit."];
     else if (st === "running") detail = ex.started_at ? ["At Pinterest since ", timeEl(ex.started_at), "."] : ["At Pinterest now."];
     else if (st === "active") detail = ["Pinned ", timeEl(ex.finished_at || ex.started_at), ex.url && !a.simulated ? [": ", pinterestLink(ex.url, ex.url)] : "."];
@@ -3091,6 +3100,7 @@
   // 0.19.0: a Bluesky post, or the owner's Undo of one, as Ember's code carries it out.
   var POST_EXECUTION = {
     waiting: { icon: "◔", label: "Waiting", tone: "accent" },
+    scheduled: { icon: "◷", label: "In the queue", tone: "accent" },
     waiting_limit: { icon: "◔", label: "Waiting for tomorrow's limit", tone: "warning" },
     running: { icon: "●", label: "At Bluesky now", tone: "accent" },
     active: { icon: "✓", label: "Posted", tone: "good" },
@@ -3104,6 +3114,7 @@
     var name = agentName();
     var detail;
     if (st === "waiting") detail = [name + (executorOf(a) === "bluesky_delete" ? " deletes it" : " posts it") + " by itself shortly; it checks every few minutes." + (ex.result ? " " + endSentence(sentence(ex.result)) : "")];
+    else if (st === "scheduled") detail = queuedDetail(ex);
     else if (st === "waiting_limit") detail = [name + " has made its posts for today, so this one waits for tomorrow's limit."];
     else if (st === "running") detail = ex.started_at ? ["At Bluesky since ", timeEl(ex.started_at), "."] : ["At Bluesky now."];
     else if (st === "active") detail = ["Posted ", timeEl(ex.finished_at || ex.started_at), ex.url && !a.simulated ? [": ", blueskyLink(ex.url, ex.url)] : "."];
@@ -3277,7 +3288,7 @@
       if (executor === "etsy_edit") return executionStatus(a) === "waiting" ? [panelButton(it, "failed", "Cancel change", true)] : [];
       if (isAsIs(a)) {
         var ps = executionStatus(a);
-        return ps === "waiting" || ps === "waiting_limit" ? [panelButton(it, "failed", "Cancel", true)] : [];
+        return ps === "waiting" || ps === "waiting_limit" || ps === "scheduled" ? [panelButton(it, "failed", "Cancel", true)] : [];
       }
       var tools = [];
       if (executor === "reddit_link") {
@@ -10024,7 +10035,7 @@
     moved: "its venture moved on: it closes at the next cycle",  // 0.37.0: backed, parked or killed since
     // 0.37.6: the brake, and a step whose own requests are on their way
     tried: "taken today, and nothing it is checked by moved: it waits for a change, or tomorrow",
-    approved: "its approved request is being carried out",
+    approved: "its approved request waits for its slot or is being carried out",
   };
   var PLAN_DECIDED = {
     pin: "you pinned it", promise: "a promise to you or your decision (first, until 0.36.0)",
@@ -10066,6 +10077,8 @@
     setStatusText("pl-load-status", pl.error ? "Couldn't load the plan: " + errorText(pl.error) : !d && pl.busy ? "Loading the plan…" : "", pl.error ? "error" : "");
     if (!d) { ["pl-now", "pl-net", "pl-detail", "pl-changes", "pl-channels", "pl-upgrades", "pl-picks", "vt-steps"].forEach(function (id) { replace($(id), null); }); return; }
     var products = planProducts(d);
+    pl.lineNames = {};  // 0.37.8: each line's product by its name, for the steps' places
+    products.forEach(function (x) { if (x.product.line !== null && x.product.line !== undefined) pl.lineNames[x.product.line] = x.product.title; });
     var known = products.some(function (x) { return x.product.id === pl.selected; });
     if (!known) {
       var nowLine = isObject(d.now) ? d.now.line : null;
@@ -10086,9 +10099,17 @@
     renderVentureSteps(d);  // 0.37.0: in the Ventures view below
   }
 
+  // 0.37.8: a product line by its product's name and number. Every product's steps have the same titles, so "Post it
+  // twice on Bluesky" for three products read as one step three times (live, on 10-11) beside a grey "line #8".
+  function planLine(line) {
+    var name = (ui.pl.lineNames || {})[line];
+    if (!name) return "line #" + line;
+    return (name.length > 42 ? name.slice(0, 41).trim() + "…" : name) + " (line #" + line + ")";
+  }
+
   // Where a step belongs: its product line, or (0.37.0) its venture (a venture's step's title says only the decision).
   function planWhere(s) {
-    if (s.line) return "line #" + s.line;
+    if (s.line) return planLine(s.line);
     if (s.venture) return "venture #" + s.venture + (s.venture_title ? " " + s.venture_title : "");
     return "";
   }
@@ -10112,7 +10133,7 @@
       h("div", { class: "pl-now-card" },
         h("p", { class: "small-head", text: "Waiting on you" }),
         waiting.length
-          ? h("ul", { class: "pl-list" }, waiting.map(function (s) { return h("li", { text: s.title + (planWhere(s) ? " (" + planWhere(s) + ")" : "") }); }))
+          ? h("ul", { class: "pl-list" }, waiting.map(function (s) { return h("li", { text: s.title + (planWhere(s) ? " · " + planWhere(s) : "") }); }))
           : h("p", { class: "muted", text: "Nothing." })),
       planFreezeCard(d),
       planVenturesCard(d),
@@ -10652,7 +10673,7 @@
     replace($("pl-changes"), h("ul", { class: "pl-list pl-changes-list" }, changes.map(function (c) {
       var who = PLAN_ACTORS[c.actor] || name;
       return h("li", null, timeEl(c.at), " · ", h("strong", { text: who + " " + (PLAN_ACTIONS[c.action] || c.action) + " " }),
-        "#" + c.id + " " + c.title + (c.line ? " (line #" + c.line + ")" : ""),
+        "#" + c.id + " " + c.title + (c.line ? ", " + planLine(c.line) : ""),
         c.why ? h("span", { class: "muted", text: ": " + c.why }) : null);
     })));
   }
@@ -10665,10 +10686,15 @@
     replace($("pl-channels"), h("div", { class: "pl-now" }, channels.map(function (c) {
       var open = arr(c.steps).filter(function (st) { return st.status === "open"; });
       var done = arr(c.steps).filter(function (st) { return st.status === "done"; });
+      var queue = arr(c.queue);  // 0.37.8: the approved pins and posts, each in its slot
       return h("div", { class: "pl-now-card" },
         h("p", { class: "small-head", text: (PLAN_CHANNELS[c.channel] || c.channel) + (c.factor !== 1 ? " · works " + c.factor + "×" : "") }),
+        queue.length ? h("p", { class: "muted small", text: "Going out, one at a time:" }) : null,
+        queue.length ? h("ol", { class: "pl-list" }, queue.map(function (q) {
+          return h("li", null, "#" + q.id + " " + q.title, h("span", { class: "muted" }, " · ", timeEl(q.at, fmtDateTime(q.at)), q.line ? " · " + planLine(q.line) : "", q.why ? " · " + q.why : ""));
+        })) : null,
         open.length ? h("ul", { class: "pl-list" }, open.map(function (st) {
-          return h("li", null, st.title, h("span", { class: "muted", text: " · line #" + st.line + (st.due ? " · due " + fmtDay(st.due) : "") + (st.waiting ? " · " + (PLAN_WAIT[st.waiting] || st.waiting) : "") }));
+          return h("li", null, st.title, h("span", { class: "muted", text: " · " + planLine(st.line) + (st.due ? " · due " + fmtDay(st.due) : "") + (st.waiting ? " · " + (PLAN_WAIT[st.waiting] || st.waiting) : "") }));
         })) : h("p", { class: "muted", text: "Nothing to do now." }),
         done.length ? h("p", { class: "muted", text: plural(done.length, "step") + " done in the last 14 days." }) : null);
     })));
@@ -10683,7 +10709,7 @@
       return h("li", null,
         h("strong", { text: u.id ? "Upgrade #" + u.id + " " + u.title + " (" + u.status + ")" : "No upgrade request yet" }),
         h("ul", { class: "pl-list" }, steps.map(function (st) {
-          return h("li", null, st.title, h("span", { class: "muted", text: " · line #" + st.line + (st.weight !== null && st.weight !== undefined ? " · would weigh " + st.weight : "") }));
+          return h("li", null, st.title, h("span", { class: "muted", text: " · " + planLine(st.line) + (st.weight !== null && st.weight !== undefined ? " · would weigh " + st.weight : "") }));
         })));
     })));
   }

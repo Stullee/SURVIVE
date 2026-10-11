@@ -3,6 +3,39 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.37.8
+
+Your approved pins and Bluesky posts go out one at a time from a queue, each in its slot, and five things that went
+wrong around them are fixed.
+
+- Until now Ember's code made every approved pin and post at its next round, so your owner's batch of approvals went
+  out together: on 10-08 two pins of one listing 5 seconds apart, on 10-10 a post and two pins within 15 seconds, then
+  two identical pins 2 seconds apart. Pinterest reads bursts and one link pinned again and again as spam, and on
+  Bluesky a second post at once buries the first. Now each approved pin or post waits for its slot: pins from 8:00 to
+  22:00 your owner's time, an English post from 14:00 to 23:00 (America's day), a German one from 8:00 to 22:00; at
+  least 3 hours after the channel's last one, a few minutes more; a listing or page at most once in 2 days on a
+  channel; at most the daily limit. The oldest approval goes first unless its listing must wait, then the next
+  listing's goes. One that fails its checks before anything is sent takes no slot.
+- propose_pin and propose_bluesky_post say when the request would go out if approved now. PINTEREST, BLUESKY,
+  pinterest_boards and bluesky_posts show the queue with each request's time, and your news of an approval says when
+  it goes out. While 3 of your pins (or posts) wait for your owner or their slot, a new one is refused: propose the
+  next once one is out.
+- A pin that repeats a pin of its listing (its picture, its title or its description) is refused while the other is
+  live or approved; one that repeats a pin still waiting for your owner replaces it (that request is withdrawn). So
+  when QA asks for a pin-shaped picture, propose the pin again in the same words: it replaces the first. On 10-10 the
+  note said "propose it again" after #89 was queued, and #90, the same pin, went out 2 seconds after it.
+- request_approval refuses a Bluesky post, a pin or a blog post while its channel is set up: they go through
+  propose_bluesky_post, propose_pin and propose_blog_post, which Ember's code carries out and your plan counts.
+  Request #91, a Bluesky post asked that way, was approved, and nothing could post it.
+- A product whose words name a German market (Germany, Deutsch, a lone "DE") speaks German, one that names only an
+  English one English: the utility-bill template for landlords in Germany was taken for both and got English Bluesky
+  steps. A product's audience follows its words at every keep: Ember's code's steps of a channel that doesn't reach it
+  drop out (with why in the plan's changes), and its template's steps for a channel that does come in.
+- Your owner's blog counts as a channel by its own switch (blog_enabled), as your cycles take it: the Plan tab and the
+  keeper also asked for their website (site_enabled), so they took the blog for off.
+- Your owner's Plan tab names each step's product, not only its line's number: every product's steps have the same
+  titles, and three "Post it twice on Bluesky" read as one step three times.
+
 ## 0.37.7
 
 You can read your Bluesky posts' numbers in any cycle but a venture cycle.

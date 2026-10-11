@@ -5,10 +5,12 @@ anything is sent, so a crash never posts it twice ('unclear' when it can't be kn
 crash left running). Its picture must be exactly the file the owner approved (its SHA-256); Ember's code sends a
 smaller copy when it is larger than Bluesky takes (images.within: the same picture always gives the same copy). The
 link must still be Ember's: a listing still live, as the pin's, or (0.19.2) a page of the owner's website that Ember's
-code knows is there; 0.25.1: its second link too. At most bluesky_posts_per_day posts a day. Before the first post of a
-round Ember's code logs in: while Bluesky refuses the login, approved posts wait (nothing is begun). The owner's Undo of
-a post is a request of theirs (executor 'bluesky_delete'), carried out here too. The sync reads the account's followers
-and each live post's numbers (likes, reposts, replies, quotes, moderation's labels) at most every SYNC_HOURS.
+code knows is there; 0.25.1: its second link too. At most bluesky_posts_per_day posts a day. 0.37.8: an approved post
+waits for its slot in the publishing queue (publish_queue.py: in the hours of its language, hours after the last post,
+a listing or page at most every two days) and goes out alone. Before the first post of a round Ember's code logs in:
+while Bluesky refuses the login, approved posts wait (nothing is begun). The owner's Undo of a post is a request of
+theirs (executor 'bluesky_delete'), carried out here too, at once. The sync reads the account's followers and each live
+post's numbers (likes, reposts, replies, quotes, moderation's labels) at most every SYNC_HOURS.
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ from ..config import Settings
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
 from ..products import images
-from . import connectors, etsy, etsy_publisher, site_publisher
+from . import connectors, etsy, etsy_publisher, publish_queue, site_publisher
 from .bluesky import (
     BLOB_LONGEST,
     BLOB_MAX_BYTES,
@@ -157,6 +159,10 @@ def execution(
             }
     if row["status"] not in ("approved", "approved_with_changes"):
         return None
+    if row["executor"] == "bluesky_post":  # 0.37.8: its slot in the publishing queue
+        slot = publish_queue.slot_of(conn, scope, clock, "bluesky", daily_limit, int(row["id"]))
+        if slot is not None and slot.at > clock.now():
+            return publish_queue.scheduled(slot, "bluesky", daily_limit)
     limited = row["executor"] == "bluesky_post" and created_today(conn, clock, scope) >= daily_limit
     return {
         "status": "waiting_limit" if limited else "waiting",
@@ -224,25 +230,32 @@ class Publisher:
         self._lock = threading.Lock()  # one run (or sync) at a time in this process
 
     def run(self, undos: bool = False) -> list[tuple[int, str]]:
-        """Carry out the approved posts (and the owner's Undos of posts) that are due; with ``undos`` (while the agent
-        is paused or waits for money), only the Undos."""
+        """Carry out the approved post whose slot has come (0.37.8: the publishing queue's, one a round; until then
+        every approved post at once) and the owner's Undos of posts; with ``undos`` (while the agent is paused or waits
+        for money), only the Undos."""
         account = self.account()
         if account is None or not self._lock.acquire(blocking=False):
             return []
         try:
             scope = self.scope()
-            due = [] if undos else self._approved(scope, "bluesky_post")
+            due = [] if undos else self._slotted(scope)
             undoing = self._approved(scope, "bluesky_delete")
             if (due or undoing) and not self._logged_in(account, scope):
                 return []  # Bluesky refused the login: what is approved waits, nothing begun
             done = []
-            for approval_id in due:
+            tried: set[int] = set()
+            # 0.37.8: the post whose slot has come; the next one's comes hours later, unless this one was never sent
+            # (refused by its checks), which takes no slot
+            while due and due[0] not in tried:
+                approval_id = due[0]
+                tried.add(approval_id)
                 outcome = self._one(account, scope, approval_id)
                 done.append((approval_id, outcome))
                 if outcome == connectors.HALTED:
                     return done  # 0.37.3: the kill switch came on: the rest waits
                 if outcome == "waiting_limit":
                     break  # the rest waits for tomorrow too, in order
+                due = self._slotted(scope)
             for approval_id in undoing:
                 outcome = self._delete(account, scope, approval_id)
                 done.append((approval_id, outcome))
@@ -274,6 +287,11 @@ class Publisher:
                     (*params, executor),
                 )
             ]
+
+    def _slotted(self, scope: AgentScope) -> list[int]:
+        """0.37.8: the approved post whose slot in the publishing queue has come, if any."""
+        with self.db.connection() as conn:
+            return publish_queue.due(conn, scope, self.clock, "bluesky", self.settings.bluesky_posts_per_day)
 
     def _link(self, conn: sqlite3.Connection, scope: AgentScope, link: str | None, now: str) -> str | None:
         """A post's link to one of Ember's listings must still be live when the post is made (an approved post can
