@@ -10036,6 +10036,9 @@
     // 0.37.6: the brake, and a step whose own requests are on their way
     tried: "taken today, and nothing it is checked by moved: it waits for a change, or tomorrow",
     approved: "its approved request waits for its slot or is being carried out",
+    // 0.37.9: your limits, which the tools refused it by: no more cycles that end in the refusal
+    queue: "the publishing queue is full: it waits until you decide a request, or one goes out",
+    messages: "today's messages to you are sent: it waits for tomorrow, or your next message",
   };
   var PLAN_DECIDED = {
     pin: "you pinned it", promise: "a promise to you or your decision (first, until 0.36.0)",

@@ -1091,10 +1091,13 @@ def _agent(state: AppState, full: bool = True) -> str:
                 for c in found
                 if c.waiting not in (None, "step")
             ]
+            limits = plan.limits(conn, scope, to_iso(agent.clock.day_start(agent.clock.today())))
             out.append(
                 "-- plan tree: steps that wait (on the owner, a channel, an upgrade, a hold; 0.36.0: the Explore step"
                 " also on its date, the burn mode or an owner's message first, an empty READY; 0.37.6: 'tried', taken"
-                " today with nothing moved, and 'approved', its approved requests being carried out)\n"
+                " today with nothing moved, and 'approved', its approved requests being carried out; 0.37.9: 'queue',"
+                " a pin, post or blog post the publishing queue would refuse, and 'messages', a report to the owner the"
+                f" day's message limit would refuse. Now: {limits.text()})\n"
                 + _rows(waiting[:15], ["step", "line", "waiting", "title"])
             )
         except Exception as exc:  # noqa: BLE001 - the report goes on without it

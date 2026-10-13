@@ -93,7 +93,7 @@ from . import (
 )
 from .memory import CAPS, HEADING_REFUSAL, MAX_APPEND_LINES, Memory, MemoryError_, heading_line
 from .sandbox import Jail, Limits, QuotaError, SandboxError, kind_of
-from .store import OPEN_STATUSES, AgentScope
+from .store import MESSAGES_PER_DAY, OPEN_STATUSES, AgentScope
 
 log = logging.getLogger(__name__)
 
@@ -113,7 +113,6 @@ READ_DEFAULT_CHARS = 3_000
 READ_MAX_CHARS = 6_000
 MAX_TOOL_CALLS_PER_TURN = 4  # a reply's tool calls that run (write_journal besides them); the rest are skipped
 MAX_UNREAD_MESSAGES = 5
-MESSAGES_PER_DAY = 2  # 0.12.0: messages to the owner a day that answer none of theirs (the rule was only prose)
 MAX_NEW_UPGRADES = 5
 SANDBOX_STRIKES = 3
 INBOX_SIZE = 15
@@ -3482,15 +3481,8 @@ def _reports_promise(ctx: ToolContext, conn: Any, text: str) -> bool:
 
 
 def _unasked_today(ctx: ToolContext, conn: Any) -> int:
-    """The agent's messages of the owner's today that answered none of theirs."""
-    start = to_iso(ctx.clock.day_start(ctx.clock.today()))
-    where, params = ctx.scope.where("m")
-    row = conn.execute(
-        f"SELECT COUNT(*) FROM messages m WHERE {where} AND m.sender = 'agent' AND m.created_at >= ?"
-        " AND NOT EXISTS (SELECT 1 FROM messages o WHERE o.answered_by = m.id)",
-        (*params, start),
-    ).fetchone()
-    return int(row[0])
+    """The agent's messages of the owner's today that answered none of theirs (0.37.9: the plan counts them too)."""
+    return store.unasked_since(conn, ctx.scope, to_iso(ctx.clock.day_start(ctx.clock.today())))
 
 
 def _obligation_done(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:

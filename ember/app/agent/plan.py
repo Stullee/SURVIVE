@@ -24,7 +24,9 @@ step and the ventures' turn until it is kept; one made without naming its produc
 0.37.0: a promise and a decision are weighed like any step (``candidates``); 0.37.1: urgent only near their day.
 0.37.6: one brake for every step: a step a cycle took without what its check reads moving waits until that moves or
 the next day, one whose own requests are on their way waits on them (``candidates``, ``mark``), and a stage that still
-needs a request of the owner's gets a step to propose it again (``_again``).
+needs a request of the owner's gets a step to propose it again (``_again``). 0.37.9: a step whose work one of the
+owner's limits would refuse waits on it (``limits``: a pin or a post while the publishing queue is full, a report once
+the day's messages are sent), and a promise to report weighs as a report (``_kind``).
 """
 
 from __future__ import annotations
@@ -38,7 +40,8 @@ from datetime import date, timedelta
 from typing import Any
 
 from ..economy.clock import from_iso, to_iso
-from . import critic, desk, metrics, obligations, policy, reach, roadmap, templates, ventures, weights
+from ..integrations import publish_queue
+from . import critic, desk, metrics, obligations, policy, reach, roadmap, store, templates, ventures, weights
 from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope, canonical, sha256
 
 SEQUENTIAL = (
@@ -575,9 +578,18 @@ def _holds(facts: Facts, row: Mapping[str, Any]) -> bool:
 # --- keeping the tree ---
 
 
-def keep(conn: sqlite3.Connection, scope: AgentScope, now: str, today: date, channels: Mapping[str, bool]) -> list[str]:
+def keep(
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    now: str,
+    today: date,
+    channels: Mapping[str, bool],
+    *,
+    day_start: str | None = None,
+) -> list[str]:
     """Lays out new product lines, closes what its checks show done, adds promise and recurring steps, closes the
-    products of closed lines; returns what happened, for the System log."""
+    products of closed lines; returns what happened, for the System log. 0.37.9: ``day_start``, when the owner's day
+    began (their clock's): the day's messages count from then (``limits``)."""
     said: list[str] = []
     facts = Facts(conn, scope, now)
     where, params = scope.where()
@@ -619,7 +631,7 @@ def keep(conn: sqlite3.Connection, scope: AgentScope, now: str, today: date, cha
     said += _ventures(conn, scope, now)  # 0.37.0: each venture a node, its next decision a step
     said += _owner_owed(conn, scope, now)  # 0.37.0: and what is owed to the owner of no product
     said += _lift_waits(conn, scope, now, today)
-    _clocks(conn, scope, now, today, channels)
+    _clocks(conn, scope, now, today, channels, day_start)
     return said
 
 
@@ -1180,18 +1192,19 @@ def _owner_candidates(
     channels: Mapping[str, bool],
     lately: Mapping[int, int],
     picks: Mapping[int, Any],
+    capped: OwnerLimits,
 ) -> list[Candidate]:
     """0.37.0: the Owner project's steps as the scorer sees them: worth weights.PROMISE_WORTH, urgent as their day
     nears (_owed_urgency). 0.37.6: one waits once a cycle took it without its obligation closing or, for a promise of a
     channel's work, the channel's requests made since it was promised moving ('tried', ``mark``), until they do or the
-    next day."""
+    next day. 0.37.9: and while a limit of the owner's would refuse its work (``_limited``: ``capped``)."""
     conn, scope, now = facts.conn, facts.scope, facts.now
     top = nodes(conn, scope, "level = 'project' AND platform = 'owner'")
     if not top:
         return []
     found = []
     for step in _open_steps(conn, scope, int(top[0]["id"])):
-        reason = _waiting(step, channels)
+        reason = _waiting(step, channels) or _limited(facts, step, capped)
         stale = _stale(facts, step, picks)
         if reason is None and stale == today.isoformat():
             reason = "tried"
@@ -1783,7 +1796,8 @@ class Candidate:
 
     step: weights.Step
     stage: str
-    # why it can't be taken now ('owner', 'channel', 'upgrade', 'step', 'hold'; 0.37.6 'approved', 'tried'), None: ready
+    # why it can't be taken now ('owner', 'channel', 'upgrade', 'step', 'hold'; 0.37.6 'approved', 'tried'; 0.37.9 a
+    # limit of the owner's, ``limits``: 'queue', 'messages'), None: ready
     waiting: str | None
     # 0.37.6: a cycle took it, and nothing its check reads moved since (it waits 'tried' while that was today; ready
     # again the next day for a try, it doesn't cut a cycle's sleep: busy)
@@ -1863,6 +1877,8 @@ def candidates(
     channels: Mapping[str, bool],
     exploring: bool = False,
     before: int | None = None,
+    *,
+    day_start: str | None = None,
 ) -> list[Candidate]:
     """Every open step of the open products, ready or waiting, weighed by weights.py's parts (the scorer leaves out
     the waiting ones). An owner's decision (``_decisions``) is a step of its own in whatever stage it stands, and
@@ -1881,8 +1897,13 @@ def candidates(
     its check still needs, waits on them ('owner' while one waits for the owner's decision, 'approved' while they are
     carried out), without one of Ember's waits; an owner's step with nothing for them to decide waits on the step of
     Ember's before it ('step': in the analysis of 0.37.0, "You approve it" waited on the owner while no request
-    did)."""
+    did).
+
+    0.37.9: and a step whose work a limit of the owner's would refuse waits on it (``_limited``): a pin, a post or a
+    blog post while the publishing queue takes no more ('queue'), a report to the owner once the day's messages that
+    answer none of theirs are sent ('messages'; ``day_start``: when the owner's day began, their clock's)."""
     facts = Facts(conn, scope, now)
+    capped = limits(conn, scope, day_start or _midnight(today))
     factors = _channel_factors(conn, scope, now)
     missed = _missed(conn, scope, today)
     worked = _worked(conn, scope)
@@ -1937,7 +1958,7 @@ def candidates(
             elif step["kind"] == templates.OWNER_KIND:
                 reason = _owners(facts, step, pid)  # 0.37.6: theirs while something waits for them
             else:
-                reason = _waiting(step, channels) or _requested(facts, step, pid)
+                reason = _waiting(step, channels) or _requested(facts, step, pid) or _limited(facts, step, capped)
                 if reason is None and stale[step["id"]] == day:
                     reason = "tried"
             if sequential and stage["id"] == current["id"] and reason is None:
@@ -1983,6 +2004,7 @@ def candidates(
             made = promised_at.get(int(step["obligation_id"]))
             if reason is None and promise and made and any(line == pid and at > made for line, at in asked):
                 reason = "owner"  # a request for it waits on the owner's decision
+            reason = reason or _limited(facts, step, capped)  # 0.37.9
             tried = _stale(facts, step, picks)
             if reason is None and tried == day:
                 reason = "tried"
@@ -2004,7 +2026,7 @@ def candidates(
                     tried is not None,
                 )
             )
-    found += _owner_candidates(facts, today, channels, lately, picks)  # 0.37.0: what is owed of no product
+    found += _owner_candidates(facts, today, channels, lately, picks, capped)  # 0.37.0: what is owed of no product
     # 0.37.6: a step that waits for tomorrow since a cycle tried it is work of Ember's still: no new product's turn
     turn = exploring and not any(c.waiting in (None, "tried") for c in found) and _ventured_last(conn, scope, before)
     # 0.37.0: and the ventures' steps
@@ -2256,18 +2278,129 @@ def _owners(facts: Facts, row: Mapping[str, Any], line: int | None) -> str:
     return "owner" if flying else "step"
 
 
+# --- the owner's limits (0.37.9) ---
+
+# 0.37.9: two limits of the owner's that only the tools enforced (analysis-0.37.8, 6.3 and 6.4): the publish requests
+# that may wait for them (store.PENDING_CAPS, and since 0.37.8 a channel's pins or posts waiting for them or their slot,
+# publish_queue.WAITING), and the messages a day that answer none of theirs (store.MESSAGES_PER_DAY). Live, of the 30
+# cycles #192 to #221, 9 took a pin, a post or a blog post while the queue was full ($2.57) and 7 a report to the owner
+# after the day's messages were sent ($1.55; five in a row, #193 to #197): each step looked ready, cut the sleep to the
+# owner's shortest and paid for a plan whose request the tool then refused. Now such a step waits on the limit
+# ('queue', 'messages', ``candidates``) and cuts no sleep (``busy``).
+
+
+@dataclass(frozen=True)
+class OwnerLimits:
+    """The owner's limits a step's work can run into, as they stand: the publish requests waiting for the owner (a pin,
+    a Bluesky post, a blog post and the link page are all publish requests), each queue channel's pins or posts
+    waiting for the owner or for their slot, the messages of the owner's day that answered none of theirs, and
+    whether a message of theirs waits for an answer (one that answers them is no message of that kind: it can carry
+    a report)."""
+
+    publish: int = 0
+    queued: Mapping[str, int] = field(default_factory=dict)
+    messages: int = 0
+    asked: bool = False
+
+    def full(self, channel: str | None) -> bool:
+        """Whether a request to publish on ``channel`` (a queue channel, else the blog or the link page) would be
+        refused now: as many publish requests as may wait for the owner wait, or as many of the channel's pins or
+        posts as may wait for the owner or their slot."""
+        if self.publish >= store.PENDING_CAPS["publish"]:
+            return True
+        return channel is not None and self.queued.get(channel, 0) >= publish_queue.WAITING
+
+    @property
+    def told(self) -> bool:
+        """Whether a message that answers none of the owner's would be refused today (unless it reports a promise:
+        ``_let_through``)."""
+        return self.messages >= store.MESSAGES_PER_DAY and not self.asked
+
+    def text(self) -> str:
+        """The limits in words, for the diagnostics."""
+        queued = ", ".join(
+            f"{publish_queue.THINGS[c][1]} {self.queued.get(c, 0)} of {publish_queue.WAITING}"
+            for c in publish_queue.CHANNELS
+        )
+        return (
+            f"publish requests waiting for the owner {self.publish} of {store.PENDING_CAPS['publish']}; waiting for"
+            f" the owner or their slot: {queued}; messages today that answer none of the owner's {self.messages} of"
+            f" {store.MESSAGES_PER_DAY}" + ("; a message of the owner's waits for an answer" if self.asked else "")
+        )
+
+
+def limits(conn: sqlite3.Connection, scope: AgentScope, day_start: str) -> OwnerLimits:
+    """The owner's limits (OwnerLimits) now; ``day_start``: when the owner's day began (their clock's day_start), from
+    which message_owner counts the day's messages (tools._unasked_today)."""
+    return OwnerLimits(
+        store.pending_of_type(conn, scope, "publish"),
+        {c: len(publish_queue.waiting(conn, scope, c)) for c in publish_queue.CHANNELS},
+        store.unasked_since(conn, scope, day_start),
+        obligations.messages_waiting(conn, scope) > 0,
+    )
+
+
+def _midnight(today: date) -> str:
+    """When ``today`` began in UTC: the owner's day where the caller gave no ``day_start`` of their clock's (a clock in
+    UTC; Ember's cycles, the Plan tab and the report give theirs)."""
+    return f"{today.isoformat()}T00:00:00Z"
+
+
+def _limited(facts: Facts, row: Mapping[str, Any], found: OwnerLimits) -> str | None:
+    """Which of the owner's limits a step waits on, None for none: 'queue' when its work is a request to publish (a pin,
+    a post, a blog post, a promise of them: ``_markets``) and its channel takes no more requests (OwnerLimits.full);
+    'messages' when its work is a report to the owner (``_reports``) and today's messages that answer none of theirs
+    are sent, unless a report of it would go through all the same (``_let_through``). Ready again once the owner
+    decides a request or one goes out, the next day, or when the owner writes."""
+    if _markets(row) and found.full(row["channel"]):
+        return "queue"
+    if found.told and _reports(row) and not _let_through(facts, row):
+        return "messages"
+    return None
+
+
+def _reports(row: Mapping[str, Any]) -> bool:
+    """Whether a step's work is a report to the owner, told in a message: a promise to report (its words, REPORT, as
+    promise_channel reads them) or a step of Ember's of the kind report."""
+    if row["kind"] == "promise":
+        return bool(REPORT.search(str(row["title"])))
+    return row["kind"] == "report"
+
+
+def _let_through(facts: Facts, row: Mapping[str, Any]) -> bool:
+    """Whether a message reporting on a promise goes through the day's limit (tools._reports_promise): one naming it,
+    while it is open and Ember hasn't written to the owner since the message that made it."""
+    if row["kind"] != "promise" or row["obligation_id"] is None:
+        return False
+    owed = facts.conn.execute(
+        "SELECT message_id, status FROM obligations WHERE id = ? AND kind = 'promise'", (row["obligation_id"],)
+    ).fetchone()
+    return (
+        owed is not None
+        and owed["status"] == "open"
+        and not obligations.told_since(facts.conn, facts.scope, owed["message_id"])
+    )
+
+
 def busy(conn: sqlite3.Connection, scope: AgentScope, steered: Steer, now: str, cycle_id: int | None = None) -> bool:
     """Whether a cycle's plan had work worth the owner's shortest sleep (slack.sleep): a step ready when it began that a
     cycle can advance. The cycle's own step (``cycle_id``: the cycle) counts only if something moved for it during the
     cycle (otherwise it waits now); another only if something moved since a cycle last took it, or none did (ready
     again the next day, a step that moved nothing gets its try without cutting a sleep). Live on 2026-10-09, a step no
-    cycle could advance cut every sleep to 30 minutes until the daily cap was spent."""
+    cycle could advance cut every sleep to 30 minutes until the daily cap was spent. 0.37.9: none still open that waits
+    on a limit of the owner's as the cycle ends (``limits``): its own request or message may have used it up, and the
+    tool would refuse the next cycle's (a step waiting on one when the cycle began was no candidate). One the cycle
+    closed waits on nothing: the steps after it may be ready now."""
     tried = {c.step.id for c in steered.found if c.tried}
     own = steered.step.id if steered.step is not None else None
+    facts = Facts(conn, scope, now)
+    found = limits(conn, scope, steered.day_start or _midnight(from_iso(now).date()))
     for step, _ in steered.pick.ranked:
+        row = node(conn, scope, step.id)
+        if row is not None and row["status"] == "open" and _limited(facts, row, found) is not None:
+            continue
         if step.id == own:
-            row = node(conn, scope, step.id)
-            if steered.mark is None or row is None or mark(Facts(conn, scope, now), row) != steered.mark:
+            if steered.mark is None or row is None or mark(facts, row) != steered.mark:
                 return True
             if cycle_id is not None and _made_in(conn, cycle_id, row):
                 return True
@@ -2281,6 +2414,11 @@ def _fields(step: weights.Step) -> dict[str, Any]:
 
 
 def _kind(row: Mapping[str, Any]) -> str:
+    """A step's kind as weights.KIND weighs it: one it doesn't know (a promise) as shipping, and (0.37.9) a promise to
+    report as a report (``_reports``), told in a message: it weighed as much as a promise to ship (analysis-0.37.8, 6.3
+    2: 7 of the first 18 promises were reports, each worth 3, more than any Etsy product's 2)."""
+    if _reports(row):
+        return "report"
     kind = str(row["kind"])
     return kind if kind in weights.KIND else "ship"
 
@@ -2305,9 +2443,16 @@ def _owed_urgency(row: Mapping[str, Any], today: date, lately: Mapping[int, int]
 PASSING = ("mode", "turn")  # what a venture's step waits on for one cycle only (0.36.0: the Explore step's): it ages
 
 
-def _clocks(conn: sqlite3.Connection, scope: AgentScope, now: str, today: date, channels: Mapping[str, bool]) -> None:
+def _clocks(
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    now: str,
+    today: date,
+    channels: Mapping[str, bool],
+    day_start: str | None = None,
+) -> None:
     """A step's age runs from when it became ready; a step that waits starts again from nought once it is ready."""
-    for candidate in candidates(conn, scope, now, today, channels, exploring=True):
+    for candidate in candidates(conn, scope, now, today, channels, exploring=True, day_start=day_start):
         row = node(conn, scope, candidate.step.id)
         if row is None or candidate.waiting in PASSING:
             continue
@@ -2335,8 +2480,10 @@ def choose(
     channels: Mapping[str, bool],
     exploring: bool = False,
     before: int | None = None,
+    *,
+    day_start: str | None = None,
 ) -> tuple[weights.Pick, list[Candidate]]:
-    found = candidates(conn, scope, now, today, channels, exploring, before)
+    found = candidates(conn, scope, now, today, channels, exploring, before, day_start=day_start)
     last, streak = weights.streak_of(history(conn, scope, before))
     return weights.choose([c.step for c in found], last, streak), found
 
@@ -2364,7 +2511,8 @@ class Steer:
     """0.35.0: what the tree decided for a cycle: its step (None when nothing is ready), what the cycle is ('ordinary',
     'marketing' or 'venture', 0.37.0: for a step of the ventures: lines.py's kinds), every candidate it was chosen
     from, and (0.37.0) the venture a venture step is about (None: a brainstorm, or another kind of cycle). 0.37.6: what
-    the step's check read when the cycle took it (``mark``) and the owner's day (``day``), kept with the pick."""
+    the step's check read when the cycle took it (``mark``) and the owner's day (``day``), kept with the pick. 0.37.9:
+    when that day began (``day_start``), from which ``busy`` counts the day's messages."""
 
     pick: weights.Pick
     found: tuple[Candidate, ...]
@@ -2372,6 +2520,7 @@ class Steer:
     venture: int | None = None
     mark: str | None = None
     day: str | None = None
+    day_start: str | None = None
 
     @property
     def step(self) -> weights.Step | None:
@@ -2391,15 +2540,21 @@ def steer(
     *,
     exploring: bool = False,
     cycle_id: int | None = None,
+    day_start: str | None = None,
 ) -> Steer:
     """The step a cycle takes (weights.choose: a pin, else the heaviest step; 0.37.0: a promise or decision of the
     owner's weighed like any) and so what the cycle is: a venture cycle for a step of the ventures (0.37.0: aimed at
     its venture; 0.36.0: the Explore step, in place of the ventures' turn; ``exploring``: whether this cycle may
     explore), a marketing cycle for a marketing step, else an ordinary one (also when no step is ready: it may start
-    a new product, or end)."""
-    pick, found = choose(conn, scope, now, today, channels, exploring=exploring, before=cycle_id)
+    a new product, or end). 0.37.9: ``day_start``, when the owner's day began (their clock's: ``limits``)."""
+    day_start = day_start or _midnight(today)
+    pick, found = choose(conn, scope, now, today, channels, exploring=exploring, before=cycle_id, day_start=day_start)
     row = node(conn, scope, pick.step.id) if pick.step is not None else None
-    taken = {"mark": mark(Facts(conn, scope, now), row) if row is not None else None, "day": today.isoformat()}
+    taken = {
+        "mark": mark(Facts(conn, scope, now), row) if row is not None else None,
+        "day": today.isoformat(),
+        "day_start": day_start,
+    }
     if row is not None and row["template"] in VENTURE_TEMPLATES:
         return Steer(pick, tuple(found), "venture", venture_of(conn, scope, int(row["id"])), **taken)
     if pick.step is not None and (pick.step.kind == "market" or _markets(row)):
@@ -2473,6 +2628,9 @@ WAITS = {
     "step": "another step",
     "hold": "a hold",
     "tried": "a change since a cycle took it today",  # 0.37.6: the brake
+    # 0.37.9: the owner's limits (``limits``)
+    "queue": "room in the publishing queue (your owner decides a request, or one goes out)",
+    "messages": "tomorrow, or your owner's next message (today's messages that answer none of theirs are sent)",
 }
 QUESTIONS = "This week's questions (keep them in mind; not steps to take):"
 NEW_PRODUCT = "Start a new product (project_create): Ember's code lays it out with its stages and steps."
@@ -3401,12 +3559,15 @@ def view(
     today: date,
     channels: Mapping[str, bool],
     exploring: bool = False,
+    *,
+    day_start: str | None = None,
 ) -> dict[str, Any]:
     """The tree for the owner's Plan tab: every project, product, stage and step with its state and weight, the step
     the tree would take now and the next ones, what waits on the owner, the latest picks, and (0.35.0) what changed
     today, what each channel does and the upgrades the steps wait on. 0.36.0: and the ventures (0.37.0: each venture's
-    step; ``exploring``: whether the burn mode runs venture cycles), each step of a venture naming it."""
-    pick, found = choose(conn, scope, now, today, channels, exploring)
+    step; ``exploring``: whether the burn mode runs venture cycles), each step of a venture naming it. 0.37.9:
+    ``day_start``, when the owner's day began (their clock's: ``limits``)."""
+    pick, found = choose(conn, scope, now, today, channels, exploring, day_start=day_start)
     by_id = {c.step.id: c for c in found}
     parts = weights.parts_by_id(pick.ranked)
     titles = {r["id"]: str(r["title"]) for r in nodes(conn, scope, "level = 'step' AND status = 'open'")}
