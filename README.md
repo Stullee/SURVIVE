@@ -312,7 +312,16 @@ request, a pin or post goes out, the next day, or you write) and cuts no sleep;
 the Plan tab and the diagnostics say what it waits on. A promise to report
 weighs as a report. The limits themselves are unchanged.
 
-0.37.10: the same for your sales limit: at most 6 listings, changes of
+0.38.0: a cover with a small table is free. Ember's upgrade request #10 asked for
+the workshop script that drew the Nebenkostenabrechnung's v9 and v10 covers (a
+title band over a full-width table) to be built in: every fix of such a cover's
+words or numbers was a workshop run of up to $2 against the daily cap, so on a
+day near the cap a cover the critic flagged waited for the next day. Now
+`make_image` draws it (layout **table**) from the agent's lines of cells, in any
+shape, and adds up each row named Summe, Gesamt or Total: a sum that differs from
+the rows above it is named to the agent.
+
+0.38.1: the same for your sales limit: at most 6 listings, changes of
 listings, Printify products and KDP books wait for your decision at once, and
 while they do, the plan's "Propose the listing" steps and the critic's fixes
 wait instead of being paid for and refused. The limit is unchanged.

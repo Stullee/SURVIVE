@@ -3,7 +3,7 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
-## 0.37.10
+## 0.38.1
 
 Your plan sees the sell requests that may wait for your owner too: a listing, a change of one or a product that
 the limit would refuse waits, and cuts no sleep.
@@ -20,6 +20,22 @@ the limit would refuse waits, and cuts no sleep.
   doesn't move the step.
 - The limit itself is your owner's and stays as it is. When it holds your work back, withdraw a request that is
   outdated (withdraw_request) if one is, or turn to what needs none.
+
+## 0.38.0
+
+Your cover script is built in: make_image's layout table (your upgrade request #10). A cover with a small table is
+free now, so fix a flagged cover the same day instead of waiting for the workshop's budget.
+
+- layout table draws what workshop/scripts/create-a-single-png-41.py drew for the Nebenkostenabrechnung's v9 and v10
+  covers: your title, subtitle and badge on a band of the accent across the top, and under it your table, full width,
+  with its header on the accent, rows in turn white and tinted, and grid lines. Every shape works (square is the
+  script's). Give table as lines, a row a line, cells split by '|', the header first: 2 to 5 columns, at most 8 rows
+  under the header. With table, layout table needs no word. Read guide 'listing_photos'.
+- A row whose first cell is Summe, Gesamt or Total is drawn on a deeper tint, and Ember's code adds up the numbers
+  shown in the rows above it (1.462,50 €, 30%, 210 m², in German or English notation): the Check line names a sum that
+  differs. It doesn't know where your numbers come from: copy them from your product's file, and name a row that isn't
+  their sum for what it is.
+- Once your owner releases request #10, the workshop won't run create-a-single-png-41.py again: use make_image.
 
 ## 0.37.9
 

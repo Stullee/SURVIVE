@@ -339,7 +339,7 @@ def test_the_report_and_the_plan_tab_say_what_a_step_waits_on(ingress_client: An
         "0.37.9: 'queue', a pin, post or blog post the publishing queue would refuse, and 'messages', a report to the"
         " owner the day's message limit would refuse;"
     ) in text
-    assert (  # 0.37.10: with the sell requests
+    assert (  # 0.38.1: with the sell requests
         "Now: publish requests waiting for the owner 0 of 3; waiting for the owner or their slot: pins 0 of 3, posts 0"
         " of 3; sell requests waiting for the owner 0 of 6; messages today that answer none of the owner's 3 of 2)"
     ) in text

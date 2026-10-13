@@ -13,6 +13,9 @@ pixels (``look``), the QA registry counts distinct photos, not copies.
 
 0.17.0 (upgrade request #4): ``fitted`` makes a print file of one of the agent's pictures at an exact size, cut to its
 proportions at the centre and resized (a workshop script that proved itself, built in: no new art for a new size).
+
+0.38.0 (upgrade request #10): ``table_photo`` draws a cover with a small table under a band with its title, as the
+workshop's create-a-single-png-41.py did (tables.py reads the agent's table and adds up its total rows).
 """
 
 from __future__ import annotations
@@ -30,13 +33,13 @@ import pypdfium2.raw as pdfium_c
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, PngImagePlugin
 
 from . import fonts
-from .theme import RGB, contrast, hex_rgb, readable_on, tint
+from .theme import RGB, WHITE, contrast, hex_rgb, readable_on, tint
 
 PREVIEW_DPI = 150
 SHAPES = {"landscape": (3000, 2250), "square": (2400, 2400), "portrait": (2000, 2500), "pin": (2000, 3000)}
 SHAPE_NAMES = tuple(SHAPES)
 MAX_PIXELS = 40_000_000  # 0.15.0: 12 MP until then
-LAYOUTS = ("photo", "text", "poster")
+LAYOUTS = ("photo", "text", "poster", "table")  # 0.38.0: table
 POSTER_SIDE = 6_000  # a poster's longer side: 150 dpi or more on every poster Printify prints (A1, 24 x 36 in)
 PRINT_DPI = 300  # 0.17.0: what a print file made by ``fitted`` says it is meant for (Printify's print areas)
 # A region of a page or picture make_image zooms in on ('shop/cv.pdf#1@top'): left, top, right, bottom, as fractions.
@@ -518,6 +521,134 @@ def text_photo(
         draw.rounded_rectangle(box, radius=int(badge_font.size * 0.6), fill=accent_rgb)
         draw.text((box[0] + pad_x, box[1] + pad_y - badge_font.size * 0.08), badge, font=badge_font,
                   fill=readable_on(accent_rgb))  # fmt: skip
+    return png(canvas)
+
+
+HIGHLIGHT: RGB = (255, 240, 170)  # 0.38.0: a table photo's subtitle and badge on its band, as the proven script had
+
+
+def _mix(color: RGB, other: RGB, amount: float) -> RGB:
+    """``color`` mixed with ``other``: amount 0 is the colour, 1 is the other."""
+    r, g, b = (round(c + (o - c) * amount) for c, o in zip(color, other, strict=True))
+    return r, g, b
+
+
+def table_photo(
+    title: str,
+    lines: list[str],
+    header: list[str],
+    rows: list[list[str]],
+    totals: frozenset[int] = frozenset(),
+    badge: str = "",
+    background: str | None = None,
+    accent: str | None = None,
+    shape: str = "landscape",
+) -> bytes:
+    """0.38.0 (upgrade request #10): a cover with a small table, the workshop's create-a-single-png-41.py built in: the
+    title, the subtitle's lines and a badge on a band of the accent across the top 30%, and under it the table, full
+    bleed: its header on the accent, its rows in turn on ``background`` (white) and a tint of it, the ``totals`` rows
+    on a deeper tint, between grid lines. Every cell bold (as the script's) in one size, the largest at which the
+    widest column fits."""
+    if shape not in SHAPES:
+        raise ImageError(f"shape must be one of {', '.join(SHAPES)}")
+    title_family = _family("title", title, "display", "B")
+    lines_family = _family("subtitle", "".join(lines), "sans", "")
+    badge_family = _family("badge", badge, "sans", "B")
+    cells_family = _family("table", "".join([*header, *(c for row in rows for c in row)]), "sans", "B")
+    width, height = SHAPES[shape]
+    accent_rgb: RGB = hex_rgb(accent) if accent else (44, 74, 110)
+    paper: RGB = hex_rgb(background) if background else (255, 255, 255)
+    on_band = readable_on(accent_rgb)
+    soft = HIGHLIGHT if contrast(HIGHLIGHT, accent_rgb) >= 4.5 else on_band
+    canvas = Image.new("RGB", (width, height), paper)
+    draw = ImageDraw.Draw(canvas)
+    # The band: title, subtitle and badge, centred together.
+    band_h = round(height * 0.3)
+    draw.rectangle([0, 0, width, band_h], fill=accent_rgb)
+    inner = width - 2 * round(width * 0.04)
+    room = band_h - 2 * round(band_h * 0.1)
+    start = min(round(width * 0.06), round(band_h * 0.34))
+    while True:
+        title_font, title_lines = _fit(draw, title, title_family, "B", start, inner, 2)
+        sub_font, sub_lines = None, []
+        if lines:
+            most = min(3, max(2, len(lines)))
+            sub_size = round(title_font.size * 0.5)
+            sub_font, sub_lines = _fit(draw, "\n".join(lines), lines_family, "", sub_size, inner, most)
+        badge_font = _font(badge_family, "B", max(24, round(title_font.size * 0.36))) if badge else None
+        parts = [title_font.size * 1.12 * len(title_lines)]
+        if sub_font is not None:
+            parts.append(sub_font.size * (0.35 + 1.25 * len(sub_lines)))
+        if badge_font is not None:
+            parts.append(badge_font.size * (0.6 + 1.9))
+        if sum(parts) <= room or start <= 40:
+            break
+        start = round(start * 0.92)
+    y = (band_h - sum(parts)) / 2
+    for line in title_lines:
+        draw.text((width / 2, y), line, font=title_font, fill=on_band, anchor="ma")
+        y += title_font.size * 1.12
+    if sub_font is not None:
+        y += sub_font.size * 0.35
+        for line in sub_lines:
+            draw.text((width / 2, y), line, font=sub_font, fill=soft, anchor="ma")
+            y += sub_font.size * 1.25
+    if badge and badge_font is not None:
+        y += badge_font.size * 0.6
+        pad_x, pad_y = round(badge_font.size * 0.8), round(badge_font.size * 0.45)
+        text_w = draw.textlength(badge, font=badge_font)
+        box = (width / 2 - text_w / 2 - pad_x, y, width / 2 + text_w / 2 + pad_x, y + badge_font.size + 2 * pad_y)
+        draw.rounded_rectangle(box, radius=round(badge_font.size * 0.6), fill=soft)
+        ink = accent_rgb if contrast(accent_rgb, soft) >= 3 else readable_on(soft)
+        draw.text((width / 2, box[1] + pad_y + badge_font.size / 2), badge, font=badge_font, fill=ink, anchor="mm")
+    # The table: the header and rows share what is left, the header no taller than a row.
+    table_h = height - band_h
+    header_h = min(round(table_h * 0.16), table_h // (len(rows) + 1))
+    row_h = (table_h - header_h) // len(rows)
+    tops = [band_h, band_h + header_h, *(band_h + header_h + row_h * (i + 1) for i in range(len(rows)))]
+    tops[-1] = height  # the last row takes what rounding left
+    pad = 0.6  # a cell's space left and right of its text, in the text's size
+    reference = _font(cells_family, "B", 100)
+    every = [header, *rows]
+    natural = [max(draw.textlength(row[i], font=reference) for row in every) / 100 for i in range(len(header))]
+    size = min(
+        width / (sum(natural) + 2 * pad * len(header)),  # every column's widest text fits
+        header_h * 0.5,
+        row_h * 0.42,
+        min(width, height) * 0.045,
+    )
+    if size < min(width, height) * 0.016:
+        raise ImageError(
+            f"the table is too wide to read on a {shape} photo: shorten its longest cells or give it fewer columns"
+        )
+    font = _font(cells_family, "B", int(size))
+    spare = (width - sum(natural) * size - 2 * pad * size * len(header)) / len(header)
+    edges = [0.0]
+    for share in natural:
+        edges.append(edges[-1] + share * size + 2 * pad * size + spare)
+    edges[-1] = width
+    grid = _mix(accent_rgb, (0, 0, 0), 0.55)
+    deep = accent_rgb if on_band == WHITE else grid  # a light accent's tints barely show on white: its shade's do
+    zebra = _mix(paper, deep, 0.1)
+    for index, row in enumerate([header, *rows]):
+        top, bottom = tops[index], tops[index + 1]
+        if index == 0:
+            fill = accent_rgb
+        elif index - 1 in totals:
+            fill = _mix(paper, deep, 0.24)
+        else:
+            fill = paper if index % 2 else zebra
+        draw.rectangle([0, top, width, bottom], fill=fill)
+        ink = readable_on(fill)
+        for column, text in enumerate(row):
+            centre = (edges[column] + edges[column + 1]) / 2
+            draw.text((centre, (top + bottom) / 2), text, font=font, fill=ink, anchor="mm")
+    line = max(2, round(min(width, height) * 0.004))
+    for top in tops:
+        draw.line([(0, top), (width, top)], fill=grid, width=line)
+    for edge in edges:
+        x = min(max(round(edge), 0), width - 1)
+        draw.line([(x, band_h), (x, height)], fill=grid, width=line)
     return png(canvas)
 
 

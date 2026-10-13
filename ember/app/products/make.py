@@ -5,7 +5,8 @@
 * ``spreadsheet``: a JSON spec becomes an Excel file and a picture of each table: ``shop/budget.xlsx``,
   ``shop/budget-preview.png`` (0.15.0: and ``shop/budget-sheet2.png`` for the second sheet, and so on).
 * ``image``: a listing photo made of pages of Ember's own PDFs, sheets of its Excel files or pictures (0.15.0: or a
-  region of one, zoomed in), with a title, a subtitle and a badge; (0.15.0) a text photo, or a poster at print size.
+  region of one, zoomed in), with a title, a subtitle and a badge; (0.15.0) a text photo, or a poster at print size;
+  (0.38.0, upgrade request #10) a cover with a small table, its total rows added up (tables.py).
 * ``resize`` (0.17.0, resize_image): one of the agent's pictures at an exact size for printing,
   ``shop/poster-a3.png``: cut to its proportions at the centre and resized, without paying for the picture to be made
   again.
@@ -30,7 +31,7 @@ from decimal import Decimal
 
 from ..agent.sandbox import Jail
 from ..integrations import kdp
-from . import checks, images, markup, pdf, sheets, statement, word
+from . import checks, images, markup, pdf, sheets, statement, tables, word
 
 log = logging.getLogger(__name__)
 
@@ -263,10 +264,12 @@ def image(
     accent: str | None = None,
     shape: str = "landscape",
     layout: str = "photo",
+    table: str = "",
 ) -> Made:
     """Make ``output`` (a PNG listing photo) showing ``pages`` next to a title, a subtitle and a badge; 0.15.0: or,
     with layout 'text', the title and the subtitle's lines (separated by '|') as a list, or with layout 'poster', a
-    poster at print size."""
+    poster at print size; 0.38.0: or, with layout 'table', a cover with ``table`` under its title (upgrade request #10:
+    the workshop's create-a-single-png-41.py, without a run)."""
     _base(output, ".png", "output")
     for name, value in (("background", background), ("accent", accent)):
         if value is not None and not _COLOR.fullmatch(value):
@@ -278,8 +281,19 @@ def image(
     lines = [line.strip() for line in subtitle.split("|") if line.strip()]
     if layout != "photo" and pages.strip():
         raise ProductError(f"a {layout} layout shows no pages: leave pages empty (or use layout photo)")
+    if layout != "table" and table.strip():
+        raise ProductError("only layout table shows a table: give layout table, or leave table empty")
+    checked: list[str] = []
     try:
-        if layout == "text":
+        if layout == "table":
+            if not table.strip():
+                raise ProductError("layout table needs table: one row a line, cells split by |, the header first")
+            parsed = tables.parse(table)
+            head, rows, totals, words = parsed.header, parsed.rows, parsed.totals, title.strip()
+            data = images.table_photo(words, lines, head, rows, totals, badge.strip(), background, accent, shape)
+            shows = "table:" + "|".join([words, *lines, *parsed.cells])  # its words, as a text photo's
+            checked = tables.mismatches(parsed)
+        elif layout == "text":
             data = images.text_photo(title.strip(), lines, badge.strip(), background, accent, shape)
             shows = "text:" + "|".join([title.strip(), *lines])  # its words: the title too
         elif layout == "poster":
@@ -287,13 +301,13 @@ def image(
             shows = "poster:" + "|".join([title.strip(), *lines])
         else:
             if not pages.strip():
-                raise ProductError("name the pages to show (or use layout text or poster)")
+                raise ProductError("name the pages to show (or use layout text, table or poster)")
             pictures, keys = _pictures(jail, pages, images.SHAPES[shape][1])
             # 0.19.2: each part of the subtitle on a line of its own ("|" splits lines; live, they ran together:
             # "Unlimited clients No resale of files Plain English")
             data = images.listing(pictures, title.strip(), "\n".join(lines), badge.strip(), background, accent, shape)
             shows = "photo:" + ",".join(sorted(keys))
-    except images.ImageError as exc:
+    except (images.ImageError, tables.TableError) as exc:
         raise ProductError(str(exc)) from None
     # 0.15.0: the QA registry counts another title on the same pages as the same photo
     data = images.marked(data, shows)
@@ -307,8 +321,18 @@ def image(
         )
         return made
     width, height = images.SHAPES[shape]
-    what = "text listing photo" if layout == "text" else "listing photo"
+    what = {"text": "text listing photo", "table": "table cover"}.get(layout, "listing photo")
     made.report.append(f"Made {output}: a {shape} {what}, {width} x {height} pixels, {_size(len(data))}.")
+    if layout == "table":
+        count = len(parsed.rows)
+        added = f"; Ember's code added up its total row{'s' if len(totals) != 1 else ''}" if totals else ""
+        rows_text = f"{count} row{'s' if count != 1 else ''}"
+        made.report.append(f"Its table: {rows_text} under the header, {len(parsed.header)} columns{added}.")
+    if checked:
+        made.report.append(
+            "Check: " + " ".join(_sentence(line) for line in checked) + " Copy the numbers from your product's file, "
+            "or name a row that isn't their sum for what it is (e.g. 'Ganzes Haus')."
+        )
     return made
 
 

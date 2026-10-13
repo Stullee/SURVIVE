@@ -527,8 +527,18 @@ agent's workspace:
 - **Listing photos** (`make_image`): up to three pages, sheets or pictures (or a
   zoomed-in region of one), fanned out next to a title, a subtitle and a badge,
   in Etsy's 4:3 size (3000 x 2250) or square or portrait; or a photo of words
-  alone (what is included), or a simple typographic poster at print size. Up to
-  10 a cycle, a whole listing's photos.
+  alone (what is included), or a simple typographic poster at print size; or
+  (layout **table**, 0.38.0) a cover with a small table: the title, subtitle and
+  badge on a band of the accent, and under it the agent's table (2 to 5
+  columns, up to 8 rows under its header) full width, with a header row, rows
+  in turn white and tinted, and grid lines. A row named Summe, Gesamt or Total
+  is drawn on a deeper tint, and Ember's code adds up the numbers shown above
+  it: a sum that differs is named in the agent's Check line (it can't know
+  where the numbers come from; the agent copies them from its file). Up to 10
+  a cycle, a whole listing's photos. The table cover is built in from upgrade
+  request #10 (the workshop script that drew the Nebenkostenabrechnung's v9 and
+  v10 covers): a fix of a cover's words or numbers no longer needs a workshop
+  run against the daily cap.
 - **Print files** (`resize_image`): one of the agent's pictures at exact pixels
   (a Printify print area, e.g. 3508 x 4961 for A3 at 300 dpi): the centre of
   the picture in the size's proportions, nothing stretched, resized and noted
@@ -1165,7 +1175,7 @@ promise Ember hasn't written to you about since making it (a message naming it
 goes through). These waits take none of Ember's two a day, and such a step cuts
 no sleep: Ember's code reads the limits again as a cycle ends, so a step the
 cycle's own request or message put out of reach doesn't cut it either. Since
-0.37.10 the same holds for the sales: at most 6 sell requests (a listing, a
+0.38.1 the same holds for the sales: at most 6 sell requests (a listing, a
 change of one, a Printify product, a KDP book) wait for your decision at once,
 and while they do, a step whose work is one waits too ("as many sell requests
 as may wait for you wait"): "Propose the listing" (the product, the book),
@@ -1472,7 +1482,7 @@ no longer shown); a study that failed three times stops until you press
   requests (6 sales, 5
   emails, 3 posts, 3 accounts, 3 spendings, 4 others), so waiting listings
   never block an email reply. Since 0.37.9 Ember's plan knows the posts' limit
-  (since 0.37.10 the sales' too): while it is full, a pin or post (a listing, a
+  (since 0.38.1 the sales' too): while it is full, a pin or post (a listing, a
   change, a product) waits instead of a cycle being paid for that the limit
   refuses (see [Plan](#plan)). Each card says what kind of action it is
   (0.13.0) and flags what matters for your decision: whether it reaches people,
@@ -2723,7 +2733,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.37.10 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.38.1 (by /u/your name)`.
 
 ## Amazon KDP
 

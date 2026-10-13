@@ -26,7 +26,7 @@ step and the ventures' turn until it is kept; one made without naming its produc
 the next day, one whose own requests are on their way waits on them (``candidates``, ``mark``), and a stage that still
 needs a request of the owner's gets a step to propose it again (``_again``). 0.37.9: a step whose work one of the
 owner's limits would refuse waits on it (``limits``: a pin or a post while the publishing queue is full, a report once
-the day's messages are sent; 0.37.10 a listing, a change of one or a product while the sell requests that may wait
+the day's messages are sent; 0.38.1 a listing, a change of one or a product while the sell requests that may wait
 for the owner wait), and a promise to report weighs as a report (``_kind``).
 """
 
@@ -1798,7 +1798,7 @@ class Candidate:
     step: weights.Step
     stage: str
     # why it can't be taken now ('owner', 'channel', 'upgrade', 'step', 'hold'; 0.37.6 'approved', 'tried'; 0.37.9 a
-    # limit of the owner's, ``limits``: 'queue', 'messages'; 0.37.10 'sales'), None: ready
+    # limit of the owner's, ``limits``: 'queue', 'messages'; 0.38.1 'sales'), None: ready
     waiting: str | None
     # 0.37.6: a cycle took it, and nothing its check reads moved since (it waits 'tried' while that was today; ready
     # again the next day for a try, it doesn't cut a cycle's sleep: busy)
@@ -1902,7 +1902,7 @@ def candidates(
 
     0.37.9: and a step whose work a limit of the owner's would refuse waits on it (``_limited``): a pin, a post or a
     blog post while the publishing queue takes no more ('queue'), a report to the owner once the day's messages that
-    answer none of theirs are sent ('messages'; ``day_start``: when the owner's day began, their clock's); 0.37.10 a
+    answer none of theirs are sent ('messages'; ``day_start``: when the owner's day began, their clock's); 0.38.1 a
     listing, a change of one, a product or a book proposed while the sell requests that may wait for the owner wait
     ('sales')."""
     facts = Facts(conn, scope, now)
@@ -2298,7 +2298,7 @@ class OwnerLimits:
     a Bluesky post, a blog post and the link page are all publish requests), each queue channel's pins or posts
     waiting for the owner or for their slot, the messages of the owner's day that answered none of theirs, and
     whether a message of theirs waits for an answer (one that answers them is no message of that kind: it can carry
-    a report). 0.37.10: and the sell requests waiting for the owner (a listing, a change of one, a Printify product, a
+    a report). 0.38.1: and the sell requests waiting for the owner (a listing, a change of one, a Printify product, a
     KDP book)."""
 
     publish: int = 0
@@ -2323,7 +2323,7 @@ class OwnerLimits:
 
     @property
     def sales_full(self) -> bool:
-        """0.37.10: whether a sell request (a listing, a change of one, a Printify product, a KDP book) would be refused
+        """0.38.1: whether a sell request (a listing, a change of one, a Printify product, a KDP book) would be refused
         now: as many as may wait for the owner wait."""
         return self.sell >= store.PENDING_CAPS["sell"]
 
@@ -2349,7 +2349,7 @@ def limits(conn: sqlite3.Connection, scope: AgentScope, day_start: str) -> Owner
         {c: len(publish_queue.waiting(conn, scope, c)) for c in publish_queue.CHANNELS},
         store.unasked_since(conn, scope, day_start),
         obligations.messages_waiting(conn, scope) > 0,
-        sell=store.pending_of_type(conn, scope, "sell"),  # 0.37.10
+        sell=store.pending_of_type(conn, scope, "sell"),  # 0.38.1
     )
 
 
@@ -2362,7 +2362,7 @@ def _midnight(today: date) -> str:
 def _limited(facts: Facts, row: Mapping[str, Any], found: OwnerLimits) -> str | None:
     """Which of the owner's limits a step waits on, None for none: 'queue' when its work is a request to publish (a pin,
     a post, a blog post, a promise of them: ``_markets``) and its channel takes no more requests (OwnerLimits.full);
-    0.37.10 'sales' when its work is a sell request (``_sells``) and as many as may wait for the owner wait;
+    0.38.1 'sales' when its work is a sell request (``_sells``) and as many as may wait for the owner wait;
     'messages' when its work is a report to the owner (``_reports``) and today's messages that answer none of theirs
     are sent, unless a report of it would go through all the same (``_let_through``). Ready again once the owner
     decides a request or one goes out, the next day, or when the owner writes."""
@@ -2376,7 +2376,7 @@ def _limited(facts: Facts, row: Mapping[str, Any], found: OwnerLimits) -> str | 
 
 
 def _sells(row: Mapping[str, Any]) -> bool:
-    """0.37.10: whether a step of Ember's has a sell request for its work: each request its check counts is one
+    """0.38.1: whether a step of Ember's has a sell request for its work: each request its check counts is one
     (store.EXECUTOR_TYPES): "Propose the listing" (the product, the book), proposing one again (``_again``), the
     critic's fixes (a change of the listing). None of a step whose check counts no request (files, a demand note) or
     that is the owner's (approving a listing, publishing the book)."""

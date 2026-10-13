@@ -1097,7 +1097,7 @@ def _agent(state: AppState, full: bool = True) -> str:
                 " also on its date, the burn mode or an owner's message first, an empty READY; 0.37.6: 'tried', taken"
                 " today with nothing moved, and 'approved', its approved requests being carried out; 0.37.9: 'queue',"
                 " a pin, post or blog post the publishing queue would refuse, and 'messages', a report to the owner the"
-                " day's message limit would refuse; 0.37.10: 'sales', a listing, a change of one, a Printify product or"
+                " day's message limit would refuse; 0.38.1: 'sales', a listing, a change of one, a Printify product or"
                 f" a KDP book the sell requests waiting for the owner would refuse. Now: {limits.text()})\n"
                 + _rows(waiting[:15], ["step", "line", "waiting", "title"])
             )

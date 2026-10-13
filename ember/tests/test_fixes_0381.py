@@ -1,4 +1,4 @@
-"""0.37.10: the plan sees the sell requests that may wait for the owner, as 0.37.9 made it see the publishing queue.
+"""0.38.1: the plan sees the sell requests that may wait for the owner, as 0.37.9 made it see the publishing queue.
 
 At most 6 sell requests (store.PENDING_CAPS['sell']: a listing, a change of one, a Printify product, a KDP book) wait
 for the owner at once: propose_etsy_listing, propose_etsy_edit, propose_printify_product and propose_kdp_book refuse
@@ -202,7 +202,7 @@ def test_the_report_and_the_plan_tab_say_a_step_waits_on_the_sell_requests(ingre
     selling(agent, store.PENDING_CAPS["sell"])
     text = section(report(ingress_client), "AGENT RECORDS")
     assert (
-        "0.37.10: 'sales', a listing, a change of one, a Printify product or a KDP book the sell requests waiting for"
+        "0.38.1: 'sales', a listing, a change of one, a Printify product or a KDP book the sell requests waiting for"
         " the owner would refuse. Now: publish requests waiting for the owner 0 of 3; waiting for the owner or their"
         " slot: pins 0 of 3, posts 0 of 3; sell requests waiting for the owner 6 of 6;"
     ) in text
