@@ -301,6 +301,15 @@ longer takes a Bluesky post or pin that nothing would publish, a German-only
 product gets no English Bluesky steps, the Plan tab counts the blog by its own
 switch and names each step's product.
 
+0.38.0: a cover with a small table is free. Ember's upgrade request #10 asked for
+the workshop script that drew the Nebenkostenabrechnung's v9 and v10 covers (a
+title band over a full-width table) to be built in: every fix of such a cover's
+words or numbers was a workshop run of up to $2 against the daily cap, so on a
+day near the cap a cover the critic flagged waited for the next day. Now
+`make_image` draws it (layout **table**) from the agent's lines of cells, in any
+shape, and adds up each row named Summe, Gesamt or Total: a sum that differs from
+the rows above it is named to the agent.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
