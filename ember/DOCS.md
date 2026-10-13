@@ -484,7 +484,9 @@ work, like a manager's calendar (the design is in `vision/learning.md`):
   cycle's own step if nothing it is checked by moved during the cycle, nor one
   a cycle took before with nothing moved since (see [Plan](#plan)). Live on
   2026-10-09 a step no cycle could advance cut every sleep to 30 minutes, 21
-  cycles by 12:35.
+  cycles by 12:35. Since 0.37.9 not a step whose work one of your limits would
+  refuse either (a pin while the publishing queue is full, a report once the
+  day's messages are sent: [Plan](#plan), **Your limits**).
 
 All of it counts toward the daily cap, not the cycle cap, and none of it ends a
 cycle. The diagnostics report lists the bets, cases, principles, weekly looks
@@ -1155,14 +1157,38 @@ until the daily cap stopped it: $5.88 of $7 by 12:35, and the other products got
 none. The Plan tab says why a step waits ("taken today, and nothing it is
 checked by moved"); pin it to have the next cycle try it again today.
 
+**Your limits** (0.37.9). Two of your protections were enforced by Ember's tools
+alone: at most 3 publish requests (pins, Bluesky posts, blog posts, the link
+page) wait for your decision at once, and since 0.37.8 at most 3 of a channel's
+pins (or posts) wait for you or their slot; at most 2 of Ember's messages a day
+answer none of yours. The plan took a pin, a post or a report as ready whatever
+they said: the sleep was cut, a plan was paid for, and the tool refused the
+request (in the analysis of 0.37.8, 16 of the 30 cycles #192 to #221, $4.12).
+Now a step whose work is a pin, a post or a blog post (or a promise of them)
+waits while its channel takes no more requests, until you decide one or one
+goes out ("the publishing queue is full"), and a report to you (a promise to
+report, or a step of Ember's of the kind report) waits once the day's two
+messages are sent, until the next day or your next message ("today's messages
+to you are sent"). A report waits only while the limit would refuse it: not
+while a message of yours waits for the answer that can carry it, nor for a
+promise Ember hasn't written to you about since making it (a message naming it
+goes through). These waits take none of Ember's two a day, and such a step cuts
+no sleep: Ember's code reads the limits again as a cycle ends, so a step the
+cycle's own request or message put out of reach doesn't cut it either. The
+limits themselves stay as they are. The [diagnostics](#diagnostics) report
+lists each step's wait with the limits as they stand ('queue', 'messages').
+
 **How a step is weighed.** A product's worth is what it could earn a month (from
 Ember's revenue sub-goal for its line, else its venture's split, else its type's
 default), damped so that optimistic numbers count less ($5 a month is 2, $20 is
 4.6, $60 is 7.4), times its chance: 0.4 in research, 0.6 in create, 0.8 in
 release and 1 once it is live, and then, after 30 views, how it sells. A step's
 weight is that worth times its kind (shipping, launching, fixing and marketing
-1, creating 0.8) times its channel's results (since 0.35.3 only of the pins and
-posts live a week or more), times one plus its urgency, its age (0.5 for each
+1, creating 0.8, chores 0.5, reporting 0.3: since 0.37.9 a promise to report
+too, which weighed as a promise to ship until then, so near its day a report
+came before a live product's first pins) times its channel's results (since
+0.35.3 only of the pins and posts live a week or more), times one plus its
+urgency, its age (0.5 for each
 day it has waited ready) and momentum (1 for the product worked on last). A
 promise to you and your decision (0.37.0) are worth at least 3 (0.37.1; 5
 before), whatever their product is worth, and urgent only near their day:
@@ -1449,7 +1475,9 @@ no longer shown); a study that failed three times stops until you press
   is outdated (with its reason), and each kind has its own limit of waiting
   requests (6 sales, 5
   emails, 3 posts, 3 accounts, 3 spendings, 4 others), so waiting listings
-  never block an email reply. Each card says what kind of action it is
+  never block an email reply. Since 0.37.9 Ember's plan knows the posts' limit:
+  while it is full, a pin or post waits instead of a cycle being paid for that
+  the limit refuses (see [Plan](#plan)). Each card says what kind of action it is
   (0.13.0) and flags what matters for your decision: whether it reaches people,
   can be a first contact, costs money, appears under your name, and whether
   Ember's code can undo it. A listing, or a change to one, with fewer than 5
@@ -1603,7 +1631,8 @@ no longer shown); a study that failed three times stops until you press
   it can't write to you, and it sends at most
   two messages a day that answer none of yours (Ember's code counts them),
   plus one per promise that reports it kept (naming its #number) so it can
-  close it. A
+  close it. Since 0.37.9 its plan holds any other report back once the two are
+  sent, until the next day or until you write. A
   message that promises something shows the promise under it, and whether it
   was kept. Never send
   passwords: messages are stored and sent to Anthropic, and the agent can't log

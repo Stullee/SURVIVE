@@ -301,6 +301,17 @@ longer takes a Bluesky post or pin that nothing would publish, a German-only
 product gets no English Bluesky steps, the Plan tab counts the blog by its own
 switch and names each step's product.
 
+0.37.9: Ember's plan sees two of your limits that only its tools enforced: at
+most 3 pins, Bluesky and blog posts wait for your decision (and 3 of a
+channel's pins or posts for you or their slot), and at most 2 of its messages a
+day answer none of yours. Until now the plan still took a pin or a report the
+tool would refuse, cut the sleep to your shortest and paid for a cycle that
+ended in the refusal: 16 of the 30 cycles #192 to #221, $4.12 (the analysis of
+0.37.8, section 6). Now such a step waits until there is room (you decide a
+request, a pin or post goes out, the next day, or you write) and cuts no sleep;
+the Plan tab and the diagnostics say what it waits on. A promise to report
+weighs as a report. The limits themselves are unchanged.
+
 0.38.0: a cover with a small table is free. Ember's upgrade request #10 asked for
 the workshop script that drew the Nebenkostenabrechnung's v9 and v10 covers (a
 title band over a full-width table) to be built in: every fix of such a cover's

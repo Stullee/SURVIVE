@@ -19,10 +19,11 @@ import pytest
 pytest.importorskip("httpx2")
 
 from app.agent import plan, weights  # noqa: E402
+from tests.test_fixes_0280 import now  # noqa: E402
 from tests.test_fixes_0340 import keep  # noqa: E402
 from tests.test_fixes_0350 import steered  # noqa: E402
 from tests.test_fixes_0351 import promise  # noqa: E402
-from tests.test_fixes_0353 import PINS, launched  # noqa: E402
+from tests.test_fixes_0353 import CRITIC, PINS, launched  # noqa: E402
 
 KDP = 14
 
@@ -108,16 +109,32 @@ def test_a_promises_urgency_by_its_day_and_how_often_cycles_took_it() -> None:
 # --- the tree: a live product's pins and a report promised for later ---
 
 
-def test_a_live_products_first_pins_come_before_a_report_due_later_and_after_it_the_day_before(data_dir: Path) -> None:
+def test_a_live_products_first_pins_come_before_a_report_even_the_day_before_and_it_before_the_polish(
+    data_dir: Path,
+) -> None:
+    """0.37.9: a promise to report weighs as a report (weights.KIND['report']; analysis-0.37.8, 6.3 2): told in a
+    message, it no longer rises above the product's first pins and posts the day before its day (0.37.1 to 0.37.8,
+    3 × (1 + 3 + 4) = 24 to their 18), and on its day it still comes before the critic's suggestions."""
     agent, line, _ = launched(data_dir)
     report = promise(agent, "Report the Bluesky reactions and the view deltas of the week", days=9)
     keep(agent)
     first = steered(agent)
     assert first.step is not None and first.step.title == PINS  # 0.37.0: the report, 5 × (1 + 2) = 15 to the pins' 8
     [owed] = [c.step for c in first.found if c.step.title.startswith(f"Keep promise #{report}: ")]
-    assert (owed.worth, owed.urgency, owed.product) == (weights.PROMISE_WORTH, 0.0, None)
+    assert (owed.worth, owed.urgency, owed.product, owed.kind) == (weights.PROMISE_WORTH, 0.0, None, "report")
     agent.clock.advance(days=8)  # the day before its day: urgent, and it waited as long as the pins
     keep(agent)
     due = steered(agent)
-    assert due.step is not None and due.step.title.startswith(f"Keep promise #{report}: ")
-    assert due.pick.parts is not None and due.pick.parts.urgency == 3.0
+    parts = next(p for s, p in due.pick.ranked if s.title.startswith(f"Keep promise #{report}: "))
+    assert (parts.kind, parts.urgency, parts.total) == (weights.KIND["report"], 3.0, pytest.approx(7.2))
+    assert due.step is not None and due.step.title == PINS  # its views bar missed: 2 × (1 + 4 + 4) = 18
+    marketing = "project_id = ? AND stage = 'launch' AND kind = 'market' AND status = 'open'"
+    with agent.db.transaction() as conn:  # its first week's marketing is out (pins, posts, a blog post: its audience's)
+        for row in plan.nodes(conn, agent.scope(), marketing, (line,)):
+            plan._close(conn, row["id"], now(agent), "done", "test", by="owner")
+    assert steered(agent).step.title == CRITIC  # the critic's suggestions: 2 × (1 + 4) = 10 to the report's 7.2
+    agent.clock.advance(days=1)  # its day
+    keep(agent)
+    on_its_day = steered(agent)
+    assert on_its_day.step is not None and on_its_day.step.title.startswith(f"Keep promise #{report}: ")
+    assert on_its_day.pick.parts is not None and on_its_day.pick.parts.total == pytest.approx(0.9 * (1 + 9 + 4.5))

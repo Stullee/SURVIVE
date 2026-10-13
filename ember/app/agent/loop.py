@@ -505,13 +505,16 @@ class CycleRunner:
         mode = burn.peek(self.db, self.economy.life.evaluate())
         today = self.clock.today()
         now = to_iso(self.clock.now())
+        day_start = to_iso(self.clock.day_start(today))  # 0.37.9: the day's messages count from then (plan.limits)
         with self.db.transaction() as conn:
             if cycle_id is not None:
                 ventures.seed(conn, self.scope, now)
             else:
                 conn.execute("SAVEPOINT preview")
                 try:
-                    plan_tree.keep(conn, self.scope, now, today, plan_tree.channels_from(self.settings))
+                    plan_tree.keep(
+                        conn, self.scope, now, today, plan_tree.channels_from(self.settings), day_start=day_start
+                    )
                 except Exception:  # noqa: BLE001 - the preview steers the tree as it is
                     log.exception("The plan tree's keeper failed in the preview")
                     conn.execute("ROLLBACK TO preview")
@@ -520,7 +523,14 @@ class CycleRunner:
             # a step of the plan, weighed like the ventures' (0.33.0 to 0.36.0 one that pressed kept them waiting)
             exploring = mode.venture_cycles and not self.owner_waits
             self.steered = plan_tree.steer(
-                conn, self.scope, now, today, self._channels(), exploring=exploring, cycle_id=cycle_id
+                conn,
+                self.scope,
+                now,
+                today,
+                self._channels(),
+                exploring=exploring,
+                cycle_id=cycle_id,
+                day_start=day_start,
             )
             # 0.35.0: marketing steps have cycles of their own; a channel's own product (its setup) keeps its tools
             self.marketing_apart = not plan_tree.on_channel(conn, self.scope, self.steered.step)
@@ -1384,9 +1394,15 @@ class CycleRunner:
         """0.34.0: the plan tree (plan.py): new product lines laid out, what its checks show done closed, the promise,
         decision and recurring steps added (the channels the owner switched on: a channel down for a cycle changes no
         step's age)."""
+        today = self.clock.today()
         with self.db.transaction() as conn:
             happened = plan_tree.keep(
-                conn, self.scope, to_iso(self.clock.now()), self.clock.today(), plan_tree.channels_from(self.settings)
+                conn,
+                self.scope,
+                to_iso(self.clock.now()),
+                today,
+                plan_tree.channels_from(self.settings),
+                day_start=to_iso(self.clock.day_start(today)),  # 0.37.9: the owner's limits (plan.limits)
             )
         for line in happened:
             events.record(self.db, "info", "agent", line[:300])
