@@ -20,7 +20,8 @@ for Ember) and the Etsy tools.
 
 The making tools (``make_document``, ``make_spreadsheet``, ``make_image``) turn
 the agent's text into PDF, Word, Excel and PNG files with Ember's own code
-(app.products), ``resize_image`` (0.17.0) makes print files of its pictures and
+(app.products; 0.38.0: ``make_image`` also a cover with a small table),
+``resize_image`` (0.17.0) makes print files of its pictures and
 ``make_cost_statement`` (0.20.0) a Nebenkostenabrechnung with its cover picture;
 ``look`` shows the model one of its pictures. ``workshop`` (like
 ``research``, a metered model call) has code written and run in Anthropic's
@@ -819,8 +820,8 @@ SPECS: dict[str, Spec] = {
         Spec(
             "make_image",
             f"Make a PNG: a listing photo of 1 to {make.MAX_LISTING_PAGES} of your pages or pictures (or a part) "
-            "with a title, subtitle and badge; a text photo; or a print-size poster. Read guide 'listing_photos' "
-            "first.",
+            "with a title, subtitle and badge; a text photo; a cover with a small table; or a print-size poster. "
+            "Read guide 'listing_photos' first.",
             {
                 "output": _s("e.g. 'shop/cv-photo-1.png'.", 200),
                 "pages": _s(
@@ -839,6 +840,8 @@ SPECS: dict[str, Spec] = {
                     enum=images.SHAPE_NAMES,
                 ),
                 "layout": _s("Default photo.", 10, required=False, enum=images.LAYOUTS),
+                # 0.38.0: upgrade request #10 (tables.py says the rest: the prompt has little room)
+                "table": _s("Layout table's: a row a line, cells split by |, the header first.", 800, required=False),
                 "accent": _s("Title and badge colour, like #2C3E50.", 7, required=False),
                 "background": _s("Background colour (default: a light tint of accent).", 7, required=False),
             },
@@ -3815,7 +3818,9 @@ def _make_image(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
         args.get("background"),
         args.get("accent"),
         args.get("shape", "landscape"),
-        args.get("layout", "photo"),
+        # 0.38.0: a table is drawn by layout table, which it needs no word for
+        args.get("layout") or ("table" if args.get("table") else "photo"),
+        html.unescape(args.get("table", "")),
     )
     return _made(made, "made a listing photo")
 
