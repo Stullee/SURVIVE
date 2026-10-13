@@ -321,6 +321,11 @@ day near the cap a cover the critic flagged waited for the next day. Now
 shape, and adds up each row named Summe, Gesamt or Total: a sum that differs from
 the rows above it is named to the agent.
 
+0.38.1: the same for your sales limit: at most 6 listings, changes of
+listings, Printify products and KDP books wait for your decision at once, and
+while they do, the plan's "Propose the listing" steps and the critic's fixes
+wait instead of being paid for and refused. The limit is unchanged.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

@@ -1174,9 +1174,15 @@ while a message of yours waits for the answer that can carry it, nor for a
 promise Ember hasn't written to you about since making it (a message naming it
 goes through). These waits take none of Ember's two a day, and such a step cuts
 no sleep: Ember's code reads the limits again as a cycle ends, so a step the
-cycle's own request or message put out of reach doesn't cut it either. The
-limits themselves stay as they are. The [diagnostics](#diagnostics) report
-lists each step's wait with the limits as they stand ('queue', 'messages').
+cycle's own request or message put out of reach doesn't cut it either. Since
+0.38.1 the same holds for the sales: at most 6 sell requests (a listing, a
+change of one, a Printify product, a KDP book) wait for your decision at once,
+and while they do, a step whose work is one waits too ("as many sell requests
+as may wait for you wait"): "Propose the listing" (the product, the book),
+proposing one again, and the critic's fixes, which are a change of the listing.
+The limits themselves stay as they are. The [diagnostics](#diagnostics) report
+lists each step's wait with the limits as they stand ('queue', 'messages',
+'sales').
 
 **How a step is weighed.** A product's worth is what it could earn a month (from
 Ember's revenue sub-goal for its line, else its venture's split, else its type's
@@ -1475,9 +1481,10 @@ no longer shown); a study that failed three times stops until you press
   is outdated (with its reason), and each kind has its own limit of waiting
   requests (6 sales, 5
   emails, 3 posts, 3 accounts, 3 spendings, 4 others), so waiting listings
-  never block an email reply. Since 0.37.9 Ember's plan knows the posts' limit:
-  while it is full, a pin or post waits instead of a cycle being paid for that
-  the limit refuses (see [Plan](#plan)). Each card says what kind of action it is
+  never block an email reply. Since 0.37.9 Ember's plan knows the posts' limit
+  (since 0.38.1 the sales' too): while it is full, a pin or post (a listing, a
+  change, a product) waits instead of a cycle being paid for that the limit
+  refuses (see [Plan](#plan)). Each card says what kind of action it is
   (0.13.0) and flags what matters for your decision: whether it reaches people,
   can be a first contact, costs money, appears under your name, and whether
   Ember's code can undo it. A listing, or a change to one, with fewer than 5
@@ -2726,7 +2733,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.38.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.38.1 (by /u/your name)`.
 
 ## Amazon KDP
 

@@ -34,7 +34,8 @@ own step if it moved nothing.
 read until then: a pin, a post or a blog post while the publish requests that may wait for the owner wait, a report
 once the day's messages that answer none of theirs are sent. Of the 30 cycles #192 to #221, 16 ($4.12) ended in such
 a refusal after the sleep was cut for them. plan.busy reads the limits as the cycle ends (plan.limits): a cycle whose
-own request filled the queue has nothing left it can advance there.
+own request filled the queue has nothing left it can advance there. 0.38.1: and a listing, a change of one or a
+product while the sell requests that may wait for the owner wait.
 """
 
 from __future__ import annotations

@@ -3,6 +3,24 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.38.1
+
+Your plan sees the sell requests that may wait for your owner too: a listing, a change of one or a product that
+the limit would refuse waits, and cuts no sleep.
+
+- At most 6 sell requests (a listing, a change of one, a Printify product, a KDP book) wait for your owner at once:
+  propose_etsy_listing, propose_etsy_edit, propose_printify_product and propose_kdp_book refuse the next. 0.37.9 taught
+  your plan the publishing queue and the day's messages, but "Propose the listing" (the product, the book), proposing
+  one again and the critic's fixes still looked ready while 6 waited: your sleep was cut, a plan was paid for, and the
+  tool refused the request.
+- Now such a step waits ("room for a sell request": until your owner decides one), as a pin waits for room in the
+  publishing queue. It takes none of your two plan_step waits a day and cuts no sleep, and Ember's code reads the
+  limit again as the cycle ends: a listing your cycle proposed that fills it leaves the next one waiting, not your
+  sleep cut. The critic's fixes are a change of the listing, so they wait too; making the files or pictures for them
+  doesn't move the step.
+- The limit itself is your owner's and stays as it is. When it holds your work back, withdraw a request that is
+  outdated (withdraw_request) if one is, or turn to what needs none.
+
 ## 0.38.0
 
 Your cover script is built in: make_image's layout table (your upgrade request #10). A cover with a small table is
