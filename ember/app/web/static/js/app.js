@@ -10039,6 +10039,8 @@
     // 0.37.9: your limits, which the tools refused it by: no more cycles that end in the refusal
     queue: "the publishing queue is full: it waits until you decide a request, or one goes out",
     messages: "today's messages to you are sent: it waits for tomorrow, or your next message",
+    // 0.37.10: listings, changes, Printify products and KDP books
+    sales: "as many sell requests as may wait for you wait: it waits until you decide one",
   };
   var PLAN_DECIDED = {
     pin: "you pinned it", promise: "a promise to you or your decision (first, until 0.36.0)",

@@ -312,6 +312,11 @@ request, a pin or post goes out, the next day, or you write) and cuts no sleep;
 the Plan tab and the diagnostics say what it waits on. A promise to report
 weighs as a report. The limits themselves are unchanged.
 
+0.37.10: the same for your sales limit: at most 6 listings, changes of
+listings, Printify products and KDP books wait for your decision at once, and
+while they do, the plan's "Propose the listing" steps and the critic's fixes
+wait instead of being paid for and refused. The limit is unchanged.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

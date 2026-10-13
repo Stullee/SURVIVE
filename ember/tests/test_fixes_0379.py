@@ -337,8 +337,11 @@ def test_the_report_and_the_plan_tab_say_what_a_step_waits_on(ingress_client: An
     text = section(report(ingress_client), "AGENT RECORDS")
     assert (
         "0.37.9: 'queue', a pin, post or blog post the publishing queue would refuse, and 'messages', a report to the"
-        " owner the day's message limit would refuse. Now: publish requests waiting for the owner 0 of 3; waiting for"
-        " the owner or their slot: pins 0 of 3, posts 0 of 3; messages today that answer none of the owner's 3 of 2)"
+        " owner the day's message limit would refuse;"
+    ) in text
+    assert (  # 0.37.10: with the sell requests
+        "Now: publish requests waiting for the owner 0 of 3; waiting for the owner or their slot: pins 0 of 3, posts 0"
+        " of 3; sell requests waiting for the owner 0 of 6; messages today that answer none of the owner's 3 of 2)"
     ) in text
     # the preview lays out the Owner project's step and takes it back: its number is the report's alone
     assert re.search(rf"\n\d+ \| - \| messages \| Keep promise #{promised}: {re.escape(REPORT)}\n", text), text

@@ -325,6 +325,21 @@ REQUEST_DAYS = {"contact": 7, "publish": 7, "spend_money": 14, "sell": 30, "crea
 # 0.12.0: messages to the owner a day that answer none of theirs (the rule was only prose); message_owner refuses more.
 # 0.37.9: kept here, beside PENDING_CAPS, as the plan reads both (plan.limits): a step that would need more waits.
 MESSAGES_PER_DAY = 2
+# 0.37.10: the type of the requests each executor of the agent's tools makes (their _new_request calls), so the plan
+# knows which of PENDING_CAPS a step's request would run into (plan.limits); tests/test_fixes_03710.py keeps the two
+# in step.
+EXECUTOR_TYPES = {
+    "email": "contact",
+    "etsy_listing": "sell",
+    "etsy_edit": "sell",
+    "printify_product": "sell",
+    "kdp_package": "sell",
+    "pinterest_pin": "publish",
+    "bluesky_post": "publish",
+    "site_post": "publish",
+    "site_links": "publish",
+    "reddit_link": "publish",
+}
 
 
 def pending_of_type(conn: sqlite3.Connection, scope: AgentScope, kind: str) -> int:
