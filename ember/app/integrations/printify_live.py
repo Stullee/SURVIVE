@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 import httpx2
@@ -178,22 +179,42 @@ class LiveAccount:
             "blueprint_id": product.blueprint_id,
             "print_provider_id": product.provider_id,
             "variants": [{"id": v, "price": c, "is_enabled": True} for v, c in product.prices],
-            "print_areas": [
-                {
-                    "variant_ids": [v for v, _ in product.prices],
-                    "placeholders": [
-                        {
-                            "position": product.position,
-                            "images": [{"id": image_id, "x": 0.5, "y": 0.5, "scale": product.scale(), "angle": 0}],
-                        }
-                    ],
-                }
-            ],
+            "print_areas": _print_areas(product, image_id),
         }
         return _made(self._call("POST", f"/shops/{shop_id}/products.json", changes=True, json=body))
 
-    def publish(self, shop_id: int, product_id: str) -> None:
-        body = {"title": True, "description": True, "images": True, "variants": True, "tags": True}
+    def update(
+        self, shop_id: int, product_id: str, product: Product, parts: Sequence[str], image_id: str | None = None
+    ) -> None:
+        """0.39.0: a partial update, as Printify takes one: only what changes. Its print areas only with a new design
+        (Printify refuses a placeholder without a picture), for the variants the product sells; its variants never
+        (Printify wants all of them in an update that names one)."""
+        body: dict[str, Any] = {}
+        if "title" in parts:
+            body["title"] = product.title
+        if "description" in parts:
+            body["description"] = product.full_description()
+        if "tags" in parts:
+            body["tags"] = list(product.tags)
+        if "design" in parts:
+            if not image_id:
+                raise NotSent("the new design wasn't uploaded")
+            body["print_areas"] = _print_areas(product, image_id)
+        if not body:
+            raise NotSent("nothing changes")
+        self._call("PUT", f"/shops/{shop_id}/products/{product_id}.json", changes=True, json=body)
+
+    def publish(self, shop_id: int, product_id: str, parts: Sequence[str] | None = None) -> None:
+        """Publish a product to the Etsy shop, or (0.39.0, ``parts``) what changed of a published one to the listing
+        Printify made: its photos (Printify's mockups) only with a new design, its variants and prices never."""
+        every = parts is None
+        body = {
+            "title": every or "title" in parts,
+            "description": every or "description" in parts,
+            "images": every or "design" in parts,
+            "variants": every,
+            "tags": every or "tags" in parts,
+        }
         self._call("POST", f"/shops/{shop_id}/products/{product_id}/publish.json", changes=True, json=body)
 
     def product(self, shop_id: int, product_id: str) -> Made:
@@ -217,6 +238,21 @@ class LiveAccount:
             if not isinstance(data, dict) or not data.get("next_page_url"):
                 break
         return found
+
+
+def _print_areas(product: Product, image_id: str) -> list[dict[str, Any]]:
+    """The product's picture on its print area, for the variants it sells."""
+    return [
+        {
+            "variant_ids": [v for v, _ in product.prices],
+            "placeholders": [
+                {
+                    "position": product.position,
+                    "images": [{"id": image_id, "x": 0.5, "y": 0.5, "scale": product.scale(), "angle": 0}],
+                }
+            ],
+        }
+    ]
 
 
 def _number(value: Any) -> int:

@@ -1040,12 +1040,21 @@ def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope
                 shortfalls = qa.defects(kind.name, bluesky.post_from_action(action))
             except bluesky.BlueskyError:
                 shortfalls = []
-    if r["executor"] in ("printify_product", "printify_delete") and action is not None:  # 0.13.0 (Phase E4)
+    printing = ("printify_product", "printify_delete", "printify_edit")  # 0.39.0: a change of a product
+    if r["executor"] in printing and action is not None:  # 0.13.0 (Phase E4)
         daily = agent.settings.printify_products_per_day
         execution = printify_publisher.execution(conn, r, scope, agent.clock, daily)
         if r["executor"] == "printify_product":
             try:
                 shortfalls = qa.defects(kind.name, printify.product_from_action(action))
+            except printify.PrintifyError:
+                shortfalls = []
+        if r["executor"] == "printify_edit":  # a new design's checks, on the product as it is now
+            try:
+                edit = printify.edit_from_action(action)
+                found = printify_publisher.current_product(conn, scope, edit.listing_id)
+                if edit.image is not None and found is not None:
+                    shortfalls = qa.defects(kind.name, edit.applied(found[1]))
             except printify.PrintifyError:
                 shortfalls = []
     if r["executor"] in site_publisher.EXECUTORS and action is not None:  # 0.14.0: the blog on the owner's website

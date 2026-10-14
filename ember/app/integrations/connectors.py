@@ -121,6 +121,13 @@ CLASSES: dict[str, ActionClass] = {
             undo="delete it",
         ),
         _class("printify.delete_product", "delete a product of Ember's at Printify", {"owner_identity"}),
+        # 0.39.0: a live product's design or words, which Printify publishes to its Etsy listing (changed back by a
+        # change of the agent's: Ember's code keeps no copy of what Printify had)
+        _class(
+            "printify.edit_product",
+            "change a live product of Ember's at Printify and its Etsy listing",
+            {"reaches_people", "owner_identity"},
+        ),
         # 0.14.0: the blog on the owner's website, uploaded over SFTP (site_publisher.py)
         _class(
             "site.publish_post",
@@ -169,6 +176,7 @@ _EXECUTORS = {
     "bluesky_delete": "bluesky.delete_post",  # the owner's Undo of a post
     "printify_product": "printify.create_product",  # 0.13.0 (Phase E4)
     "printify_delete": "printify.delete_product",  # the owner's Undo of a product
+    "printify_edit": "printify.edit_product",  # 0.39.0: never on an unlock (no rule of the policy engine names it)
     "site_post": "site.publish_post",  # 0.14.0
     "site_links": "site.publish_links",
     "site_restore": "site.restore",  # the owner's Undo of an upload

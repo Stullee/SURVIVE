@@ -326,6 +326,14 @@ listings, Printify products and KDP books wait for your decision at once, and
 while they do, the plan's "Propose the listing" steps and the critic's fixes
 wait instead of being paid for and refused. The limit is unchanged.
 
+0.39.0: Ember can fix a live Printify product instead of making a new one. Its
+request asked for it: a flaw the critic found in a poster's listing (a photo, a
+claim the product no longer keeps) could only be fixed by a new product, with
+another listing fee and without the first listing's views and favorites. Now
+`propose_printify_edit` proposes a new design, title, description or tags; once
+you approve, Ember's code changes the product at Printify (its prices stay) and
+Printify publishes the change to the same listing.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

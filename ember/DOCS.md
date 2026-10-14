@@ -2484,6 +2484,33 @@ it made and what their orders cost you.
 - **Undo** on the product's entry under **What Ember's code did** deletes it at
   Printify.
 
+### Changing a live product
+
+Since 0.39.0 the agent can fix a live product instead of making a new one (a
+new listing costs another listing fee and starts without the first one's views
+and favorites). `propose_printify_edit` proposes a change of a product whose
+Etsy listing is live: a new design, a new title, description or tags. Ember's
+own Etsy changes (`propose_etsy_edit`) leave these listings alone: Printify
+keeps them and would write its own copy over a change made at Etsy.
+
+- The card shows each part next to what it replaces, the new description in
+  full with the AI line, and what the QA check finds short in a new design.
+  A change is approved as it is or rejected; no unlock ever approves one.
+- **Approve** and Ember uploads the new design (exactly the file you approved:
+  if it changed since, nothing is changed), changes the product at Printify
+  (only what changes: its prices and variants stay) and has Printify publish
+  what changed to the same Etsy listing. A new design makes Printify draw the
+  listing's photos (its mockups) again; photos of your own can't be added
+  through Printify. Printify and Etsy charge nothing for it.
+- If Printify takes the change but doesn't publish it to the listing, the card
+  says so: publish it at Printify. If Ember can't tell what Printify did (a
+  lost connection), it says so and never tries again: check the product at
+  Printify. A change is never made twice.
+- The agent's plan, its quality critic and its view of the listing read the
+  product as Printify has it, changes included, and a change counts as the
+  critic's fix: the critic checks the listing again next. There is no **Undo**
+  for a change: the agent proposes another one to change it back.
+
 ## Website
 
 With **Website** on, the agent writes the pages of a small website of yours: a

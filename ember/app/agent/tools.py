@@ -152,7 +152,7 @@ PINTEREST_TOOLS = frozenset({"pinterest_boards", "propose_pin"})
 # Offered only with the Bluesky account the owner made for Ember (0.19.0).
 BLUESKY_TOOLS = frozenset({"bluesky_posts", "propose_bluesky_post"})
 # Offered only with the owner's Printify account and an Etsy shop (0.13.0, Phase E4): a product becomes a listing there.
-PRINTIFY_TOOLS = frozenset({"printify_catalog", "propose_printify_product"})
+PRINTIFY_TOOLS = frozenset({"printify_catalog", "propose_printify_product", "propose_printify_edit"})
 # Offered only when the owner switched Amazon KDP on (0.25.0): the book they publish at KDP, from the agent's spec.
 KDP_TOOLS = frozenset({"propose_kdp_book"})
 # Offered only when the owner switched their website on (0.13.0, Phase E3): its pages.
@@ -202,10 +202,11 @@ CHANNEL_READS = frozenset({"bluesky_posts"})
 # burn mode, nothing live to market). A Reddit post stays an ordinary cycle's too (a first test of demand, often).
 MARKETING_TOOLS = (PINTEREST_TOOLS | BLUESKY_TOOLS | BLOG_TOOLS) - CHANNEL_READS
 # 0.28.0: what a marketing cycle doesn't carry: making documents, spreadsheets and statements, the workshop, new
-# listings and products, KDP, email and the owner's site pages (an ordinary cycle's work).
+# listings and products, KDP, email and the owner's site pages (an ordinary cycle's work). 0.39.0: a change of a
+# Printify product is a marketing cycle's too, as a change of a listing is.
 BUILDING_TOOLS = (
     frozenset({"make_document", "make_spreadsheet", "make_cost_statement", "workshop", "propose_etsy_listing"})
-    | PRINTIFY_TOOLS
+    | (PRINTIFY_TOOLS - {"propose_printify_edit"})
     | KDP_TOOLS
     | MAIL_TOOLS
     | SITE_TOOLS
@@ -1150,6 +1151,26 @@ SPECS: dict[str, Spec] = {
                 "project_id": _i("Its product line (default: your focus project).", required=False),
             },
             per_cycle=1,
+        ),
+        Spec(
+            "propose_printify_edit",
+            # 0.39.0 (your request): propose_etsy_edit leaves the listings Printify made alone
+            "Ask your owner to approve a change to one of your live Printify products (etsy_listing shows it): a new "
+            "design, title, description or tags. Give only what changes. Once approved, Ember's code changes it at "
+            "Printify, which publishes it to the same listing (free; its views and favorites stay).",
+            {
+                "listing_id": _i("The Etsy listing Printify made of it.", minimum=1),
+                "image": _s(
+                    "A new design (.png or .jpg) for its print area: Printify draws the listing's photos from it.",
+                    200,
+                    required=False,
+                ),
+                "title": _s("", etsy.TITLE_CHARS, required=False),
+                "description": _s("The new description, in full. Plain text.", DESCRIPTION_CHARS, required=False),
+                "tags": _s(f"All its tags (up to {etsy.MAX_TAGS}), separated by commas.", 400, required=False),
+                "reason": _s("Why, and what you expect.", 300, cut=True),
+            },
+            per_cycle=3,
         ),
         Spec(
             "site_page",
@@ -4297,6 +4318,12 @@ def _etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     if listing is None or row is None:
         made = _printify_listings(conn, ctx.scope, listing_id)
         if made:  # 0.19.2: live, a cycle took its posters made through Printify for listings that weren't live
+            found = printify_publisher.current_product(conn, ctx.scope, listing_id)
+            if found is not None:  # 0.39.0: in full, as a change of it starts from
+                made += "\n" + printify_publisher.product_text(found[1])
+            waiting = printify_publisher.open_edit(conn, ctx.scope, listing_id)
+            if waiting is not None:
+                made += f"\n\nRequest #{waiting} changes it and hasn't been made yet."
             return Outcome(True, made.strip(), f"read #{listing_id}")
         raise ToolError(f"#{listing_id} isn't one of your live listings; etsy_listing without a number lists them")
     said = f"{as_read}: {numbers.get(listing_id, 'not read yet')}." if read else "Etsy's numbers: not read yet."
@@ -4322,9 +4349,9 @@ def _printify_listings(conn: Any, scope: AgentScope, listing_id: int | None = No
         + (etsy_publisher.numbers_text(r["views"], r["favorites"]) if r["synced_at"] else "not read from Etsy yet")
         for r in rows
     ]
-    return (
-        "\nMade through Printify (live at Etsy; Printify keeps them, propose_etsy_edit doesn't change them, and a pin "
-        "or a post may link them; PRINTIFY in your plan has their prices):\n" + "\n".join(lines)
+    return (  # 0.39.0: propose_printify_edit changes them (propose_etsy_edit doesn't: Printify keeps them)
+        "\nMade through Printify (live at Etsy; propose_printify_edit changes them, propose_etsy_edit doesn't, and a "
+        "pin or a post may link them; PRINTIFY in your plan has their prices):\n" + "\n".join(lines)
     )
 
 
@@ -4337,6 +4364,8 @@ def _propose_etsy_edit(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Out
         raise ToolError(f"Ember's record of #{listing_id} isn't readable ({exc})") from None
     row = etsy_publisher.listing_row(conn, ctx.scope, listing_id)
     if now is None or row is None:
+        if printify_publisher.live_listing(conn, ctx.scope, listing_id) is not None:  # 0.39.0
+            raise ToolError(f"#{listing_id} is a listing Printify made of a product of yours: propose_printify_edit")
         raise ToolError(f"#{listing_id} isn't one of your live listings; etsy_listing without a number lists them")
     state, action, stands = etsy_publisher.etsy_state(row), args.get("state"), etsy_publisher.state_text(row)
     if action != "deactivate":  # 0.23.3: taking it out of the shop stays possible (0.28.0: from any line's cycle)
@@ -4992,6 +5021,93 @@ def _propose_printify_product(ctx: ToolContext, args: dict[str, Any], conn: Any)
     return Outcome(True, text, f"#{made} Printify product: {_cut(product.title, 60)}", project_id=project_id)
 
 
+def _propose_printify_edit(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
+    """0.39.0 (the agent's request): a change of one of its live Printify products: a new design, title, description
+    or tags. propose_etsy_edit leaves the listings Printify made alone, so a flaw the critic found in one (a photo, a
+    claim the product no longer keeps) could only be fixed by a new product: a second listing fee, and a listing
+    without the first one's views and favorites."""
+    _printify(ctx)
+    _shop(ctx)
+    listing_id = args["listing_id"]
+    found = printify_publisher.current_product(conn, ctx.scope, listing_id)
+    if found is None:
+        raise ToolError(
+            f"#{listing_id} isn't one of your live Printify products; etsy_listing without a number lists them"
+        )
+    row, now = found
+    if (row["state"] or etsy.LIVE_STATE) != etsy.LIVE_STATE:  # as the Etsy sync last read it
+        raise ToolError(f"#{listing_id} isn't live at Etsy ({row['state']}): a change of it reaches no buyer")
+    _listing_stopped(conn, ctx.scope, listing_id, "change")
+    _listing_line(ctx, conn, listing_id, "change")
+    waiting = printify_publisher.open_edit(conn, ctx.scope, listing_id)
+    if waiting is not None:
+        raise ToolError(f"request #{waiting} already changes #{listing_id}; you hear its result first")
+    changes: dict[str, Any] = {}
+    try:
+        if args.get("title") is not None:
+            changes["title"] = etsy.check_title(args["title"])
+        if args.get("description") is not None:  # the AI line is added, once
+            changes["description"] = etsy.check_description(args["description"].replace(printify.DISCLOSURE, ""))
+        if args.get("tags") is not None:
+            changes["tags"] = etsy.check_tags(args["tags"])
+    except etsy.EtsyError as exc:
+        raise ToolError(str(exc)) from None
+    if args.get("image") is not None:
+        path = args["image"].strip()
+        try:
+            data = ctx.workspace.read_bytes(path)
+        except SandboxError as exc:
+            raise ToolError(str(exc)) from None
+        try:
+            upload = printify.image(path, data)
+            width, height = images.png_size(data)
+        except printify.PrintifyError as exc:
+            raise ToolError(str(exc)) from None
+        except images.ImageError as exc:
+            raise ToolError(f"{path} can't be used: {exc}") from None
+        if upload.sha256 != now.image.sha256:
+            changes.update(image=upload, width=width, height=height)
+    for name in [n for n in ("title", "description", "tags") if n in changes]:
+        if changes[name] == getattr(now, name):
+            del changes[name]  # the same as now: no change
+    frozen = plan.frozen(conn, ctx.scope, ctx.clock.today())  # the owner's freeze holds for these listings too
+    if frozen and ("title" in changes or "tags" in changes):
+        raise ToolError(
+            f"your owner froze the titles and tags of your listings until {frozen}: propose the other changes without"
+            " title and tags"
+        )
+    if not changes:
+        raise ToolError("nothing changes: give a part that differs from the product now (etsy_listing shows it)")
+    edit = printify.Edit(listing_id=listing_id, product_id=str(row["product_id"]), **changes)
+    reason = args["reason"].strip()
+    made = _new_request(
+        ctx,
+        conn,
+        printify.edit_payload(edit, now),
+        edit.to_action(),
+        type="sell",
+        title=_cut(f"Change Printify product: {now.title}", 120),
+        description=reason,
+        expected_cost="none: Printify and Etsy charge nothing for changing a listing",
+        expected_benefit=reason,
+        executor="printify_edit",
+    )
+    if isinstance(made, str):
+        return Outcome(True, made, "duplicate change")
+    parts = ", ".join(edit.parts())
+    text = (
+        f"Approval request #{made} is waiting for your owner: it changes the {parts} of #{listing_id}. Nothing has "
+        "changed at Printify yet. If they approve it, Ember's code changes the product at Printify, which publishes "
+        "it to the listing, and you hear the result."
+    )
+    if edit.image is not None:
+        short = qa.defects("printify.edit_product", edit.applied(now))  # the QA registry: your owner sees it too
+        if short:
+            text += f" QA (Ember's code): {'; '.join(short)}."
+    text += _unlocked(ctx)
+    return Outcome(True, text, f"#{made} change of #{listing_id}: {parts}")
+
+
 def _site_page(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     """0.13.0 (Phase E3): write a page of the owner's website, or take one off. Ember's code builds the site; the
     owner publishes it."""
@@ -5462,6 +5578,7 @@ HANDLERS: dict[str, Callable[..., Outcome]] = {
     "propose_bluesky_post": _propose_bluesky_post,
     "printify_catalog": _printify_catalog,
     "propose_printify_product": _propose_printify_product,
+    "propose_printify_edit": _propose_printify_edit,
     "site_page": _site_page,
     "propose_blog_post": _propose_blog_post,
     "propose_link_page": _propose_link_page,
