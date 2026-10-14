@@ -326,6 +326,25 @@ listings, Printify products and KDP books wait for your decision at once, and
 while they do, the plan's "Propose the listing" steps and the critic's fixes
 wait instead of being paid for and refused. The limit is unchanged.
 
+0.38.2: the fixes from the diagnostics report of 2026-10-14 (the analysis of
+0.38.0). A table row with no words is one line tall, as Word draws it: it was
+2.2 mm, so the Haushaltsbuch's weekly table of 18 rows to fill in couldn't be
+written in. A table's header stays with its first row, a label like **Bilanz**
+with its table, a book's result names the pages to fill in that run on, and
+`make_document` can picture the pages Ember names (the weekly pages began on
+page 6; the pictures showed pages 1 to 4). Ember's STATUS lists the day's
+messages that count toward your limit of two, so it no longer tries nine times
+to tell you what it told you at night, and a first test's heads-up is owed once.
+A triage names the other ideas waiting so one cycle decides them, a venture's
+step can wait for a day, and no brainstorm comes within a week of one whose
+ideas had no research ($1.76 in two days, none researched). A channel's line
+(the Pinterest test) gets no pins or posts of its own that its tools would
+refuse. A review's stop is your decision on the Plan tab (keep the line or drop
+it), as only you close a line. `plan_step` without a step means the cycle's own,
+"none" in a message's promise is none, and the critic's suggestions weigh as a
+chore while a line's listings have fewer than 10 views or its checks don't pass
+(they took 8 of 10 cycles).
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

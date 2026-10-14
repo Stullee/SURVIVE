@@ -492,11 +492,39 @@ def warn(conn: sqlite3.Connection, scope: AgentScope, today: date, now: str) -> 
 
 def owed(conn: sqlite3.Connection, scope: AgentScope, today: date) -> list[str]:
     """0.16.3 (analysis bug 1): what the agent owes for each backed venture whose first test is due within WARN_DAYS
-    unmet, for its OBLIGATIONS: what is at stake, then what to do."""
-    return [
-        f"{at_stake(conn, scope, v, test)} Work toward it first, or tell your owner once what it needs."
-        for v, test in _due_soon(conn, scope, today)
-    ]
+    unmet, for its OBLIGATIONS: what is at stake, then what to do. 0.38.2 (analysis-0.38.0, 3.2): once a message of the
+    agent's told the owner (``told``), it says so: live, it kept asking for the heads-up two messages had given, and
+    nine cycles from 04:20 on tried to send it again, each refused by the day's limit."""
+    found = []
+    for v, test in _due_soon(conn, scope, today):
+        told = _told(conn, scope, test)
+        if told is None:
+            then = f"Work toward it first, or tell your owner once what it needs (name #{test['id']} in your message)."
+        else:
+            then = (
+                f"You told your owner in message #{told['id']}: work toward it; nothing more to tell them about it"
+                " until it changes."
+            )
+        found.append(f"{at_stake(conn, scope, v, test)} {then}")
+    return found
+
+
+def _told(conn: sqlite3.Connection, scope: AgentScope, test: Mapping[str, Any]) -> sqlite3.Row | None:
+    """0.38.2: the agent's newest message naming first test #N (its milestone's number) since Ember's code warned of it
+    (WARNED_KEY), or since WARN_DAYS before its day if it hasn't; None while none did."""
+    warned = conn.execute(
+        "SELECT value FROM meta WHERE key = ?", (WARNED_KEY.format(mode=scope.mode, milestone=test["id"]),)
+    ).fetchone()
+    due = roadmap.parse_day(test["due"])
+    since = str(warned["value"]) if warned else (due - timedelta(days=WARN_DAYS)).isoformat() if due else ""
+    where, params = scope.where()
+    named = re.compile(rf"#{int(test['id'])}(?!\d)")
+    rows = conn.execute(
+        f"SELECT id, created_at, text FROM messages WHERE {where} AND sender = 'agent' AND created_at >= ?"
+        " ORDER BY id DESC",
+        (*params, since),
+    ).fetchall()
+    return next((r for r in rows if named.search(str(r["text"] or ""))), None)
 
 
 def keep(

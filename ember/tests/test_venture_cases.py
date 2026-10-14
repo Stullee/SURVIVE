@@ -82,8 +82,8 @@ def test_a_venture_case_is_saved_with_its_numbers_and_shown(data_dir: Path) -> N
         "exchange rate). A sale at EUR 25.00 keeps EUR 13.00 (fees EUR 0.00, cost EUR 12.00); break-even at 2.4 sales"
     )
     [planned] = tool_results(agent, "plan_step")  # 0.13.0: the plan's steps are an ordinary cycle's (0.35.0)
-    assert planned["status"] == "error"
-    assert "your plan's steps belong to ordinary and marketing cycles" in planned["result"]
+    assert planned["status"] == "error"  # 0.38.2: a venture cycle's plan_step makes a step of its ventures wait only
+    assert "action must be one of wait" in planned["result"]
     [saved] = rows(
         agent, "SELECT venture_id, channel, sales_low, sales_mid, sales_high, net_eur, break_even FROM venture_cases"
     )
@@ -111,5 +111,5 @@ def test_venture_case_is_a_venture_cycles_tool() -> None:
     venture = {d["name"] for d in tools.definitions(etsy=True, venture=True)}
     ordinary = {d["name"] for d in tools.definitions(etsy=True, venture=False)}
     assert "venture_case" in venture and "venture_case" not in ordinary
-    assert "plan_step" in ordinary and "plan_step" not in venture
+    assert "plan_step" in ordinary and "plan_step" in venture  # 0.38.2: a venture cycle's, for its steps' waits
     assert "milestone_update" in venture and "milestone_update" in ordinary

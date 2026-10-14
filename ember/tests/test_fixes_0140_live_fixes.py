@@ -186,11 +186,12 @@ def test_a_too_long_field_is_refused_with_its_length_and_what_to_do(data_dir: Pa
     agent, _ = run(data_dir, FakeTransport(script=[idle(steps=[])]))
     long = call(agent, "workspace_write", path="drafts/article.md", mode="create", content="ä" * 2_742)
     assert not long.ok
-    assert "content is too long: 2,742 of 2,500 characters: create with the first part, then append the rest" in (
-        long.text
+    assert (  # 0.38.2: and how much to cut
+        "content is too long: 2,742 of 2,500 characters (cut 242): create with the first part, then append the rest"
+        in long.text
     )
     path = call(agent, "workspace_read", path="p" * 230 + ".md")
-    assert not path.ok and "path is too long: 233 of 200 characters." in path.text  # no remedy: none needed
+    assert not path.ok and "path is too long: 233 of 200 characters (cut 33)." in path.text  # no remedy: none needed
 
 
 def test_owner_facing_notes_are_cut_not_refused(data_dir: Path) -> None:

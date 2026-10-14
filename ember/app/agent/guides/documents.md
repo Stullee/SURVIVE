@@ -1,8 +1,9 @@
 MAKING DOCUMENTS (make_document)
 Write the document as a .md file in your workspace (a long one with draft), then call make_document with that
 source and an output ending in .pdf. You get the PDF, an editable Word copy (.docx) and pictures of the first pages
-next to it. The result says how many pages it has, where the text ends and what to fix; look at a page picture
-to check the design. Change the source and remake until it is right.
+next to it (pages: '6, 7, 83' pictures those instead, at most 4). The result says how many pages it has, where the
+text ends and what to fix; look at a picture of each kind of page to check the design. Change the source and remake
+until it is right.
 
 SETTINGS: optional 'key: value' lines between two '---' lines at the very top (no comments after a value).
 ---
@@ -20,7 +21,8 @@ footer: Page {page} of {pages}
 TEXT: # ## ### headings; **bold**, *italic*, `code`; [label](https://...) links; '- ' bullets; '1. ' numbers;
 '- [ ] ' and '- [x] ' checkboxes; '> ' lines make a callout box; '---' alone is a divider line; end a line with
 two spaces or \ for a line break. Tables: '| Day | Task |', then '|---|---:|' (:--- left, :---: centre, ---: right),
-then rows; leave the first row's cells empty for a table without a header row.
+then rows; leave the first row's cells empty for a table without a header row. A row is as tall as its text, and a
+row with no words one line (about 7 to 8 mm), so a table to fill in by hand holds what its page has room for.
 
 LAYOUT LINES (each alone on its line):
 ::: sidebar  ...  ::: main     text for the sidebar (needs 'sidebar: left' or 'right'), then back to the main text
@@ -35,7 +37,10 @@ Boxes, columns and center can hold each other (4 deep); each one ends with its o
 
 DESIGN THAT SELLS
 - One accent colour, calm fonts, generous white space, a clear hierarchy: title, sections, details.
-- Printables: one purpose per page; checklists, tables with empty rows and writing lines leave room to write.
+- Printables: one purpose per page; checklists, tables with empty rows and writing lines leave room to write. Count
+  the rows a page holds before you promise them: about 35 on A4 at size 10.5, about 20 on a 6x9 book page at 12.5,
+  a heading and a table's header taking one each. A table's header stays with its first row, and a one-line label
+  (Notizen:) with what it labels.
 - CV and letter templates: realistic sample text the buyer replaces, a sidebar for contact and skills, a photo box
   where photos are customary (Germany), and a matching cover letter in the same style.
 - Offer what buyers search for: A4 and Letter versions (a document has one page size: make the Letter copy from a

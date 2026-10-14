@@ -3,6 +3,53 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.38.2
+
+Fixes from the diagnostics report of 2026-10-14: a book's empty table rows are tall enough to write in, STATUS shows
+today's messages to your owner, a triage takes the other ideas along, and your review's stop goes to your owner.
+
+- make_document: a table row with no words is one line tall now (about 8 mm at size 12.5), as Word draws it. It was
+  2.2 mm, its padding alone, so the Haushaltsbuch's weekly table of 18 rows to fill in was a band of lines nobody could
+  write in: your owner's fifth rejection of the book. A 6x9 page at size 12.5 holds about 20 rows with its heading:
+  count the rows a page holds before you promise them. A table's header stays with its first row, and a heading or a
+  one-line label (**Bilanz**, Notizen:) moves to the next page with the table or writing lines under it. In a book (a
+  KDP size) the result says which pages to fill in run on to the next page. A book made before 0.38.2 looks different
+  now: make it again and look at its pages to fill in.
+- make_document's pages ('6, 7, 83', at most 4) makes the pictures of those pages instead of the first ones. The
+  Haushaltsbuch's weekly pages began on page 6, and its pictures showed pages 1 to 4 only: look at the pages buyers
+  write in.
+- STATUS has a line on today's messages that answer none of your owner's: "Your messages today that answer none of
+  your owner's: 2 of 2 (#189 at 00:38 "…"; #190 at 03:50 "…")". Read it before you write: at 2 of 2 the next goes
+  tomorrow, or in your answer when they write. On 10-14 nine cycles from 04:20 on tried to send a heads-up that
+  messages #189 and #190 had given, each refused, and two lessons blamed the day's start, which is midnight at your
+  owner's.
+- A first test's line in OBLIGATIONS asks you to name its number (#16) in your message, and once a message of yours
+  names it, it says "You told your owner in message #N: work toward it; nothing more to tell them about it until it
+  changes."
+- message_owner: commits "none" (or "n/a", "nothing", "none - informational only") promises nothing; three messages
+  were refused as promises without their day. A text too long says how much to cut: "(cut 1)".
+- A triage's YOUR STEP names the other ideas waiting for theirs: triage them in the same cycle (venture_update each:
+  park the ones you would park, with why; research the one that deserves it most). On 10-14 six cycles in a row each
+  parked one idea of one brainstorm, $1.03 for what one cycle could decide.
+- plan_step is a venture cycle's tool too, for one thing: a step of your ventures (a triage, a brainstorm) waits for a
+  day (action wait, on date, until YYYY-MM-DD, at most 14 days ahead). An idea you mean to take up after your owner's
+  "nothing new" week waits until then; one "paused until 10-20" in a note came back the next day.
+- No brainstorm comes within 7 days of the last one while none of its ideas was researched: a funnel emptied by
+  parking all of a brainstorm's ideas brought the next brainstorm at once ($1.76 in two days, nothing researched).
+- A channel's line (the Pinterest traffic test, #9) has no weekly pin, Bluesky post or blog post of its own: those link
+  the line's own listings, and it has none, so the tools refused them (step #183 cost a marketing cycle). Its steps for
+  them dropped; each product's line markets its own listings.
+- Your daily review's stop is your owner's decision now: only they close a line (since 0.35.0), and the review still
+  told you to close it with project_update, which can't. Ember's code asks them on their Plan tab to keep the line or
+  drop it, at most once a week a line; until they decide, hold the line (plan_step hold) when a cycle is on it.
+  YOUR LAST REVIEW says "your owner decides on it", or "your owner kept it".
+- plan_step with no step_id means YOUR STEP for done, wait, split and replace (four calls were refused for naming
+  none). A step can't wait on itself: ref names the other step it waits on.
+- The critic's suggestions (the fixes of a check that scored 4 to 6) weigh as a chore, with no urgency, while the
+  line's listings have fewer than 10 views in all, or after two checks of a listing in a row without a pass: a listing
+  nobody sees can't show whether its photo works. "The critic passes it" took 8 of the 10 cycles #257 to #266 while
+  ten checks scored 5 or 6. A defect (3 or less) still comes first. Bring buyers first; the checks keep coming.
+
 ## 0.38.1
 
 Your plan sees the sell requests that may wait for your owner too: a listing, a change of one or a product that

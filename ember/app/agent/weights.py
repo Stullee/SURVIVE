@@ -71,6 +71,10 @@ DEFECT_SCORE = 3
 MISSED_BAR = 4.0  # a product missed a views bar lately: its marketing comes first (a push for buyers, 0.33.0)
 REACH = 3.0  # a live product's launch marketing: its first buyers before the critic's suggestions
 IMPROVE = 1.0  # the critic's suggestions (an improve verdict above DEFECT_SCORE)
+# 0.38.2: below this many views of its line's listings, the critic's suggestions weigh as a chore, without urgency
+# (a listing few see can't show whether its photo works); after quality.STUCK_CHECKS checks of a listing without a
+# pass, too
+CRITIC_VIEWS = 10
 ASKED = 2.0  # the owner asked for it
 RECURRING_DUE = 1.0  # a recurring step on its due day
 # 0.36.0: the ventures (plan.py; 0.37.0: each venture's step): their worth unless the owner sets one or a business case

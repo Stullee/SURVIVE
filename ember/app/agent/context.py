@@ -300,6 +300,7 @@ class Snapshot:
     ready: str = ""
     agenda: list[sqlite3.Row] = field(default_factory=list)  # 0.13.0: events no plan has shown yet (agenda.py)
     reactive: bool = False  # 0.13.0: a cycle an event woke
+    messages: str = ""  # 0.38.2: STATUS's line on today's messages to the owner that answer none of theirs
 
 
 def snapshot(
@@ -338,6 +339,7 @@ def snapshot(
     reactive: bool = False,
     books: tuple[int, int] | None = None,
     now: str | None = None,
+    messages: str = "",
 ) -> Snapshot:
     """What the planner, the brief and the will see; ``today`` (the owner's local date) finds the day's review and
     the day's spending on ventures; ``now`` (0.35.0): the plan tree's numbers are read then."""
@@ -438,6 +440,7 @@ def snapshot(
         ready=ready,
         agenda=agenda or [],
         reactive=reactive,
+        messages=messages,
     )
 
 
@@ -533,6 +536,8 @@ def status_text(s: Snapshot, dry_run: bool) -> str:
     ]
     if s.burn:
         lines.append(f"Burn mode, set by Ember's code: {s.burn}.")
+    if s.messages:
+        lines.append(s.messages)
     if s.workspace_usage:
         lines.append(s.workspace_usage)
     kind = _kind_line(s)
@@ -543,6 +548,38 @@ def status_text(s: Snapshot, dry_run: bool) -> str:
     if st.last_will_due:
         lines.append("Your money is nearly gone: your last will is due.")
     return "\n".join(lines)
+
+
+MESSAGE_CHARS = 60  # 0.38.2: of each of today's messages, as STATUS quotes it
+
+
+def messages_line(sent: list[sqlite3.Row], at: Callable[[str], str], redact: Callable[[str], str] | None = None) -> str:
+    """0.38.2 (analysis-0.38.0, 3.2): STATUS's line on the day's messages to the owner that answer none of theirs
+    (``sent``, oldest first; ``at``: a timestamp as the owner's clock shows it; ``redact``: the words the owner removed
+    taken out, privacy.Redactor). Live, nothing showed them: nine cycles from 04:20 on tried to tell the owner what two
+    messages had told them hours before, and the agent concluded that the limit's day didn't start at midnight."""
+    limit = store.MESSAGES_PER_DAY
+    if not sent:
+        return f"Your messages today that answer none of your owner's: 0 of {limit}."
+    said = []
+    for row in sent:
+        flat = " ".join(str(row["text"] or "").split())
+        words = _opening(redact(flat) if redact is not None else flat, MESSAGE_CHARS)
+        said.append(f"#{row['id']} at {at(str(row['created_at']))} {json.dumps(words, ensure_ascii=False)}")
+    line = f"Your messages today that answer none of your owner's: {len(sent)} of {limit} ({'; '.join(said)})"
+    if len(sent) >= limit:
+        line += ": the next waits for tomorrow, or goes in your answer when they write"
+    return line + "."
+
+
+def _opening(text: str, chars: int) -> str:
+    """The start of a text in whole words, at most ``chars`` and "…": a word cut in half (a removed password, say)
+    escapes the report's redaction, which knows whole words only."""
+    if len(text) <= chars:
+        return text
+    head = text[:chars]
+    kept = head if text[chars] == " " else head.rsplit(" ", 1)[0] if " " in head else ""
+    return kept.rstrip() + "…"
 
 
 def _kind_line(s: Snapshot) -> str:

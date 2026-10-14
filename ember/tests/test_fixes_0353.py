@@ -114,6 +114,8 @@ def critic(agent: Agent, line: int, listing: int, score: int) -> None:
 def test_a_live_products_launch_pins_come_before_the_critics_suggestions_and_after_a_defect(data_dir: Path) -> None:
     agent, line, listing = launched(data_dir)
     assert urgencies(agent, line)[PINS] == weights.REACH  # live: its first buyers
+    with agent.db.transaction() as conn:  # 0.38.2: seen (below weights.CRITIC_VIEWS its suggestions are a chore)
+        conn.execute("UPDATE etsy_listings SET views = ? WHERE listing_id = ?", (weights.CRITIC_VIEWS, listing))
     critic(agent, line, listing, 5)
     found = urgencies(agent, line)
     assert (found[PINS], found[CRITIC]) == (weights.REACH, weights.IMPROVE)  # 0.35.2: DEFECT, the pins 0
@@ -131,7 +133,7 @@ def test_a_missed_views_bar_puts_the_products_marketing_above_its_launch_and_its
     critic(agent, line, listing, 5)
     decide(agent, line, 7)  # day 7 with no view: its marketing comes first for a week
     found = urgencies(agent, line)
-    assert (found[PINS], found[CRITIC]) == (weights.MISSED_BAR, weights.IMPROVE)
+    assert (found[PINS], found[CRITIC]) == (weights.MISSED_BAR, 0.0)  # 0.38.2: no one sees it: its polish waits
 
 
 # --- a channel is judged on results old enough to exist ---

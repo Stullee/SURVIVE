@@ -1,7 +1,8 @@
 """Ember's products: finished files made from what the agent writes in its workspace.
 
 * ``document``: a Markdown file (with settings and ``:::`` layout lines, see markup.py) becomes a PDF, an editable
-  Word file next to it and pictures of its first pages: ``shop/cv.pdf``, ``shop/cv.docx``, ``shop/cv-page1.png``.
+  Word file next to it and pictures of its first pages (0.38.2: or of the pages named): ``shop/cv.pdf``,
+  ``shop/cv.docx``, ``shop/cv-page1.png``.
 * ``spreadsheet``: a JSON spec becomes an Excel file and a picture of each table: ``shop/budget.xlsx``,
   ``shop/budget-preview.png`` (0.15.0: and ``shop/budget-sheet2.png`` for the second sheet, and so on).
 * ``image``: a listing photo made of pages of Ember's own PDFs, sheets of its Excel files or pictures (0.15.0: or a
@@ -35,7 +36,7 @@ from . import checks, images, markup, pdf, sheets, statement, tables, word
 
 log = logging.getLogger(__name__)
 
-PAGE_PREVIEWS = 4  # pictures of the first pages of a document
+PAGE_PREVIEWS = 4  # pictures of the first pages of a document (0.38.2: or of the pages named)
 PREVIEW_DPI = 100  # an A4 page is 827 x 1169 pixels
 MAX_LISTING_PAGES = 3
 _COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
@@ -88,11 +89,15 @@ def _names(paths: list[str]) -> str:
 # --- documents ---
 
 
-def document(jail: Jail, source: str, output: str, word_copy: bool = True, previews: bool = True) -> Made:
-    """Make ``output`` (a PDF) from the Markdown file ``source``, with a Word copy and page pictures next to it."""
+def document(
+    jail: Jail, source: str, output: str, word_copy: bool = True, previews: bool = True, pages: str = ""
+) -> Made:
+    """Make ``output`` (a PDF) from the Markdown file ``source``, with a Word copy and page pictures next to it: of
+    its first pages, or (0.38.2) of the ``pages`` named ('6, 7, 83')."""
     base = _base(output, ".pdf", "output")
     if not source.lower().endswith((".md", ".txt")):
         raise ProductError("source must be the .md (or .txt) file you wrote the document in")
+    chosen = _preview_pages(pages)
     text = jail.read(source)
     try:
         parsed = markup.parse(text)
@@ -105,19 +110,18 @@ def document(jail: Jail, source: str, output: str, word_copy: bool = True, previ
     if docx is not None:
         _write(jail, made, f"{base}.docx", docx)
     shown: list[str] = []
+    numbers: list[int] = []
     if previews:
-        numbers = list(range(1, min(layout.pages, PAGE_PREVIEWS) + 1))
+        numbers = [n for n in chosen if n <= layout.pages] or list(range(1, min(layout.pages, PAGE_PREVIEWS) + 1))
         for number, page in zip(numbers, images.pdf_pages(data, numbers, dpi=PREVIEW_DPI), strict=True):
             path = f"{base}-page{number}.png"
             _write(jail, made, path, images.png(page))
             shown.append(path)
-    # Pictures of pages this version no longer has would show an old document.
-    first_stale = len(shown) + 1 if previews else 1
-    for number in range(first_stale, pdf.BOOK_PAGES + 1):
+    # Pictures of pages this version doesn't show would show an old document (0.38.2: of any page, as the pictures
+    # can be of any page now; before, they were of the first pages only).
+    for number in range(1, pdf.BOOK_PAGES + 1):
         path = f"{base}-page{number}.png"
-        if jail.size_of(path, "product") is None:
-            if number > PAGE_PREVIEWS:
-                break
+        if number in numbers or jail.size_of(path, "product") is None:
             continue
         jail.delete(path)
         made.removed.append(path)
@@ -132,8 +136,15 @@ def document(jail: Jail, source: str, output: str, word_copy: bool = True, previ
     elif jail.size_of(f"{base}.docx", "product") is not None:
         extras.append(f"{base}.docx is from an earlier version: remake it with word true, or delete it")
     if shown:
-        more = f" (the first {len(shown)} of {layout.pages})" if len(shown) < layout.pages else ""
+        if chosen and numbers != list(range(1, len(numbers) + 1)):
+            more = f" (page{'s' if len(numbers) > 1 else ''} {', '.join(map(str, numbers))} of {layout.pages})"
+        else:
+            more = f" (the first {len(shown)} of {layout.pages})" if len(shown) < layout.pages else ""
         extras.append(f"page pictures {_names(shown)}{more}")
+    beyond = [n for n in chosen if n > layout.pages] if previews else []
+    if beyond:
+        names = ", ".join(map(str, beyond))
+        extras.append(f"no page {names}: the document has {layout.pages} page{'s' if layout.pages != 1 else ''}")
     if extras:
         made.report.append("Also: " + "; ".join(extras) + ".")
     ends_page, used = layout.main_end
@@ -150,6 +161,20 @@ def document(jail: Jail, source: str, output: str, word_copy: bool = True, previ
 def _sentence(text: str) -> str:
     text = text.strip()
     return text if text.endswith((".", "!", "?")) else f"{text}."
+
+
+def _preview_pages(text: str) -> list[int]:
+    """0.38.2: the pages a document's pictures show, as named ('6, 7, 83'), at most PAGE_PREVIEWS; [] for the first
+    ones. Live, a book's weekly pages began on page 6, and the pictures showed pages 1 to 4 only."""
+    words = [w for w in re.split(r"[\s,;]+", text or "") if w]
+    if not words:
+        return []
+    if not all(w.isdigit() and int(w) >= 1 for w in words):
+        raise ProductError("pages names page numbers, like '6, 7, 83'")
+    numbers = list(dict.fromkeys(int(w) for w in words))
+    if len(numbers) > PAGE_PREVIEWS:
+        raise ProductError(f"pages names at most {PAGE_PREVIEWS} pages: make the document again for others")
+    return sorted(numbers)
 
 
 # --- spreadsheets ---

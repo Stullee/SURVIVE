@@ -33,6 +33,7 @@ from .store import AgentScope
 
 MIN_PASS = 7
 RECHECK_DAYS = 14
+STUCK_CHECKS = 2  # 0.38.2: a listing's checks in a row without a pass, after which its fixes weigh as a chore
 LOOK_PIXELS = 1_000  # the cover photo's longer side, as the agent's own look sees it
 FIXES_CHARS = prompts.QUALITY_FIXES_CHARS
 TITLE_CHARS = 50  # of a listing's title, where a verdict names it
@@ -288,6 +289,24 @@ def lowest(conn: sqlite3.Connection, scope: AgentScope, project_id: int) -> int 
     checked = newest(conn, scope, project_id) or unplaced(conn, scope, project_id)
     scores = [int(r["score"]) for r in checked if r["score"] is not None]
     return min(scores) if scores else None
+
+
+def stuck(conn: sqlite3.Connection, scope: AgentScope, project_id: int) -> bool:
+    """0.38.2 (analysis-0.38.0, 3.8): whether a live listing of the line had its STUCK_CHECKS newest checks say improve,
+    no pass between. Live, ten checks scored 5 or 6 of 10 (a pass is MIN_PASS), each change brought a check with new
+    fixes, and "The critic passes it" weighed most of any step: it took 8 of the 10 cycles #257 to #266 ($2.84) while
+    a listing had 0 to 4 views."""
+    listings = set(reach.funnels(conn, scope).get(project_id, reach.Funnel()).listings)
+    where, params = scope.where()
+    runs: dict[int, list[str]] = {}
+    for row in conn.execute(
+        f"SELECT listing_id, verdict FROM quality_checks WHERE {where} AND project_id = ? AND status = 'ok'"
+        " ORDER BY id DESC",
+        (*params, project_id),
+    ).fetchall():
+        if row["listing_id"] in listings:
+            runs.setdefault(int(row["listing_id"]), []).append(str(row["verdict"]))
+    return any(len(v) >= STUCK_CHECKS and all(x == "improve" for x in v[:STUCK_CHECKS]) for v in runs.values())
 
 
 def changed_since(conn: sqlite3.Connection, scope: AgentScope, check: sqlite3.Row) -> bool:

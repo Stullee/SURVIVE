@@ -625,7 +625,11 @@ def _last_review(conn: sqlite3.Connection, scope: AgentScope, today: date) -> st
         now = project["status"] if project else "gone"
         check = ""
         if v["verdict"] == "stop" and now in OPEN_STATUSES:
-            check = f" → still {now}: you haven't carried it out"
+            # 0.38.2: a stop is the owner's to carry out: their decision on it (plan._review_stops)
+            check = {
+                "deciding": " → your owner decides on it (their Plan tab)",
+                "kept": " → your owner kept it",
+            }.get(plan.owner_decision(conn, scope, int(v["project_id"]), str(last["created_at"])), f" → still {now}")
         lines.append(f"- #{v['project_id']} {v['verdict']}: {_one_line(v['why'], WHY_CHARS)}{check}")
     if last["focus"]:
         lines.append(f"Your focus then: {_one_line(last['focus'], 300)}")
@@ -790,8 +794,9 @@ def planner_text(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
             said = ""
         if said:
             lines.append(f"{label}: {_one_line(said, 400)}")
-    lines.append(  # 0.28.0: one line a cycle: a stop now (closing another line is allowed), the rest on its line
-        "Act on it: carry out each stop now (project_update closes any line); a change, and work on a bottleneck"
+    lines.append(  # 0.28.0: one line a cycle; 0.38.2: a stop is the owner's to make (only they close a line)
+        "Act on it: a stop is your owner's decision (only they close a line): Ember's code asks them on their Plan tab;"
+        " until they decide, hold the line (plan_step hold) when a cycle is on it. A change, and work on a bottleneck"
         " (reach: its marketing cycles bring buyers), waits for its line's cycle. Ember's code kept the lesson."
     )
     kept = []

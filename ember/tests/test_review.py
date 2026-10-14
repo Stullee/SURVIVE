@@ -220,7 +220,8 @@ def test_the_scorecard_holds_the_agent_to_its_last_verdicts(data_dir: Path) -> N
     text = scorecard(agent).text
     assert "YOUR LAST REVIEW (" in text and "Your focus then: Something new." in text
     if rows(agent, "SELECT status FROM projects WHERE id = 1")[0]["status"] in ("idea", "active", "waiting"):
-        assert "- #1 stop: No demand after a day. → still " in text and "you haven't carried it out" in text
+        # 0.38.2: only the owner closes a line: the review's stop is their decision (plan._review_stops)
+        assert "- #1 stop: No demand after a day. → your owner decides on it (their Plan tab)" in text
 
 
 def test_the_dry_run_agent_holds_what_its_review_stopped(data_dir: Path) -> None:
@@ -268,7 +269,8 @@ def test_the_planner_sees_todays_review_only_today(data_dir: Path) -> None:
     assert text.startswith(f"Your review of today ({agent.clock.today().isoformat()})")
     # 0.15.0: the advice first, the verdicts after it (a project to continue on one line), so a cut takes them first.
     assert "\nFocus today: " in text and text.endswith(
-        "Act on it: carry out each stop now (project_update closes any line); a change, and work on a bottleneck"
+        "Act on it: a stop is your owner's decision (only they close a line): Ember's code asks them on their Plan tab;"
+        " until they decide, hold the line (plan_step hold) when a cycle is on it. A change, and work on a bottleneck"
         " (reach: its marketing cycles bring buyers), waits for its line's cycle. Ember's code kept the lesson."
         "\n- continue: #1 (too_early)"
     )

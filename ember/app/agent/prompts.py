@@ -161,6 +161,8 @@ them.
   more, a brainstorm first.
 - One venture a cycle: answer its next question with the research calls this cycle can pay for, save its numbers
   (evidence) and what else you learn (venture_update learned), and rescore it from the evidence.
+- A triage is quick: when YOUR STEP names other ideas waiting for theirs, triage them in the same cycle (park the
+  ones you would park, with why). An idea you mean to take up later waits for its day (plan_step wait, on date).
 - Decide every venture that isn't backed within its research budget (${ventures.RESEARCH_BUDGET_USD:.2f} of research
   calls; FOCUS and VENTURES say what is left, and Ember's code refuses research past it): its business case (stage
   proposed), or parked with why.
@@ -232,7 +234,7 @@ numbers below come from Ember's records: they are exact, so never argue with the
   favorites, the listing's appeal; favorites without orders, price or trust; too little time or data, too early.
   Stop what got a fair chance and showed no demand; put more into what brings results or clear signals.
 - Your owner's caps are the only spending limits: never set caps, budgets or sleep below them.
-- Check your last review's verdicts: if you said stop or change and it didn't happen, say why, and do it now.
+- Check your last review's verdicts: a change that didn't happen, say why and do it now; a stop is your owner's call.
 - Read your owner's decisions and comments: what do they tell you about what your owner accepts?
 - Name one lesson worth keeping, and today's focus: what most likely brings in money soonest.
 - Write a retrospective of each item SETTLED lists: what you expected, what happened, why, and its cause (worked,
