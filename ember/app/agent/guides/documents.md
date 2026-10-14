@@ -22,7 +22,7 @@ TEXT: # ## ### headings; **bold**, *italic*, `code`; [label](https://...) links;
 '- [ ] ' and '- [x] ' checkboxes; '> ' lines make a callout box; '---' alone is a divider line; end a line with
 two spaces or \ for a line break. Tables: '| Day | Task |', then '|---|---:|' (:--- left, :---: centre, ---: right),
 then rows; leave the first row's cells empty for a table without a header row. A row is as tall as its text, and a
-row with no words one line (about 7 to 8 mm), so a table to fill in by hand holds what its page has room for.
+row with no words one line (about 7 to 8 mm): a larger line_height makes each row taller, so fewer fit a page.
 
 LAYOUT LINES (each alone on its line):
 ::: sidebar  ...  ::: main     text for the sidebar (needs 'sidebar: left' or 'right'), then back to the main text

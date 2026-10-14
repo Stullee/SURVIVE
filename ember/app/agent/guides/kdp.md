@@ -1,6 +1,6 @@
 PUBLISHING ON AMAZON KDP (propose_kdp_book)
 Amazon has no API for KDP: you make the book, Ember's code makes its cover and checks it against KDP's rules, and
-your owner publishes it at kdp.amazon.com once they approve it. KDP lets an account create
+your owner publishes it at KDP once they approve it. KDP lets an account create
 at most {KDP_WEEKLY} new titles of each format a week: propose few, and only books you would buy yourself.
 
 WHAT SELLS: books people search for by need, where a small publisher can be found: low-content books (journals,
@@ -13,7 +13,8 @@ THE TEXT:
   margin at least 10 mm (13 mm from 151 pages on), no sidebar and no coloured background (those need bleed, which
   make_document doesn't make). {BOOK_PAGES} pages at most; KDP prints {KDP_LEAST} pages and more. Start with a title
   page and a page saying the book was made with the help of AI; number pages in the footer.
-- Pages to fill in: about 20 empty table rows fit a 6x9 page at size 12.5; see them (pages: '6, 7').
+- Pages to fill in: a 6x9 page at size 12.5 holds about 20 empty rows, 10 with a heading, a 3-row total and 4
+  writing lines; fewer at a larger line_height. See them (pages: '6, 7').
 - An ebook's manuscript: the Word file (.docx) make_document makes next to its PDF. Headings, paragraphs and lists
   read well on a Kindle; boxes, columns and sidebars don't flow.
 - The front: a picture of yours (make_image, layout poster, shape pin), its words 0.25 in from its edges.
@@ -38,10 +39,9 @@ CHECK FIRST: propose_kdp_book with check true makes the cover and runs every che
 at the cover's preview (books/journal-cover-preview.png marks trim, folds and barcode; an ebook's .jpg itself).
 Ember's code refuses what KDP would and says why: fix it and check again. Then propose it with check false.
 
-PRICES: an ebook earns 70% from 2.99 to 12.99 USD (less a small delivery cost), 35% outside that; keep it at least
-20% below its paperback. A paperback earns 60% of its price from 9.99 USD on (50% below), less the printing cost,
-which Ember's code checks the price covers.
+PRICES: an ebook earns 70% from 2.99 to 12.99 USD, 35% outside that; keep it at least 20% below its paperback. A
+paperback earns 60% of its price from 9.99 USD on (50% below), less the printing cost, which Ember's code checks the
+price covers.
 
-AFTER: your owner publishes it and marks the request done with the book's link at Amazon. The KDP section of your
-plan lists your books. Sales come in as royalties your owner records, about two months after the month of a sale:
-don't judge a book by its first weeks.
+AFTER: your owner publishes it and marks the request done with the book's link at Amazon. Sales come in as royalties
+your owner records, about two months after the month of a sale: don't judge a book by its first weeks.

@@ -353,6 +353,20 @@ it), as only you close a line. `plan_step` without a step means the cycle's own,
 chore while a line's listings have fewer than 10 views or its checks don't pass
 (they took 8 of 10 cycles).
 
+0.39.2: the fixes from the evening diagnostics report of 2026-10-14 (the
+analysis of 0.39.1). A book's result names a page to fill in however many pages
+it runs on to, and a table of labels with amounts to fill in counts as one: the
+Haushaltsbuch's v14 made each month's overview three pages, the third holding
+only "Notizen", and was told nothing. `look` says when a picture was made, and
+whether before the version that runs: the first cycle under 0.39.1 judged the
+new renderer by pictures the old one had made and set a line height of 1.9 that
+cost each week half its rows. A refusal for a missing file names a file of that
+name elsewhere (the workshop had kept v14 in `workshop/out/`), and the
+workshop's result says first where it kept a file its task put elsewhere. A
+step's kind tells Ember that pins and posts are a marketing cycle's (a step for
+pins went to a cycle that couldn't pin), and a step said done needs a reason of
+more than one word (one was closed with "placeholder").
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

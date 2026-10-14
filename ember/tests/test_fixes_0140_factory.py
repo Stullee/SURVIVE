@@ -86,7 +86,7 @@ def test_look_and_workspace_read_show_a_print_size_poster(data_dir: Path) -> Non
     ctx.workspace.write_bytes("shop/poster.png", png(*A3))
     ctx.workspace.write_bytes("shop/huge.png", png(7000, 7000))
     looked = tools.HANDLERS["look"](ctx, {"path": "shop/poster.png"}, None)
-    assert looked.ok and looked.text.startswith("shop/poster.png (709 x 1000 pixels)")
+    assert looked.ok and looked.text.startswith("shop/poster.png (709 x 1000 pixels, made ")  # 0.39.2: when
     assert "3510 x 4950 pixels" in tools.HANDLERS["workspace_read"](ctx, {"path": "shop/poster.png"}, None).text
     for name in ("look", "workspace_read"):
         with pytest.raises(tools.ToolError, match=r"shop/huge\.png can't be .*7000 x 7000 = 49\.0 MP"):
