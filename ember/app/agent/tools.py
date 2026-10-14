@@ -441,7 +441,7 @@ SPECS: dict[str, Spec] = {
             "with a check closes when it passes. Free.",
             {
                 "action": _s("", 8, enum=plan.ACTIONS),
-                "step_id": _i("The step (else YOUR STEP; add: the one the new steps come before).", required=False),
+                "step_id": _i("The step (else YOUR STEP; add: the one the new steps go before).", required=False),
                 "steps": _a(
                     "add, split, replace: the new steps, in order.",
                     plan.MAX_NEW_STEPS,
@@ -798,14 +798,14 @@ SPECS: dict[str, Spec] = {
         Spec(
             "make_document",
             # 0.39.1: the layouts are guide 'documents''s (room for pages within the fixed prompt's bound)
-            "Make a finished document from your Markdown file: a PDF, an editable Word copy (.docx) and pictures of "
-            "its pages, next to the output. Read guide 'documents' first.",
+            "Make a finished document from your Markdown file: a PDF, an editable Word copy (.docx) and page "
+            "pictures next to the output. Read guide 'documents' first.",
             {
                 "source": _s("e.g. 'drafts/cv.md'.", 200),
                 "output": _s("e.g. 'shop/cv.pdf'.", 200),
                 "word": _b("Also make the Word copy (default true)."),
-                "pictures": _b("Also make page pictures (default true)."),
-                "pages": _s("Picture these instead, e.g. '6, 7'.", 40, required=False),
+                "pictures": _b(f"Pictures of the first {make.PAGE_PREVIEWS} pages (default true)."),
+                "pages": _s(f"Or these (at most {make.PAGE_PREVIEWS}), e.g. '6, 7'.", 40, required=False),
             },
             per_cycle=4,
         ),
