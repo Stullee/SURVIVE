@@ -1155,18 +1155,13 @@ SPECS: dict[str, Spec] = {
         Spec(
             "propose_printify_edit",
             # 0.39.0 (your request): propose_etsy_edit leaves the listings Printify made alone
-            "Ask your owner to approve a change to one of your live Printify products (etsy_listing shows it): a new "
-            "design, title, description or tags. Give only what changes. Once approved, Ember's code changes it at "
-            "Printify, which publishes it to the same listing (free; its views and favorites stay).",
+            "Ask your owner to approve a change to a live Printify product of yours (etsy_listing shows it). Give "
+            "only what changes. Once approved, Ember's code makes it at Printify, which updates the listing (free).",
             {
-                "listing_id": _i("The Etsy listing Printify made of it.", minimum=1),
-                "image": _s(
-                    "A new design (.png or .jpg) for its print area: Printify draws the listing's photos from it.",
-                    200,
-                    required=False,
-                ),
+                "listing_id": _i("", minimum=1),
+                "image": _s("A new design: Printify draws the listing's photos from it.", 200, required=False),
                 "title": _s("", etsy.TITLE_CHARS, required=False),
-                "description": _s("The new description, in full. Plain text.", DESCRIPTION_CHARS, required=False),
+                "description": _s("In full. Plain text.", DESCRIPTION_CHARS, required=False),
                 "tags": _s(f"All its tags (up to {etsy.MAX_TAGS}), separated by commas.", 400, required=False),
                 "reason": _s("Why, and what you expect.", 300, cut=True),
             },
