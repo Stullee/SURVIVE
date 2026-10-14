@@ -6,7 +6,7 @@ its background first, a heading moves to the next page with the lines it heads, 
 table's header repeats on the next page. The same code measures (a dry flow draws nothing and never breaks pages)
 and draws. Page backgrounds and the sidebar are painted as soon as a page exists, so text always lies on top.
 
-0.38.2 (analysis-0.38.0, 3.1): a row with no words is one line tall, as Word draws it: it was 2.2 mm (its padding), so
+0.39.1 (analysis-0.38.0, 3.1): a row with no words is one line tall, as Word draws it: it was 2.2 mm (its padding), so
 a book's weekly table of 18 rows to fill in was a band of lines no one could write in, the owner's fifth rejection of
 the Haushaltsbuch. A table's header stays with its first row, and a heading or a one-line label (**Bilanz**,
 Notizen:) with the table or writing lines under it; a book says which of its pages to fill in (a table with empty rows,
@@ -59,7 +59,7 @@ BOX_PADDING = 4.0
 LIST_INDENT = 5.0
 WRITING_LINE = 8.0  # mm between writing lines
 FOOTER_SPACE = 8.0
-SPLITS_SHOWN = 6  # 0.38.2: the pages a book's checks name, at most
+SPLITS_SHOWN = 6  # 0.39.1: the pages a book's checks name, at most
 _TOKENS = re.compile(r"\n|[^\S\n]+|\S+")
 
 
@@ -280,7 +280,7 @@ class Renderer:
         t = self.theme
         self.body_lh = t.size * t.line_height * MM_PER_PT
         self.gap = t.size * 0.62 * MM_PER_PT
-        self.splits: list[int] = []  # 0.38.2: the pages a table to fill in ran on from
+        self.splits: list[int] = []  # 0.39.1: the pages a table to fill in ran on from
 
     # --- the document ---
 
@@ -313,7 +313,7 @@ class Renderer:
                 f"page {page} holds only a few lines: shorten the text a little so it fits on {page - 1} page(s), "
                 "or fill the page"
             )
-        if self.document.settings.page.endswith("in"):  # 0.38.2: a book (a KDP size)
+        if self.document.settings.page.endswith("in"):  # 0.39.1: a book (a KDP size)
             if overruns:
                 self.report.warn(
                     f"a page to fill in (a table with empty rows, or writing lines) runs on to a second page from "
@@ -329,7 +329,7 @@ class Renderer:
     # --- blocks ---
 
     def blocks(self, flow: Flow, blocks: list[Block], look: Look, overruns: list[int] | None = None) -> None:
-        """Lay out ``blocks``; 0.38.2: with ``overruns`` (the main text), the pages where a part between pagebreaks
+        """Lay out ``blocks``; 0.39.1: with ``overruns`` (the main text), the pages where a part between pagebreaks
         that holds something to fill in (a table with empty rows, or writing lines: a page to fill in) began and ran on
         to the next page, unless a table of it broke there (``splits`` says so)."""
         start, form, split = flow.page, False, len(self.splits)
@@ -353,7 +353,7 @@ class Renderer:
             overruns.append(start)
 
     def _keep_with(self, flow: Flow, block: Block, after: Block, look: Look) -> None:
-        """0.38.2: a heading, or a paragraph of one line (a label: **Bilanz**, Notizen:), moves to the next page with
+        """0.39.1: a heading, or a paragraph of one line (a label: **Bilanz**, Notizen:), moves to the next page with
         the start of the table or the writing lines under it: a table's header and first row, two lines. Live, with
         rows one line tall a book's "Bilanz" and its table's header were left at the foot of a page."""
         if not isinstance(after, (Table, Lines)):
@@ -605,7 +605,7 @@ class Renderer:
                 for c, cell in enumerate(row)
             ]
             cell_lines.append(lines)
-            # 0.38.2: a row with no words is one line tall, as Word draws it (it was its padding alone, 2.2 mm)
+            # 0.39.1: a row with no words is one line tall, as Word draws it (it was its padding alone, 2.2 mm)
             heights.append(max([1, *(len(cl) for cl in lines)]) * self.body_lh + 2 * pad_y)
         header_height = heights[0] if block.header else 0.0
         if flow.dry:
@@ -615,7 +615,7 @@ class Renderer:
         for r in range(len(rows)):
             is_header = r == 0 and block.header is not None
             height = heights[r]
-            # 0.38.2: the header goes to the next page with the row under it, never alone at a page's foot
+            # 0.39.1: the header goes to the next page with the row under it, never alone at a page's foot
             keep = height + (heights[1] if is_header and len(rows) > 1 else 0.0)
             if not flow.fits(keep):
                 if height > flow.bottom - flow.top - header_height:
@@ -799,12 +799,12 @@ class Renderer:
 
 
 def _blank_rows(table: Table) -> bool:
-    """0.38.2: whether a table has a row to fill in (no words in any of its cells)."""
+    """0.39.1: whether a table has a row to fill in (no words in any of its cells)."""
     return any(all(not "".join(run.text for run in cell).strip() for cell in row) for row in table.rows)
 
 
 def _pages(numbers: list[int]) -> str:
-    """0.38.2: 'page 7' or 'pages 7, 9, 11 and 20 more'."""
+    """0.39.1: 'page 7' or 'pages 7, 9, 11 and 20 more'."""
     pages = sorted(set(numbers))
     shown = ", ".join(str(p) for p in pages[:SPLITS_SHOWN])
     more = f" and {len(pages) - SPLITS_SHOWN} more" if len(pages) > SPLITS_SHOWN else ""

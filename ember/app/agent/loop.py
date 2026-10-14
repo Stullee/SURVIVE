@@ -876,7 +876,7 @@ class CycleRunner:
                 reactive=self.reactive,
                 books=self.money_numbers,  # 0.29.0: the money goal's progress
                 now=to_iso(self.clock.now()),  # 0.35.0: YOUR PLAN's numbers
-                messages=context.messages_line(  # 0.38.2: STATUS names today's messages to the owner
+                messages=context.messages_line(  # 0.39.1: STATUS names today's messages to the owner
                     store.unasked_messages(conn, self.scope, to_iso(self.clock.day_start(self.clock.today()))),
                     self._clock_time,
                     privacy.load(conn).apply,  # without the words the owner removed
@@ -884,7 +884,7 @@ class CycleRunner:
             )
 
     def _clock_time(self, timestamp: str) -> str:
-        """A UTC timestamp as the owner's clock shows it (0.38.2: STATUS's messages)."""
+        """A UTC timestamp as the owner's clock shows it (0.39.1: STATUS's messages)."""
         return from_iso(timestamp).astimezone(self.clock.tz).strftime("%H:%M")
 
     def _call(self, cycle_id: int, purpose: str, request: dict[str, Any], venture_id: int | None = None) -> CallResult:
@@ -1039,7 +1039,7 @@ class CycleRunner:
                     )
         ctx.state.focus_project_id = plan.focus_project_id
         ctx.state.focus_venture_id = plan.focus_venture_id
-        if self.steered is not None and self.steered.step is not None:  # 0.38.2: YOUR STEP, for plan_step
+        if self.steered is not None and self.steered.step is not None:  # 0.39.1: YOUR STEP, for plan_step
             ctx.state.step_id = int(self.steered.step.id)
         self._progress(
             cycle_id,

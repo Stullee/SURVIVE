@@ -326,7 +326,15 @@ listings, Printify products and KDP books wait for your decision at once, and
 while they do, the plan's "Propose the listing" steps and the critic's fixes
 wait instead of being paid for and refused. The limit is unchanged.
 
-0.38.2: the fixes from the diagnostics report of 2026-10-14 (the analysis of
+0.39.0: Ember can fix a live Printify product instead of making a new one. Its
+request asked for it: a flaw the critic found in a poster's listing (a photo, a
+claim the product no longer keeps) could only be fixed by a new product, with
+another listing fee and without the first listing's views and favorites. Now
+`propose_printify_edit` proposes a new design, title, description or tags; once
+you approve, Ember's code changes the product at Printify (its prices stay) and
+Printify publishes the change to the same listing.
+
+0.39.1: the fixes from the diagnostics report of 2026-10-14 (the analysis of
 0.38.0). A table row with no words is one line tall, as Word draws it: it was
 2.2 mm, so the Haushaltsbuch's weekly table of 18 rows to fill in couldn't be
 written in. A table's header stays with its first row, a label like **Bilanz**

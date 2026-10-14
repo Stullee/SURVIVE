@@ -124,6 +124,7 @@ TABLES = (
     "bluesky_posts",
     "printify_catalog",
     "printify_products",
+    "printify_edits",  # 0.39.0
     "printify_orders",
     "site_pages",
     "site_downloads",
@@ -1017,6 +1018,8 @@ def _agent(state: AppState, full: bool = True) -> str:
                 ["id", "approval_id", "status", "product_id", "listing_id", "currency", "prices", "views", "title"],
                 10,
             ),
+            # 0.39.0: the changes of them
+            ("printify_edits", ["id", "approval_id", "product_id", "listing_id", "status", "result", "error"], 10),
             (
                 "printify_orders",
                 ["id", "order_id", "product_id", "quantity", "cost_cents", "shipping_cents", "currency", "status"],
@@ -1070,7 +1073,7 @@ def _agent(state: AppState, full: bool = True) -> str:
         out.append("-- observations (by subject and metric)\n" + _rows(observed, columns))
         # 0.35.2: the numbers the weights and the choice use, so the picks above can be re-scored from the report alone
         out.append(
-            "-- plan tree: its weights' settings (weights.py, plan.py and 0.38.2 quality.py's, as this version runs"
+            "-- plan tree: its weights' settings (weights.py, plan.py and 0.39.1 quality.py's, as this version runs"
             " them)\n" + _json(plan.settings())
         )
         # 0.34.0: the step the plan tree takes now (0.35.0: the next cycle's), its next ones with their weight's parts,

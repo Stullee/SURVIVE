@@ -220,7 +220,7 @@ def test_the_scorecard_holds_the_agent_to_its_last_verdicts(data_dir: Path) -> N
     text = scorecard(agent).text
     assert "YOUR LAST REVIEW (" in text and "Your focus then: Something new." in text
     if rows(agent, "SELECT status FROM projects WHERE id = 1")[0]["status"] in ("idea", "active", "waiting"):
-        # 0.38.2: only the owner closes a line: the review's stop is their decision (plan._review_stops)
+        # 0.39.1: only the owner closes a line: the review's stop is their decision (plan._review_stops)
         assert "- #1 stop: No demand after a day. → your owner decides on it (their Plan tab)" in text
 
 

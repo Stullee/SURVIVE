@@ -333,6 +333,7 @@ EXECUTOR_TYPES = {
     "etsy_listing": "sell",
     "etsy_edit": "sell",
     "printify_product": "sell",
+    "printify_edit": "sell",  # 0.39.0
     "kdp_package": "sell",
     "pinterest_pin": "publish",
     "bluesky_post": "publish",
@@ -357,7 +358,7 @@ def unasked_since(conn: sqlite3.Connection, scope: AgentScope, since: str) -> in
 
 
 def unasked_messages(conn: sqlite3.Connection, scope: AgentScope, since: str) -> list[sqlite3.Row]:
-    """0.38.2: those messages themselves (id, created_at, text), oldest first: STATUS shows the day's. Live, nine
+    """0.39.1: those messages themselves (id, created_at, text), oldest first: STATUS shows the day's. Live, nine
     cycles tried to tell the owner what two messages had told them that night, each refused by the day's limit."""
     where, params = scope.where("m")
     return conn.execute(

@@ -300,7 +300,7 @@ class Snapshot:
     ready: str = ""
     agenda: list[sqlite3.Row] = field(default_factory=list)  # 0.13.0: events no plan has shown yet (agenda.py)
     reactive: bool = False  # 0.13.0: a cycle an event woke
-    messages: str = ""  # 0.38.2: STATUS's line on today's messages to the owner that answer none of theirs
+    messages: str = ""  # 0.39.1: STATUS's line on today's messages to the owner that answer none of theirs
 
 
 def snapshot(
@@ -550,11 +550,11 @@ def status_text(s: Snapshot, dry_run: bool) -> str:
     return "\n".join(lines)
 
 
-MESSAGE_CHARS = 60  # 0.38.2: of each of today's messages, as STATUS quotes it
+MESSAGE_CHARS = 60  # 0.39.1: of each of today's messages, as STATUS quotes it
 
 
 def messages_line(sent: list[sqlite3.Row], at: Callable[[str], str], redact: Callable[[str], str] | None = None) -> str:
-    """0.38.2 (analysis-0.38.0, 3.2): STATUS's line on the day's messages to the owner that answer none of theirs
+    """0.39.1 (analysis-0.38.0, 3.2): STATUS's line on the day's messages to the owner that answer none of theirs
     (``sent``, oldest first; ``at``: a timestamp as the owner's clock shows it; ``redact``: the words the owner removed
     taken out, privacy.Redactor). Live, nothing showed them: nine cycles from 04:20 on tried to tell the owner what two
     messages had told them hours before, and the agent concluded that the limit's day didn't start at midnight."""

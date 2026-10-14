@@ -25,7 +25,7 @@ import sqlite3
 from datetime import date, timedelta
 from typing import Any
 
-from ..integrations import etsy_publisher, printify
+from ..integrations import etsy_publisher, printify, printify_publisher
 from ..products import images
 from . import prompts, reach, ventures
 from .sandbox import Jail, SandboxError
@@ -33,7 +33,7 @@ from .store import AgentScope
 
 MIN_PASS = 7
 RECHECK_DAYS = 14
-STUCK_CHECKS = 2  # 0.38.2: a listing's checks in a row without a pass, after which its fixes weigh as a chore
+STUCK_CHECKS = 2  # 0.39.1: a listing's checks in a row without a pass, after which its fixes weigh as a chore
 LOOK_PIXELS = 1_000  # the cover photo's longer side, as the agent's own look sees it
 FIXES_CHARS = prompts.QUALITY_FIXES_CHARS
 TITLE_CHARS = 50  # of a listing's title, where a verdict names it
@@ -188,21 +188,14 @@ def case(
 
 
 def _printify(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> tuple[Any, str] | None:
-    """0.18.1: the live Printify product of a listing, as approved (its design is the picture), and its prices; None
-    without one. Live, the critic scored a poster line 3/10 on its title alone."""
-    where, params = scope.where("p")
-    for row in conn.execute(
-        f"SELECT a.action, p.listing_id FROM printify_products p JOIN approvals a ON a.id = p.approval_id"
-        f" WHERE {where} AND p.listing_id = ? AND p.status = 'active' ORDER BY p.id DESC",
-        (*params, listing_id),
-    ).fetchall():
-        try:
-            product = printify.product_from_action(row["action"])
-        except (printify.PrintifyError, ValueError, KeyError, TypeError):
-            continue
-        prices = ", ".join(printify.money(price, product.currency) for _, price in product.prices)
-        return product, prices
-    return None
+    """0.18.1: the live Printify product of a listing (its design is the picture), and its prices; None without one.
+    Live, the critic scored a poster line 3/10 on its title alone. 0.39.0: as Printify has it, with the changes
+    Ember's code made of it (it was judged as approved, so a fix never counted)."""
+    found = printify_publisher.current_product(conn, scope, listing_id)
+    if found is None:
+        return None
+    product = found[1]
+    return product, ", ".join(printify.money(price, product.currency) for _, price in product.prices)
 
 
 def parse(text: str) -> dict[str, Any] | None:
@@ -292,7 +285,7 @@ def lowest(conn: sqlite3.Connection, scope: AgentScope, project_id: int) -> int 
 
 
 def stuck(conn: sqlite3.Connection, scope: AgentScope, project_id: int) -> bool:
-    """0.38.2 (analysis-0.38.0, 3.8): whether a live listing of the line had its STUCK_CHECKS newest checks say improve,
+    """0.39.1 (analysis-0.38.0, 3.8): whether a live listing of the line had its STUCK_CHECKS newest checks say improve,
     no pass between. Live, ten checks scored 5 or 6 of 10 (a pass is MIN_PASS), each change brought a check with new
     fixes, and "The critic passes it" weighed most of any step: it took 8 of the 10 cycles #257 to #266 ($2.84) while
     a listing had 0 to 4 views."""
@@ -311,15 +304,16 @@ def stuck(conn: sqlite3.Connection, scope: AgentScope, project_id: int) -> bool:
 
 def changed_since(conn: sqlite3.Connection, scope: AgentScope, check: sqlite3.Row) -> bool:
     """0.24.0: whether a change of the checked listing was carried out after the check (its fixes may be done: the
-    listing is checked again next, ``due``)."""
+    listing is checked again next, ``due``). 0.39.0: a change of a Printify product's listing, at Printify, too."""
     if check["listing_id"] is None:
         return False
     where, params = scope.where()
     return (
         conn.execute(
             f"SELECT 1 FROM etsy_edits WHERE {where} AND listing_id = ? AND status IN ('done', 'partial')"
-            " AND finished_at > ? LIMIT 1",
-            (*params, check["listing_id"], check["created_at"]),
+            f" AND finished_at > ? UNION ALL SELECT 1 FROM printify_edits WHERE {where} AND listing_id = ?"
+            " AND status IN ('done', 'partial') AND finished_at > ? LIMIT 1",
+            (*params, check["listing_id"], check["created_at"], *params, check["listing_id"], check["created_at"]),
         ).fetchone()
         is not None
     )

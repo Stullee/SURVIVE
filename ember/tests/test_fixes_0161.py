@@ -165,7 +165,7 @@ def test_a_first_test_that_never_ran_has_its_grace_starts_once_more_and_is_annou
     with agent.db.connection() as conn:
         owed = obligations.text(conn, agent.scope(), agent.clock.today())
     asked = f"Work toward it first, or tell your owner once what it needs (name #{test['id']} in your message)."
-    assert f"- {said} {asked}" in owed  # 0.38.2: and which number names it, so the code sees it told
+    assert f"- {said} {asked}" in owed  # 0.39.1: and which number names it, so the code sees it told
     # Past its date it is no longer closed missed at the first check: a week's grace, as one in words has.
     on(agent, due + timedelta(days=1))
     assert not any(f"#{test['id']}" in line for line in grade(agent))

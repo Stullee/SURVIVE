@@ -20,6 +20,13 @@ and from a cost probe: an unpublished product Ember's code creates only to read 
 published). So the agent sees a product's costs and least prices before it proposes one. The sync also reads a product
 whose publish was unclear, or that reached no Etsy listing: it takes the listing Printify made, or fails the product
 with the reason after PUBLISH_HOURS.
+
+0.39.0: an approved change of a live product (executor 'printify_edit': a new design, title, description or tags) is
+carried out once too, in the same run, without a daily limit (Etsy charges nothing for a change of a listing): its row
+in printify_edits is committed as 'running' before anything is sent. The new design must be exactly the file the owner
+approved. Ember's code uploads it, changes the product at Printify (only what changes) and has Printify publish what
+changed to its Etsy listing. The product as Printify has it (``current_product``) is the approved one with each change
+made since.
 """
 
 from __future__ import annotations
@@ -51,6 +58,7 @@ from .printify import (
     MIN_MARGIN,
     Account,
     Blueprint,
+    Edit,
     Gone,
     Made,
     NotSent,
@@ -61,6 +69,7 @@ from .printify import (
     Upload,
     Variant,
     convert,
+    edit_from_action,
     keeps,
     kept,
     least_price,
@@ -81,6 +90,8 @@ CATALOG_DAYS = {"blueprints": 7, "providers": 7, "variants": 1, "costs": 7}
 LIVE = ("publishing", "active")
 INTERRUPTED = "the app stopped while creating the product"
 DELETE_INTERRUPTED = "the app stopped while deleting it"  # 0.15.0: the owner's Undo of a product
+EDIT_INTERRUPTED = "the app stopped while changing the product"  # 0.39.0
+CHANGED = "('done', 'partial')"  # 0.39.0: a change Printify took (SQL): the product it has is the changed one
 GONE = "Deleted at Printify, not by Ember's code"
 # 0.15.0: a product published at Printify whose Etsy listing isn't there PUBLISH_HOURS later failed with STALE (the sync
 # still takes the listing if it comes); the cost probe's product, never published, made at most once in PROBE_DAYS
@@ -97,6 +108,11 @@ _PROBING = threading.Lock()  # a probe, and the sync's cleaning up after one, on
 SHOWN = 10  # blueprints a catalog search shows
 CANCELED = "('canceled', 'cancelled')"  # an order's status that doesn't count (SQL)
 ORDERS_KEPT = 200  # 0.15.0: the newest orders whose cost Ember's code records (etsy_auto_record_revenue)
+
+
+def _said(exc: Exception) -> str:
+    """What went wrong, in words for the owner: Printify's, or the kind of error."""
+    return str(exc) if isinstance(exc, PrintifyError) else type(exc).__name__
 
 
 def meta_key(mode: str, name: str) -> str:
@@ -432,6 +448,55 @@ def live_listing(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -
     ).fetchone()
 
 
+def current_product(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> tuple[sqlite3.Row, Product] | None:
+    """0.39.0: the record of the product of Ember's live in the shop as ``listing_id`` (``live_listing``), and the
+    product as Printify has it: as approved, with each change Ember's code made of it since, the oldest first. None:
+    no live product has the listing, or its request isn't readable. The critic judged a product as approved, whatever
+    changed since."""
+    row = live_listing(conn, scope, listing_id)
+    if row is None:
+        return None
+    approval = conn.execute("SELECT action FROM approvals WHERE id = ?", (row["approval_id"],)).fetchone()
+    where, params = scope.where("e")
+    try:
+        product = product_from_action(approval["action"] if approval is not None else "null")
+        for change in conn.execute(
+            f"SELECT a.action FROM printify_edits e JOIN approvals a ON a.id = e.approval_id WHERE {where}"
+            f" AND e.product_id = ? AND e.status IN {CHANGED} ORDER BY e.id",
+            (*params, row["product_id"]),
+        ):
+            product = edit_from_action(change["action"]).applied(product)
+    except (PrintifyError, ValueError):
+        return None
+    return row, product
+
+
+def open_edit(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> int | None:
+    """0.39.0: a change of the product whose Etsy listing is ``listing_id`` that waits for the owner or for Ember's
+    code (its request number), or None."""
+    where, params = scope.where()
+    row = conn.execute(
+        f"SELECT id FROM approvals WHERE {where} AND executor = 'printify_edit' AND status IN ('pending', 'approved',"
+        " 'approved_with_changes') AND json_extract(action, '$.listing_id') = ? ORDER BY id LIMIT 1",
+        (*params, listing_id),
+    ).fetchone()
+    return int(row["id"]) if row else None
+
+
+def product_text(product: Product) -> str:
+    """0.39.0: a live product's listing as Printify has it, for the agent (etsy_listing): what a change starts from."""
+    return "\n".join(
+        [
+            f"Title: {product.title}",
+            f"Prices: {', '.join(money(price, product.currency) for _, price in product.prices)}",
+            f"Tags: {', '.join(product.tags)}",
+            f"Design: {product.image.path} ({product.width} x {product.height} pixels, about {product.dpi()} dpi"
+            " printed); the listing's photos are Printify's mockups of it",
+            f"Description (Ember's code adds the AI line):\n{product.description}",
+        ]
+    )
+
+
 def product_json(r: sqlite3.Row) -> dict[str, Any]:
     return {
         "approval_id": r["approval_id"],
@@ -660,9 +725,20 @@ def created_today(conn: sqlite3.Connection, clock: Clock, scope: AgentScope) -> 
 def execution(
     conn: sqlite3.Connection, row: sqlite3.Row, scope: AgentScope, clock: Clock, daily_limit: int
 ) -> dict[str, Any] | None:
-    """What happened to an approved product, or to the owner's Undo of one, for the dashboard (None before
-    approval)."""
-    if row["executor"] == "printify_delete":
+    """What happened to an approved product, or to the owner's Undo of one (0.39.0: or a change of one), for the
+    dashboard (None before approval)."""
+    if row["executor"] == "printify_edit":
+        change = conn.execute("SELECT * FROM printify_edits WHERE approval_id = ?", (row["id"],)).fetchone()
+        if change is not None:
+            return {
+                "status": change["status"],
+                "started_at": change["started_at"],
+                "finished_at": change["finished_at"],
+                "result": change["result"],
+                "error": change["error"],
+                "url": etsy.listing_url(change["listing_id"]),
+            }
+    elif row["executor"] == "printify_delete":
         entry = conn.execute(
             "SELECT * FROM action_journal WHERE approval_id = ? ORDER BY id DESC LIMIT 1", (row["id"],)
         ).fetchone()
@@ -778,8 +854,9 @@ class Publisher:
         try:
             scope = self.scope()
             creating = [] if undos else self._approved(scope, "printify_product")
+            editing = [] if undos else self._approved(scope, "printify_edit")  # 0.39.0: no daily limit
             deleting = self._approved(scope, "printify_delete")
-            if not creating and not deleting:
+            if not creating and not editing and not deleting:
                 return []
             shop = self.shop_id()
             if shop is None:
@@ -792,6 +869,11 @@ class Publisher:
                     return done  # 0.37.3: the kill switch came on: the rest waits
                 if outcome == "waiting_limit":
                     break  # the rest waits for tomorrow too, in order
+            for approval_id in editing:
+                outcome = self._edit(account, scope, shop, approval_id)
+                done.append((approval_id, outcome))
+                if outcome == connectors.HALTED:
+                    return done
             for approval_id in deleting:
                 outcome = self._delete(account, scope, shop, approval_id)
                 done.append((approval_id, outcome))
@@ -810,18 +892,19 @@ class Publisher:
                     f"SELECT id FROM approvals WHERE {where} AND executor = ? AND status IN {APPROVED}"
                     " AND NOT EXISTS (SELECT 1 FROM action_journal j WHERE j.approval_id = approvals.id)"
                     " AND NOT EXISTS (SELECT 1 FROM printify_products p WHERE p.approval_id = approvals.id)"
+                    " AND NOT EXISTS (SELECT 1 FROM printify_edits e WHERE e.approval_id = approvals.id)"
                     " ORDER BY id",
                     (*params, executor),
                 )
             ]
 
-    def _image(self, product: Product) -> bytes:
+    def _image(self, image: Upload, what: str = "the product") -> bytes:
         try:
-            data = self.workspace().read_bytes(product.image.path)
+            data = self.workspace().read_bytes(image.path)
         except SandboxError as exc:
-            raise PrintifyError(f"{product.image.path} can't be read: {exc}") from None
-        if hashlib.sha256(data).hexdigest() != product.image.sha256:
-            raise PrintifyError(f"{product.image.path} changed after it was approved: propose the product again")
+            raise PrintifyError(f"{image.path} can't be read: {exc}") from None
+        if hashlib.sha256(data).hexdigest() != image.sha256:
+            raise PrintifyError(f"{image.path} changed after it was approved: propose {what} again")
         return data
 
     def _one(self, account: Account, scope: AgentScope, shop: int, approval_id: int) -> str:
@@ -838,7 +921,7 @@ class Publisher:
                 return "waiting_limit"
             try:
                 product = product_from_action(row["action"])
-                data = self._image(product)
+                data = self._image(product.image)
                 if product.currency != currency:  # 0.15.0: its cents would be sent as prices in another currency
                     raise PrintifyError(
                         f"its prices are in {product.currency}, but printify_currency is {currency} now: propose it "
@@ -1067,9 +1150,146 @@ class Publisher:
         events.record(self.db, "info", "printify", f"Request #{approval_id}: {note}"[:300])
         return "done"
 
+    def _edit(self, account: Account, scope: AgentScope, shop: int, approval_id: int) -> str:
+        """0.39.0: an approved change of a live product: the new design uploaded (exactly the file the owner approved),
+        the product changed at Printify (only what changes) and what changed published to its Etsy listing. Its row is
+        committed as 'running' before anything is sent: never made twice."""
+        stamp = to_iso(self.clock.now())
+        with self.db.transaction() as conn:
+            row = conn.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
+            started = conn.execute("SELECT 1 FROM printify_edits WHERE approval_id = ?", (approval_id,)).fetchone()
+            if row is None or row["status"] not in ("approved", "approved_with_changes") or started is not None:
+                return "skipped"
+            if connectors.halted(conn):
+                return connectors.HALTED
+            edit: Edit | None = None
+            try:
+                edit = edit_from_action(row["action"])
+                found = current_product(conn, scope, edit.listing_id)
+                if found is None or str(found[0]["product_id"]) != edit.product_id:
+                    raise PrintifyError(
+                        f"product {edit.product_id} isn't live in the shop as Etsy listing #{edit.listing_id} anymore"
+                    )
+                data = self._image(edit.image, "the change") if edit.image is not None else None
+                refused = ""
+            except PrintifyError as exc:
+                if edit is not None:
+                    self._edit_start(conn, scope, approval_id, edit, stamp)
+                connectors.begin(conn, approval_id, stamp, subject=edit.product_id if edit is not None else None)
+                refused = self._edit_failed(conn, approval_id, str(exc))
+            if not refused:
+                assert edit is not None and found is not None
+                current, parts = found[1], edit.parts()
+                self._edit_start(conn, scope, approval_id, edit, stamp)
+                before = {"title": current.title, "tags": list(current.tags), "design": current.image.path}
+                connectors.begin(conn, approval_id, stamp, subject=edit.product_id, before=before)
+        if refused:
+            events.record(self.db, "warning", "printify", f"Request #{approval_id}: {refused}"[:300])
+            return "failed"
+        # Committed: from here on this change is never made a second time, whatever happens.
+        changed = False
+        try:
+            image_id = None
+            if edit.image is not None and data is not None:
+                image_id = account.upload(edit.image.path.rsplit("/", 1)[-1], data)
+            account.update(shop, edit.product_id, edit.applied(current), parts, image_id)
+            changed = True
+            account.publish(shop, edit.product_id, parts)
+        except NotSent as exc:
+            if not changed:
+                note = f"Not changed: Printify refused it ({exc})"
+                return self._edited(scope, approval_id, edit, "failed", note, exc)
+            note = (
+                f"Printify took the change of product {edit.product_id}, but didn't publish it to the Etsy listing"
+                f" ({exc}): publish it at Printify, or the listing keeps what it shows"
+            )
+            return self._edited(scope, approval_id, edit, "partial", note, exc)
+        except Exception as exc:  # noqa: BLE001 - Unclear, or anything else: the product may have changed
+            if not isinstance(exc, PrintifyError):
+                log.exception("Changing the product of request #%d failed", approval_id)
+            note = (
+                f"It is unclear what Printify changed of product {edit.product_id} ({_said(exc)}). Ember won't try"
+                " again; check the product at Printify and its Etsy listing."
+            )
+            return self._edited(scope, approval_id, edit, "unclear", note, exc)
+        redrawn = "its design (Printify draws the listing's photos again)"
+        what = ", ".join(redrawn if part == "design" else part for part in parts)
+        url = etsy.listing_url(edit.listing_id)
+        note = f"Changed {what} of product {edit.product_id}; Printify publishes it to {url}"
+        if account.simulated:
+            note = f"Changed {', '.join(parts)} of product {edit.product_id} in the dry run's fake Printify account."
+        return self._edited(scope, approval_id, edit, "done", note, simulated=account.simulated)
+
+    @staticmethod
+    def _edit_start(conn: sqlite3.Connection, scope: AgentScope, approval_id: int, edit: Edit, stamp: str) -> None:
+        conn.execute(
+            "INSERT INTO printify_edits (mode, session, approval_id, product_id, listing_id, status, started_at)"
+            " VALUES (?, ?, ?, ?, ?, 'running', ?)",
+            (scope.mode, scope.session, approval_id, edit.product_id[:40], edit.listing_id, stamp),
+        )
+
+    def _edit_failed(self, conn: sqlite3.Connection, approval_id: int, reason: str) -> str:
+        """0.39.0: a change that couldn't begin (unreadable, the product gone from the shop, its design changed): what
+        the request's note says."""
+        note = f"Not changed: {reason}"
+        now = to_iso(self.clock.now())
+        conn.execute(
+            "UPDATE printify_edits SET status = 'failed', finished_at = ?, result = ?, error = ? WHERE approval_id = ?",
+            (now, note[:1000], reason[:500], approval_id),
+        )
+        connectors.finish(conn, approval_id, "failed", now, note=note)
+        self._close(conn, approval_id, "failed", note, None)
+        return note
+
+    def _edited(
+        self,
+        scope: AgentScope,
+        approval_id: int,
+        edit: Edit,
+        status: str,
+        note: str,
+        error: Exception | None = None,
+        simulated: bool = False,
+    ) -> str:
+        """0.39.0: how a change ended. One Printify took (done, partial) is the product's from now on: its new title is
+        the record's too."""
+        took = status in ("done", "partial")
+        with self.db.transaction() as conn:
+            now = to_iso(self.clock.now())
+            conn.execute(
+                "UPDATE printify_edits SET status = ?, finished_at = ?, result = ?, error = ? WHERE approval_id = ?",
+                (status, now, note[:1000], _said(error)[:500] if error else None, approval_id),
+            )
+            if took and edit.title is not None:
+                where, params = scope.where()
+                conn.execute(
+                    f"UPDATE printify_products SET title = ? WHERE {where} AND product_id = ?",
+                    (edit.title[:140], *params, edit.product_id),
+                )
+            after = {"product_id": edit.product_id, "listing_id": edit.listing_id, "changed": edit.parts()}
+            journaled = "simulated" if simulated and status == "done" else status
+            connectors.finish(conn, approval_id, journaled, now, after if took else None, note)
+            link = etsy.listing_url(edit.listing_id) if took else None
+            self._close(conn, approval_id, "done" if status == "done" else "failed", note, link)
+        events.record(
+            self.db, "info" if status == "done" else "warning", "printify", f"Request #{approval_id}: {note}"[:300]
+        )
+        return status
+
     def recover(self) -> int:
         """Rows left 'running' by a crash: unclear, never retried. 0.15.0: the owner's Undo of a product too (its
-        journal entry was left 'running', the Undo "under way" for good): unclear, and the owner may press it again."""
+        journal entry was left 'running', the Undo "under way" for good): unclear, and the owner may press it again.
+        0.39.0: and a change of a product."""
+        with self.db.transaction() as conn:
+            changing = conn.execute(
+                "SELECT e.mode, e.session, e.approval_id, a.action FROM printify_edits e JOIN approvals a"
+                " ON a.id = e.approval_id WHERE e.status = 'running'"
+            ).fetchall()
+        for row in changing:
+            note = f"It is unclear what Printify changed ({EDIT_INTERRUPTED}). Ember won't try again: check the product"
+            scope = AgentScope(str(row["mode"]), int(row["session"]), 0)  # its records' (where() reads these two)
+            edit = edit_from_action(row["action"])  # readable: one that wasn't failed as it began
+            self._edited(scope, row["approval_id"], edit, "unclear", note, PrintifyError(EDIT_INTERRUPTED))
         with self.db.transaction() as conn:
             left = conn.execute(
                 "SELECT approval_id, product_id FROM printify_products WHERE status = 'running'"
@@ -1089,7 +1309,7 @@ class Publisher:
         for row in left:
             note = f"It is unclear what Printify made ({INTERRUPTED}). Ember won't try again; check your products."
             self._after(row["approval_id"], "unclear", row["product_id"], None, None, note, INTERRUPTED)
-        return len(left) + len(deleting)
+        return len(left) + len(deleting) + len(changing)
 
     # --- the sync ---
 

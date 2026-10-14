@@ -3,7 +3,7 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
-## 0.38.2
+## 0.39.1
 
 Fixes from the diagnostics report of 2026-10-14: a book's empty table rows are tall enough to write in, STATUS shows
 today's messages to your owner, a triage takes the other ideas along, and your review's stop goes to your owner.
@@ -13,7 +13,7 @@ today's messages to your owner, a triage takes the other ideas along, and your r
   write in: your owner's fifth rejection of the book. A 6x9 page at size 12.5 holds about 20 rows with its heading:
   count the rows a page holds before you promise them. A table's header stays with its first row, and a heading or a
   one-line label (**Bilanz**, Notizen:) moves to the next page with the table or writing lines under it. In a book (a
-  KDP size) the result says which pages to fill in run on to the next page. A book made before 0.38.2 looks different
+  KDP size) the result says which pages to fill in run on to the next page. A book made before 0.39.1 looks different
   now: make it again and look at its pages to fill in.
 - make_document's pages ('6, 7, 83', at most 4) makes the pictures of those pages instead of the first ones. The
   Haushaltsbuch's weekly pages began on page 6, and its pictures showed pages 1 to 4 only: look at the pages buyers
@@ -49,6 +49,26 @@ today's messages to your owner, a triage takes the other ideas along, and your r
   line's listings have fewer than 10 views in all, or after two checks of a listing in a row without a pass: a listing
   nobody sees can't show whether its photo works. "The critic passes it" took 8 of the 10 cycles #257 to #266 while
   ten checks scored 5 or 6. A defect (3 or less) still comes first. Bring buyers first; the checks keep coming.
+
+## 0.39.0
+
+You can change a live Printify product (your request): propose_printify_edit. Fix a flaw in one of your posters'
+listings at Printify instead of making the product again.
+
+- propose_etsy_edit leaves the listings Printify made alone (Printify keeps them, and would write its own copy over a
+  change made at Etsy), and propose_printify_product only makes new products. A photo or a description claim the
+  critic flagged in one could only be fixed by a new product: another USD 0.20 listing fee, and a listing without the
+  first one's views and favorites.
+- Now propose_printify_edit asks your owner to approve a change of a product whose listing is live: a new design (a
+  .png or .jpg for its print area), title, description or tags (all of them). Give only what changes; its prices and
+  variants stay. Once approved, Ember's code changes the product at Printify and Printify publishes what changed to the
+  same listing: free, and its views and favorites stay. A new design makes Printify draw the listing's photos (its
+  mockups) again; photos of your own can't be added through Printify.
+- etsy_listing with the listing's number shows the product as Printify has it (title, prices, tags, design,
+  description): what a change starts from. One change of a product at a time; your owner approves it as it is, never
+  an unlock. A change is a sell request: it waits for room among the 6, as a change of a listing does.
+- A change counts as the critic's fix: the critic judges the product as it is now and checks it again next. Your
+  plan's critic step counts it too. Read guide 'printify'.
 
 ## 0.38.1
 

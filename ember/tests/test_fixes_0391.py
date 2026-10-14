@@ -1,4 +1,4 @@
-"""0.38.2: the fixes of the diagnostics' report of 2026-10-14 (analysis-0.38.0).
+"""0.39.1: the fixes of the diagnostics' report of 2026-10-14 (analysis-0.38.0).
 
 1. A table row with no words was 2.2 mm tall, its padding alone: the KDP Haushaltsbuch's weekly table of 18 rows to
    fill in was a band of lines no one could write in, the owner's fifth rejection of the book, and the page pictures

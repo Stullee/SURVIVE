@@ -492,7 +492,7 @@ def warn(conn: sqlite3.Connection, scope: AgentScope, today: date, now: str) -> 
 
 def owed(conn: sqlite3.Connection, scope: AgentScope, today: date) -> list[str]:
     """0.16.3 (analysis bug 1): what the agent owes for each backed venture whose first test is due within WARN_DAYS
-    unmet, for its OBLIGATIONS: what is at stake, then what to do. 0.38.2 (analysis-0.38.0, 3.2): once a message of the
+    unmet, for its OBLIGATIONS: what is at stake, then what to do. 0.39.1 (analysis-0.38.0, 3.2): once a message of the
     agent's told the owner (``told``), it says so: live, it kept asking for the heads-up two messages had given, and
     nine cycles from 04:20 on tried to send it again, each refused by the day's limit."""
     found = []
@@ -510,7 +510,7 @@ def owed(conn: sqlite3.Connection, scope: AgentScope, today: date) -> list[str]:
 
 
 def _told(conn: sqlite3.Connection, scope: AgentScope, test: Mapping[str, Any]) -> sqlite3.Row | None:
-    """0.38.2: the agent's newest message naming first test #N (its milestone's number) since Ember's code warned of it
+    """0.39.1: the agent's newest message naming first test #N (its milestone's number) since Ember's code warned of it
     (WARNED_KEY), or since WARN_DAYS before its day if it hasn't; None while none did."""
     warned = conn.execute(
         "SELECT value FROM meta WHERE key = ?", (WARNED_KEY.format(mode=scope.mode, milestone=test["id"]),)

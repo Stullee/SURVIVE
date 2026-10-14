@@ -67,7 +67,7 @@ AUDIT: dict[str, list[tuple[str, str, str]]] = {
         ("- A brainstorm", GUIDANCE, "where to brainstorm (a step of its own says when)"),
         ("- STATUS says how many research calls", POINTER, "Ember's code prices them and refuses the rest"),
         ("- One venture a cycle", GUIDANCE, "what research is for, and saving it"),
-        ("- A triage is quick", GUIDANCE, "0.38.2: the ideas YOUR STEP names in one cycle; a later one waits its day"),
+        ("- A triage is quick", GUIDANCE, "0.39.1: the ideas YOUR STEP names in one cycle; a later one waits its day"),
         ("- Decide every venture that isn't backed", POINTER, "Ember's code refuses research past the budget"),
         ("- Your owner's ideas and wishes come first", GUIDANCE, "whose ideas first"),
     ],

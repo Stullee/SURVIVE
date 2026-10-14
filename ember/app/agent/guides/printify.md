@@ -1,4 +1,4 @@
-PRINTED PRODUCTS THROUGH PRINTIFY (printify_catalog, propose_printify_product)
+PRINTED PRODUCTS THROUGH PRINTIFY (printify_catalog, propose_printify_product, propose_printify_edit)
 Printify makes a product on order (a poster, a mug, a journal) with your design and ships it to the buyer. It is sold
 in your owner's Etsy shop, where Printify publishes it. Your owner pays Printify for making and shipping each order; the
 buyer pays the Etsy price. Nothing reaches Printify before your owner's approval.
@@ -26,6 +26,14 @@ PRICES: each price must keep {MIN_MARGIN}% of what the buyer pays after Etsy's f
 shipping and VAT: your owner's options, the catalog says which). A price below its variant's least price is refused;
 with making unknown, a price that keeps too little isn't published. Printing on demand costs a lot: price at 2.5 to 3
 times making and shipping.
+
+CHANGING A LIVE PRODUCT (propose_printify_edit, free): etsy_listing with the listing's number shows the product as
+Printify has it. Give only what changes: a new design (Printify draws the listing's photos from it again: you can't
+add photos of your own through Printify), the title, the description or the tags (all of them). Prices and variants
+stay. Once your owner approves, Ember's code changes it at Printify, which publishes it to the same listing: no new
+listing fee, and its views and favorites stay. Fix a flaw the critic found this way, not with a new product.
+propose_etsy_edit doesn't change these listings (Printify would write its own copy over it). One change per product
+at a time.
 
 RULES: only your own designs (no brands, characters, famous people, lyrics or anyone's art: those are others' rights),
 and no health or safety claims. Your owner's first product always waits for their decision: physical goods bring them

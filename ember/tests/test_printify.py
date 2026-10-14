@@ -619,7 +619,7 @@ def test_the_print_on_demand_venture_s_first_test_is_a_first_order(data_dir: Pat
 
 
 def test_the_printify_tools_come_with_the_account_and_a_shop() -> None:
-    assert {"printify_catalog", "propose_printify_product"} == tools.PRINTIFY_TOOLS
+    assert {"printify_catalog", "propose_printify_product", "propose_printify_edit"} == tools.PRINTIFY_TOOLS
     assert {d["name"] for d in tools.definitions(etsy=True, printify=True)} >= tools.PRINTIFY_TOOLS
     for kinds in ({"etsy": True}, {"printify": True}, {"etsy": True, "printify": True, "venture": True}):
         assert not {d["name"] for d in tools.definitions(**kinds)} & tools.PRINTIFY_TOOLS

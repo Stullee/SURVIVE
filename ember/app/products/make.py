@@ -1,7 +1,7 @@
 """Ember's products: finished files made from what the agent writes in its workspace.
 
 * ``document``: a Markdown file (with settings and ``:::`` layout lines, see markup.py) becomes a PDF, an editable
-  Word file next to it and pictures of its first pages (0.38.2: or of the pages named): ``shop/cv.pdf``,
+  Word file next to it and pictures of its first pages (0.39.1: or of the pages named): ``shop/cv.pdf``,
   ``shop/cv.docx``, ``shop/cv-page1.png``.
 * ``spreadsheet``: a JSON spec becomes an Excel file and a picture of each table: ``shop/budget.xlsx``,
   ``shop/budget-preview.png`` (0.15.0: and ``shop/budget-sheet2.png`` for the second sheet, and so on).
@@ -36,7 +36,7 @@ from . import checks, images, markup, pdf, sheets, statement, tables, word
 
 log = logging.getLogger(__name__)
 
-PAGE_PREVIEWS = 4  # pictures of the first pages of a document (0.38.2: or of the pages named)
+PAGE_PREVIEWS = 4  # pictures of the first pages of a document (0.39.1: or of the pages named)
 PREVIEW_DPI = 100  # an A4 page is 827 x 1169 pixels
 MAX_LISTING_PAGES = 3
 _COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
@@ -93,7 +93,7 @@ def document(
     jail: Jail, source: str, output: str, word_copy: bool = True, previews: bool = True, pages: str = ""
 ) -> Made:
     """Make ``output`` (a PDF) from the Markdown file ``source``, with a Word copy and page pictures next to it: of
-    its first pages, or (0.38.2) of the ``pages`` named ('6, 7, 83')."""
+    its first pages, or (0.39.1) of the ``pages`` named ('6, 7, 83')."""
     base = _base(output, ".pdf", "output")
     if not source.lower().endswith((".md", ".txt")):
         raise ProductError("source must be the .md (or .txt) file you wrote the document in")
@@ -117,7 +117,7 @@ def document(
             path = f"{base}-page{number}.png"
             _write(jail, made, path, images.png(page))
             shown.append(path)
-    # Pictures of pages this version doesn't show would show an old document (0.38.2: of any page, as the pictures
+    # Pictures of pages this version doesn't show would show an old document (0.39.1: of any page, as the pictures
     # can be of any page now; before, they were of the first pages only).
     for number in range(1, pdf.BOOK_PAGES + 1):
         path = f"{base}-page{number}.png"
@@ -164,7 +164,7 @@ def _sentence(text: str) -> str:
 
 
 def _preview_pages(text: str) -> list[int]:
-    """0.38.2: the pages a document's pictures show, as named ('6, 7, 83'), at most PAGE_PREVIEWS; [] for the first
+    """0.39.1: the pages a document's pictures show, as named ('6, 7, 83'), at most PAGE_PREVIEWS; [] for the first
     ones. Live, a book's weekly pages began on page 6, and the pictures showed pages 1 to 4 only."""
     words = [w for w in re.split(r"[\s,;]+", text or "") if w]
     if not words:
