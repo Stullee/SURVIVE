@@ -333,6 +333,7 @@ EXECUTOR_TYPES = {
     "etsy_listing": "sell",
     "etsy_edit": "sell",
     "printify_product": "sell",
+    "printify_edit": "sell",  # 0.39.0
     "kdp_package": "sell",
     "pinterest_pin": "publish",
     "bluesky_post": "publish",

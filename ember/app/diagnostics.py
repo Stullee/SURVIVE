@@ -124,6 +124,7 @@ TABLES = (
     "bluesky_posts",
     "printify_catalog",
     "printify_products",
+    "printify_edits",  # 0.39.0
     "printify_orders",
     "site_pages",
     "site_downloads",
@@ -1017,6 +1018,8 @@ def _agent(state: AppState, full: bool = True) -> str:
                 ["id", "approval_id", "status", "product_id", "listing_id", "currency", "prices", "views", "title"],
                 10,
             ),
+            # 0.39.0: the changes of them
+            ("printify_edits", ["id", "approval_id", "product_id", "listing_id", "status", "result", "error"], 10),
             (
                 "printify_orders",
                 ["id", "order_id", "product_id", "quantity", "cost_cents", "shipping_cents", "currency", "status"],

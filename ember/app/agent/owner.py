@@ -52,6 +52,7 @@ AS_IS_EXECUTORS = (
     "bluesky_delete",
     "printify_product",
     "printify_delete",
+    "printify_edit",  # 0.39.0: the change as it was proposed
     "site_post",  # 0.14.0: the page as it was rendered and previewed
     "site_links",
     "site_restore",

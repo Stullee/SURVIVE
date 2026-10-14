@@ -154,6 +154,7 @@ CHECKS: dict[str, tuple[Callable[..., str], ...]] = {
     "pinterest.create_pin": (_pin_shape,),  # the pin (pinterest.Pin)
     "bluesky.create_post": (_post_tags,),  # 0.19.0: the post (bluesky.Post)
     "printify.create_product": (_print_sharpness, _print_shape),  # the product (printify.Product)
+    "printify.edit_product": (_print_sharpness, _print_shape),  # 0.39.0: the product with its new design
 }
 
 

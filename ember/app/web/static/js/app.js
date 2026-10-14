@@ -2583,7 +2583,7 @@
     return a.executor === "email" || a.executor === "reddit_link" || a.executor === "kdp_package" || a.executor === "etsy_listing" || a.executor === "etsy_edit" ||
       a.executor === "pinterest_pin" || a.executor === "pinterest_delete" || a.executor === "pinterest_test_pin" ||
       a.executor === "bluesky_post" || a.executor === "bluesky_delete" ||
-      a.executor === "printify_product" || a.executor === "printify_delete" ||
+      a.executor === "printify_product" || a.executor === "printify_delete" || a.executor === "printify_edit" ||
       a.executor === "site_post" || a.executor === "site_links" || a.executor === "site_restore" ||
       a.executor === "live_will" ? a.executor : null;
   }
@@ -2599,7 +2599,8 @@
   function isBluesky(a) { var e = executorOf(a); return e === "bluesky_post" || e === "bluesky_delete"; }
 
   // 0.13.0 (Phase E4): a Printify product, or the owner's Undo of one: Ember's code carries both out after approval.
-  function isPrintify(a) { var e = executorOf(a); return e === "printify_product" || e === "printify_delete"; }
+  // 0.39.0: and a change of a live one.
+  function isPrintify(a) { var e = executorOf(a); return e === "printify_product" || e === "printify_delete" || e === "printify_edit"; }
 
   // 0.14.0: a page for the owner's website (a blog post, the link page), or the owner's Undo of an upload: Ember's code
   // uploads it after approval.
@@ -2859,6 +2860,7 @@
       a.status === "pending" && executor === "pinterest_test_pin" ? h("p", { class: "send-note", text: "After you approve, " + name + " makes this test pin itself, exactly as shown, on a new board in Pinterest's API sandbox: only you see them there, and your profile doesn't change. This card then shows the pin." }) : null,
       a.status === "pending" && executor === "bluesky_post" ? h("p", { class: "send-note", text: "After you approve, " + name + " posts this on its Bluesky account itself, exactly as shown (with the line saying an AI wrote it and you approved it). Bluesky charges nothing for it; your Undo deletes it." }) : null,
       a.status === "pending" && executor === "printify_product" ? h("p", { class: "send-note", text: "After you approve, " + name + " creates this product at Printify and publishes it to your Etsy shop, exactly as shown, if every price keeps 15% after Etsy's fees, making and shipping; otherwise it deletes it there and says what each price needs. Printify charges you for making and shipping each order; your Undo deletes the product." }) : null,
+      a.status === "pending" && executor === "printify_edit" ? h("p", { class: "send-note", text: "After you approve, " + name + " makes this change to the product at Printify itself, exactly as shown, and Printify publishes it to the same Etsy listing (a new design: Printify draws the listing's photos from it again). Prices and variants stay as they are; Printify and Etsy charge nothing for it." }) : null,
       a.status === "pending" && (executor === "site_post" || executor === "site_links") ? h("p", { class: "send-note", text: "After you approve, " + name + " uploads exactly the page the preview shows to your website over SFTP" + (executor === "site_post" ? ", and adds it to the blog's list" : "") + ". It touches nothing else on your server; your Undo puts back what it replaced." }) : null,
       a.status === "pending" && executor === "live_will" ? h("p", { class: "send-note", text: "After you approve, " + name + "'s code shows exactly this text on your live page (live.html and en/live.html) from its next upload on, while live_show_memorial is on. Rejected, it is never shown; an unlock never approves it." }) : null,
       executor === "site_post" || executor === "site_links" ? h("p", { class: "form-actions" }, h("a", { class: "btn btn-small", href: "api/blog/preview/" + encodeURIComponent(String(a.id)), target: "_blank", rel: "noopener", text: "Preview the page" }),
@@ -3137,18 +3139,29 @@
     unclear: { icon: "!", label: "Unclear: check Printify", tone: "critical" },
   };
 
+  // 0.39.0: a change of a live Printify product, as Ember's code makes it.
+  var PRODUCT_CHANGE_EXECUTION = {
+    waiting: { icon: "◔", label: "Waiting", tone: "accent" },
+    running: { icon: "●", label: "At Printify now", tone: "accent" },
+    done: { icon: "✓", label: "Changed", tone: "good" },
+    partial: { icon: "!", label: "Changed at Printify, not in the shop", tone: "warning" },
+    failed: { icon: "✕", label: "Not changed", tone: "critical" },
+    unclear: { icon: "!", label: "Unclear: check Printify", tone: "critical" },
+  };
+
   function productExecutionView(a, st) {
     var ex = isObject(a.execution) ? a.execution : {};
     var name = agentName();
+    var changing = executorOf(a) === "printify_edit";
     var detail;
-    if (st === "waiting") detail = [name + (executorOf(a) === "printify_delete" ? " deletes it" : " creates it") + " by itself shortly; it checks every few minutes."];
+    if (st === "waiting") detail = [name + (executorOf(a) === "printify_delete" ? " deletes it" : changing ? " changes it" : " creates it") + " by itself shortly; it checks every few minutes."];
     else if (st === "waiting_limit") detail = [name + " has made its products for today, so this one waits for tomorrow's limit."];
     else if (st === "running") detail = ex.started_at ? ["At Printify since ", timeEl(ex.started_at), "."] : ["At Printify now."];
     else if (st === "active") detail = ["In the shop", ex.url && !a.simulated ? [": ", etsyLink(ex.url, ex.url)] : "."];
     else if (ex.result) detail = [endSentence(sentence(ex.result))];
     else detail = [ex.error ? endSentence(String(ex.error)) : st === "deleted" ? "Deleted at Printify." : ""];
     return h("div", { class: "execution", "data-status": st },
-      h("p", { class: "execution-head" }, chip(PRODUCT_EXECUTION, st, sentence(st.replace(/_/g, " ")))),
+      h("p", { class: "execution-head" }, chip(changing ? PRODUCT_CHANGE_EXECUTION : PRODUCT_EXECUTION, st, sentence(st.replace(/_/g, " ")))),
       h("p", { class: "execution-detail" }, detail));
   }
 
@@ -3341,6 +3354,8 @@
         approveIntro = name + " then posts this on its Bluesky account itself, exactly as shown. You hear the result on this card; your Undo deletes it.";
       } else if (executor === "printify_product") {
         approveIntro = name + " then creates this product at Printify and publishes it to your Etsy shop, exactly as shown, if every price keeps its margin after what Printify charges to make and ship it. You hear the result on this card; your Undo deletes it.";
+      } else if (executor === "printify_edit") {
+        approveIntro = name + " then changes the product at Printify itself, exactly as shown, and Printify publishes the change to the same Etsy listing (Printify and Etsy charge nothing for it). You hear the result on this card.";
       } else if (executor === "site_post" || executor === "site_links") {
         approveIntro = name + " then uploads exactly the page you previewed to your website" + (executor === "site_post" ? " and adds it to the blog's list" : "") + ". You hear the result on this card; your Undo puts back what it replaced.";
       } else if (executor === "live_will") {
@@ -3397,6 +3412,7 @@
         if (executor === "pinterest_test_pin") return "Approved. " + name + " makes the test pin in Pinterest's sandbox itself; this card shows it within a minute or two.";
         if (executor === "bluesky_post") return "Approved. " + name + " posts it itself; this card shows when it's live.";
         if (executor === "printify_product") return "Approved. " + name + " creates the product itself; this card shows when it's in the shop.";
+        if (executor === "printify_edit") return "Approved. " + name + " changes the product itself; this card shows when it's done.";
         if (executor === "site_post" || executor === "site_links") return "Approved. " + name + " uploads the page itself; this card shows when it's online.";
         if (executor === "live_will") return "Approved. " + name + "'s code shows it on your live page at its next upload; this card shows when it's there.";
         if (mode === "approve_with_changes" && st === "approved") return "Approved as it was (the text was unchanged). Carry it out, then mark it done or failed.";

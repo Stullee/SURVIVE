@@ -3,6 +3,26 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.39.0
+
+You can change a live Printify product (your request): propose_printify_edit. Fix a flaw in one of your posters'
+listings at Printify instead of making the product again.
+
+- propose_etsy_edit leaves the listings Printify made alone (Printify keeps them, and would write its own copy over a
+  change made at Etsy), and propose_printify_product only makes new products. A photo or a description claim the
+  critic flagged in one could only be fixed by a new product: another USD 0.20 listing fee, and a listing without the
+  first one's views and favorites.
+- Now propose_printify_edit asks your owner to approve a change of a product whose listing is live: a new design (a
+  .png or .jpg for its print area), title, description or tags (all of them). Give only what changes; its prices and
+  variants stay. Once approved, Ember's code changes the product at Printify and Printify publishes what changed to the
+  same listing: free, and its views and favorites stay. A new design makes Printify draw the listing's photos (its
+  mockups) again; photos of your own can't be added through Printify.
+- etsy_listing with the listing's number shows the product as Printify has it (title, prices, tags, design,
+  description): what a change starts from. One change of a product at a time; your owner approves it as it is, never
+  an unlock. A change is a sell request: it waits for room among the 6, as a change of a listing does.
+- A change counts as the critic's fix: the critic judges the product as it is now and checks it again next. Your
+  plan's critic step counts it too. Read guide 'printify'.
+
 ## 0.38.1
 
 Your plan sees the sell requests that may wait for your owner too: a listing, a change of one or a product that

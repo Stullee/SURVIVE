@@ -92,7 +92,7 @@ CHECK_EXECUTORS = {  # the requests a check counts, by their executor (a request
     "post": ("bluesky_post",),
     "blog": ("site_post",),
     "live": ("etsy_listing", "printify_product"),
-    "critic": ("etsy_edit",),
+    "critic": ("etsy_edit", "printify_edit"),  # 0.39.0: a Printify product's listing is changed at Printify
 }
 CHANNEL_EXECUTORS = {"pinterest": "pinterest_pin", "bluesky": "bluesky_post", "blog": "site_post"}
 # the tools whose results a product's checks read (its files, pictures, KDP package): with a demand note or a request,
@@ -2911,7 +2911,7 @@ def plan_text(
     if words:
         lines.append("Your owner since your last cycle: " + "; ".join(words) + ".")
     until = frozen(conn, scope, today)
-    if until:  # 0.36.0: the owner's freeze, which Ember's code keeps (propose_etsy_edit refuses such a change)
+    if until:  # 0.36.0: the owner's freeze, which Ember's code keeps (propose_etsy_edit, propose_printify_edit refuse)
         lines.append(f"Your owner froze the titles and tags of your listings until {until}: change neither.")
     head = len(lines)
     facts = Facts(conn, scope, now)

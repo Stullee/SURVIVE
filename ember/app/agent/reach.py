@@ -126,8 +126,10 @@ def funnels(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, Funnel]:
     for project_id in _linked(_bluesky(conn, scope), owner):
         found[project_id].bluesky += 1
     where, params = scope.where()
-    for e in conn.execute(
-        f"SELECT listing_id FROM etsy_edits WHERE {where} AND status IN ('done', 'partial')", params
+    for e in conn.execute(  # 0.39.0: a Printify product's listing changed at Printify counts too
+        f"SELECT listing_id FROM etsy_edits WHERE {where} AND status IN ('done', 'partial') UNION ALL"
+        f" SELECT listing_id FROM printify_edits WHERE {where} AND status IN ('done', 'partial')",
+        (*params, *params),
     ).fetchall():
         project_id = owner.get(int(e["listing_id"]))
         if project_id is not None:

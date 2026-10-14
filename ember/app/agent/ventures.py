@@ -1152,6 +1152,7 @@ HELD_EXECUTORS = {
     "etsy_listing": "etsy_listings",
     "printify_product": "printify_products",
     "etsy_edit": "etsy_edits",
+    "printify_edit": "printify_edits",  # 0.39.0
     "pinterest_pin": "pinterest_pins",
     "bluesky_post": "bluesky_posts",
 }
@@ -1230,6 +1231,8 @@ def request_stopped(conn: sqlite3.Connection, scope: AgentScope, row: Mapping[st
         ends_renewal = action.get("auto_renew") is False and set(action) <= {"listing_id", "currency", "auto_renew"}
         if action.get("state") == "deactivate" or ends_renewal:
             return None
+        listings = [action.get("listing_id")]
+    elif row["executor"] == "printify_edit":  # 0.39.0: a change of a product's listing
         listings = [action.get("listing_id")]
     else:  # a pin's or a post's link, and a post's second link
         links = (str(action.get(key) or "") for key in ("link", "second_link"))

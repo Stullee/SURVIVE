@@ -27,6 +27,13 @@ currency is converted at the owner's exchange rate, or refused without one. A ma
 
 In dry run (with Printify switched on) a fake account stands in, with a small catalog, its state kept in the database
 per dry-run session: nothing reaches Printify.
+
+0.39.0 (the agent's request): a live product can be changed (``propose_printify_edit``): a new design, title,
+description or tags. propose_etsy_edit leaves the listings Printify made alone (Printify keeps them, and would write its
+own copy over a change made at Etsy), so a flaw a critic found in one could only be fixed by a new product: a second
+listing fee, and a listing without the first one's views and favorites. Once the owner approves the change, Ember's
+code changes the product at Printify (only what changes: the prices and variants stay) and has Printify publish what
+changed to the Etsy listing it made (``Edit``).
 """
 
 from __future__ import annotations
@@ -34,8 +41,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 from pathlib import PurePosixPath
@@ -173,6 +180,97 @@ def product_from_action(raw: str | dict[str, Any]) -> Product:
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise PrintifyError(f"the product isn't readable ({type(exc).__name__})") from None
+
+
+# 0.39.0: what a change of a live product may change, in this order: its design (the picture on the print area, from
+# which Printify draws the listing's photos) and the listing's words
+EDIT_PARTS = ("design", "title", "description", "tags")
+
+
+@dataclass(frozen=True)
+class Edit:
+    """0.39.0: a checked change of one of Ember's live products at Printify, only what changes (None stays as it is):
+    a new design (its picture, ``width`` x ``height`` pixels, on the product's print area: Printify draws the listing's
+    photos from it again), and the listing's title, description (Ember's code adds DISCLOSURE, as to a new product's)
+    and tags. The product's prices and variants stay as they are. ``listing_id`` is the Etsy listing Printify made of
+    it, which Printify updates."""
+
+    listing_id: int
+    product_id: str
+    title: str | None = None
+    description: str | None = None
+    tags: tuple[str, ...] | None = None
+    image: Upload | None = None
+    width: int = 0  # the new design's pixels
+    height: int = 0
+
+    def parts(self) -> list[str]:
+        """What changes, in EDIT_PARTS order."""
+        present = {"design": self.image, "title": self.title, "description": self.description, "tags": self.tags}
+        return [part for part in EDIT_PARTS if present[part] is not None]
+
+    def to_action(self) -> dict[str, Any]:
+        data: dict[str, Any] = {"listing_id": self.listing_id, "product_id": self.product_id}
+        for name in ("title", "description"):
+            if getattr(self, name) is not None:
+                data[name] = getattr(self, name)
+        if self.tags is not None:
+            data["tags"] = list(self.tags)
+        if self.image is not None:
+            data.update(image=asdict(self.image), width=self.width, height=self.height)
+        return data
+
+    def applied(self, product: Product) -> Product:
+        """The product as it is once this change is made."""
+        changes: dict[str, Any] = {
+            name: getattr(self, name) for name in ("title", "description", "tags") if getattr(self, name) is not None
+        }
+        if self.image is not None:
+            changes.update(image=self.image, width=self.width, height=self.height)
+        return replace(product, **changes)
+
+
+def edit_from_action(raw: str | dict[str, Any]) -> Edit:
+    data = json.loads(raw) if isinstance(raw, str) else raw
+    if not isinstance(data, dict):
+        raise PrintifyError("the change isn't readable")
+    try:
+        picture = data.get("image")
+        edit = Edit(
+            listing_id=int(data["listing_id"]),
+            product_id=str(data["product_id"]),
+            title=str(data["title"]) if data.get("title") is not None else None,
+            description=str(data["description"]) if data.get("description") is not None else None,
+            tags=tuple(str(t) for t in data["tags"]) if data.get("tags") is not None else None,
+            image=Upload(str(picture["path"]), str(picture["sha256"]), int(picture["bytes"])) if picture else None,
+            width=int(data.get("width") or 0),
+            height=int(data.get("height") or 0),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise PrintifyError(f"the change isn't readable ({type(exc).__name__})") from None
+    if not edit.parts():
+        raise PrintifyError("the change changes nothing")
+    return edit
+
+
+def edit_payload(edit: Edit, now: Product) -> str:
+    """0.39.0: the change as the owner reads and approves it: each part next to what it replaces (``now``: the product
+    as Printify has it), the new description in full, with the AI line."""
+    lines = [f"Printify product {edit.product_id}, Etsy listing #{edit.listing_id}: {now.title}"]
+    if edit.image is not None:
+        lines.append(
+            f"Design: {edit.image.path} ({edit.width} x {edit.height} pixels, about {edit.applied(now).dpi()} dpi"
+            f" printed)\n  (was: {now.image.path}; Printify draws the listing's photos from the new design, in place"
+            " of the ones it has)"
+        )
+    if edit.title is not None:
+        lines.append(f"Title: {edit.title}\n  (was: {now.title})")
+    if edit.tags is not None:
+        lines.append(f"Tags: {', '.join(edit.tags)}\n  (were: {', '.join(now.tags)})")
+    lines.append("Prices and variants stay as they are. Printify publishes the change to the listing.")
+    if edit.description is not None:
+        lines += ["", "New description:", f"{edit.description.rstrip()}\n\n{DISCLOSURE}"]
+    return "\n".join(lines)
 
 
 def image(path: str, data: bytes) -> Upload:
@@ -373,7 +471,13 @@ class Account(Protocol):
 
     def create(self, shop_id: int, product: Product, image_id: str) -> Made: ...
 
-    def publish(self, shop_id: int, product_id: str) -> None: ...
+    # 0.39.0: a live product's change: only ``parts`` (EDIT_PARTS) of ``product`` (as changed) are sent
+    def update(
+        self, shop_id: int, product_id: str, product: Product, parts: Sequence[str], image_id: str | None = None
+    ) -> None: ...
+
+    # ``parts`` (0.39.0): what Printify publishes to the listing it made of a changed product (None: all of it)
+    def publish(self, shop_id: int, product_id: str, parts: Sequence[str] | None = None) -> None: ...
 
     def product(self, shop_id: int, product_id: str) -> Made: ...
 
@@ -484,11 +588,31 @@ class FakePrintify:
         self._on_change(self.state)
         return Made(product_id, costs)
 
-    def publish(self, shop_id: int, product_id: str) -> None:
+    def update(
+        self, shop_id: int, product_id: str, product: Product, parts: Sequence[str], image_id: str | None = None
+    ) -> None:
+        """0.39.0: the product's design and words, as changed (the fake keeps the title, tags and picture)."""
         item = self.state["products"].get(product_id)
         if item is None:
             raise Gone("no such product")
-        item["listing_id"], item["visible"] = 800_000_000 + self._next(), True
+        if "design" in parts and image_id not in self.state["images"]:
+            raise NotSent("no such picture")
+        if "title" in parts:
+            item["title"] = product.title
+        if "tags" in parts:
+            item["tags"] = list(product.tags)
+        if "design" in parts:
+            item["image_id"] = image_id
+        item["changes"] = int(item.get("changes", 0)) + 1
+        self._on_change(self.state)
+
+    def publish(self, shop_id: int, product_id: str, parts: Sequence[str] | None = None) -> None:
+        item = self.state["products"].get(product_id)
+        if item is None:
+            raise Gone("no such product")
+        if not item["listing_id"]:  # 0.39.0: a published product's listing is updated, as Printify does
+            item["listing_id"] = 800_000_000 + self._next()
+        item["visible"] = True
         self._on_change(self.state)
 
     def product(self, shop_id: int, product_id: str) -> Made:
