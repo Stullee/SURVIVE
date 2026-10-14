@@ -116,13 +116,14 @@ def test_a_book_says_which_pages_to_fill_in_run_on_and_other_documents_dont() ->
     )
     _, report = pdf.render(markup.parse(book("# Haushaltsbuch\n\n" + weeks)))
     assert report.pages == 6  # the title, week 1, week 2 and its notes, week 3 on two pages
-    assert (
-        "a page to fill in (a table with empty rows, or writing lines) runs on to a second page from page 3: in a"
-        " book shorten each to its page (fewer rows or lines, a smaller size)"
+    assert (  # 0.39.2's words (the pages are 0.39.1's)
+        "a page to fill in (a table to fill in, or writing lines) runs on past its page from page 3: in a book fit"
+        " each to its page (fewer rows or lines, a smaller size or line_height) or make two full pages of it with a"
+        " pagebreak"
     ) in report.warnings
     assert (
         "a table to fill in runs on to the next page from page 5: in a book keep each on its page (fewer rows, a"
-        " smaller size, or a pagebreak before it)"
+        " smaller size or line_height, or a pagebreak before it)"
     ) in report.warnings
     _, a4 = pdf.render(markup.parse(book("# Haushaltsbuch\n\n" + weeks).replace("page: 6x9", "page: A4")))
     assert not any("to fill in" in w for w in a4.warnings)  # a printable's pages are the buyer's to print
@@ -482,7 +483,7 @@ def test_plan_step_means_your_step_when_it_names_none(data_dir: Path) -> None:
         {"status": "done", "result": "counted 20 listings"}
     ]
     ctx.state.step_id = None  # no step taken: one is named, as before
-    nameless = call(ctx, "plan_step", {"action": "done", "why": "x"})
+    nameless = call(ctx, "plan_step", {"action": "done", "why": "counted the listings"})
     assert not nameless.ok and "name the step (step_id)" in nameless.text
 
 

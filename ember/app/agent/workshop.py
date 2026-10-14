@@ -441,6 +441,14 @@ def report(run: Run, wrap: Any) -> tuple[bool, str, str]:
     """(ok, the agent's tool result, a one-line summary). ``wrap`` marks the helper's answer as data."""
     cost = f"${micros_to_usd(run.cost):.4f}"
     lines = [f"Workshop run (cost {cost})."]
+    moved = _elsewhere(run)
+    if moved:  # 0.39.2: first, before the helper's answer, which says it wrote the file where the task said
+        lines.append(
+            "Your task named "
+            + "; ".join(f"{asked}: the workshop kept it as {path}" for path, asked in moved)
+            + " (it keeps what it makes in its folder, whatever a task says: use that path, or copy the file with"
+            " workspace_write mode copy)."
+        )
     if run.answer:
         lines.append(wrap("workshop", run.answer[:ANSWER_CHARS]))
     if run.kept:
@@ -483,6 +491,23 @@ def report(run: Run, wrap: Any) -> tuple[bool, str, str]:
     files = ", ".join(path for path, _ in run.kept[:3]) if made(run) else ""
     summary = f"workshop {cost}: " + (files or run.failure or ("only its script" if run.kept else "nothing kept"))
     return ok, "\n".join(lines), summary[:300]
+
+
+def _elsewhere(run: Run) -> list[tuple[str, str]]:
+    """0.39.2: (kept, asked) for each file the run kept that its task named in another folder: live, a task said "write
+    the result to books/haushaltsbuch-2027-interior-v14.md", the helper answered "Files exported", and only the line
+    after it said the file was kept in workshop/out/; make_document was asked for it in books/ and refused it, as a
+    file that didn't exist (analysis-0.39.1, 3.3)."""
+    asked: dict[str, str] = {}
+    for named in _NAMED.findall(run.task):
+        if "/" in named:
+            asked.setdefault(PurePosixPath(named).name, named.removeprefix("./"))
+    moved = []
+    for path, _ in run.kept:
+        wanted = asked.get(PurePosixPath(path).name)
+        if wanted is not None and wanted != path and path != run.script_path:
+            moved.append((path, wanted))
+    return moved
 
 
 def _output_ids(responses: list[dict[str, Any]]) -> list[str]:

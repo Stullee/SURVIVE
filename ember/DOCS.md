@@ -517,6 +517,11 @@ agent's workspace:
   table's header stays with its first row, and a heading or a one-line label
   (**Bilanz**, Notizen:) with the table or writing lines under it; in a book (a
   KDP size) the agent hears which pages to fill in run on to the next page.
+  Since 0.39.2 however many pages they run on to (a notebook's pages of lines
+  and a chapter's prose run on as they should), and a table whose rows each
+  have an empty cell, a label and its amount to fill in, counts as one to fill
+  in: the Haushaltsbuch's v14 made each month's overview three pages, the third
+  holding only "Notizen", and was told nothing.
 - **Spreadsheets** (`make_spreadsheet`): a JSON description becomes an Excel
   file with formats, dropdowns, formulas, totals, a chart and a *How to use*
   sheet, plus a picture of each sheet, drawn since 0.37.5 from the file itself:
@@ -609,7 +614,10 @@ is refused before it is paid for; a paid draft that still doesn't fit is saved
 as a new file next to it.
 
 The agent can **look** at a picture (a page or a listing photo) before it shows
-you anything, and it reads a short guide for each tool. The PDFs embed their
+you anything, and it reads a short guide for each tool. Since 0.39.2 it hears
+when the picture was made, and whether that was before the version of Ember
+that runs now: the first cycle under 0.39.1 judged the new renderer by pictures
+the old one had made, and rebuilt the book on that. The PDFs embed their
 fonts (Carlito, Caladea and Poppins, all under the SIL Open Font License); the
 Word copy asks for Calibri, Cambria and Poppins, which the first two replace
 exactly, so it looks the same in Word. Where Poppins isn't installed, Word shows
@@ -655,6 +663,11 @@ one before it goes into the agent's workspace (by default `workshop/out`):
   safe (the format's own XML, PNG, JPEG or GIF pictures).
 - Text files must be UTF-8, at most 64 KB. Anything else (SVG, archives,
   programs, fonts), and any file that can't be read whole, is refused.
+
+Since 0.39.2 the workshop's result says first where it kept a file whose task
+named another folder for it, and wherever a file the agent asks for doesn't
+exist, the refusal names a file of that name elsewhere in its workspace: the
+book's v14 was kept in `workshop/out/` and asked for in `books/`.
 
 The run's script is kept in `workshop/scripts/`, so the agent can run it again
 instead of paying for it to be written anew. Since 0.24.0 a script run again
@@ -1266,7 +1279,11 @@ without anything moving, wait by themselves (the brake, above): those take none
 of her two. Since 0.39.1 a split, a replacement, done or a wait with no step
 named means the cycle's own step (four calls were refused for naming none), a
 step can't wait on itself, and in a venture cycle she can make a step of her
-ventures (a triage, a brainstorm) wait for a day.
+ventures (a triage, a brainstorm) wait for a day. Since 0.39.2 a step she says is
+done needs a reason of more than one word (one was closed with "placeholder"),
+and she is told that a step of the kind *market* (a pin, a post, a blog post) is
+a marketing cycle's: a step for pins added as another kind went to an ordinary
+cycle, which has no pin tool.
 What you, a promise or Ember's code put in the plan stays. She can **hold** a
 product to work on others, with her reason, and resume it. She can't close,
 drop or delete a project or product: only you do. Each change is kept with its
@@ -2802,7 +2819,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.39.1 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.39.2 (by /u/your name)`.
 
 ## Amazon KDP
 

@@ -3,6 +3,38 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.39.2
+
+Fixes from the diagnostics report of 2026-10-14 20:36: a book's check names a page to fill in however many pages it
+runs on to, look says when a picture was made, a missing file's refusal names a file of its name elsewhere, and a step
+for pins or posts is a marketing step.
+
+- make_document: in a book, a page to fill in (a table to fill in, or writing lines) that runs on past its page is
+  named however many pages it takes: 0.39.1 named only one that ran on to one page more. A table whose rows each have
+  an empty cell (a label and its amount to fill in: "| Gehalt | |") is a table to fill in now, so its break is named
+  too. A notebook's pages (more writing lines than a page holds) and a chapter (a paragraph of more than 40 words, an
+  exercise at its end) run on as they should. On 10-14 the Haushaltsbuch's v14 (line_height 1.9) made each month's
+  overview three pages, the third holding "Notizen" alone, and the result said nothing.
+- A larger line_height makes every row to fill in taller, so fewer fit. At the normal line height a 6x9 page at size
+  12.5 holds about 20 empty rows, or 10 with a heading, a 3-row total and 4 writing lines (11 with 2 lines); at 1.9 it
+  holds 6. Keep the normal line height for pages to fill in.
+- look says when a picture was made, and when that was before this version of Ember ran: "made 2026-10-13 00:39,
+  before version 0.39.2 ran: it shows what Ember's tools made then". To see what the tools make now, make the file
+  again. On 10-14 the first cycle under 0.39.1 judged the new renderer by page pictures 0.38.0 had made two days
+  before, took their 2.2 mm rows for the new renderer's and set the book's line_height to 1.9: 9 rows a week and no
+  notes. The Haushaltsbuch's v14 (workshop/out/haushaltsbuch-2027-interior-v14.md) is built on that mistake: start
+  again from v13 at the normal line height, and keep each week, month and year page whole by what make_document says.
+- A refusal for a file that doesn't exist names a file of the same name elsewhere in your workspace: "books/x-v14.md
+  doesn't exist; a file of that name is at workshop/out/x-v14.md". The workshop keeps what it makes in workshop/out/
+  (or the folder you give it), whatever its task says, and its result now says that first when the task named another
+  folder: use the path it names, or copy the file there (workspace_write, mode copy).
+- plan_step's kind says what market is: a pin, a post or a blog post, whose tools only a marketing cycle has. A step to
+  send pins was added as "ship", so an ordinary cycle took it: it had no propose_pin, made the pictures, was refused
+  by request_approval and closed the step. Add such a step as kind market; request_approval's refusal of a pin or post
+  in a cycle without its tool says so too.
+- plan_step done says in why what was done, in more than one word: a step was closed with "placeholder", its pins
+  unsent, and your owner reads each reason on their Plan tab.
+
 ## 0.39.1
 
 Fixes from the diagnostics report of 2026-10-14: a book's empty table rows are tall enough to write in, STATUS shows

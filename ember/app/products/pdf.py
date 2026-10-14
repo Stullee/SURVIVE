@@ -12,6 +12,11 @@ the Haushaltsbuch. A table's header stays with its first row, and a heading or a
 Notizen:) with the table or writing lines under it; a book says which of its pages to fill in (a table with empty rows,
 or writing lines) run on to the next page.
 
+0.39.2 (analysis-0.39.1, 3.2): a book names such a page however many pages it runs on to (unless it is a notebook's,
+with more writing lines than a page holds, or a chapter's prose), and a table whose rows each have a cell with no words
+(a label and its amount to fill in) is one to fill in: the v14 of the Haushaltsbuch, its month overviews three pages
+each, got no word.
+
 Everything happens in memory; the caller writes the bytes through the workspace jail.
 """
 
@@ -60,6 +65,7 @@ LIST_INDENT = 5.0
 WRITING_LINE = 8.0  # mm between writing lines
 FOOTER_SPACE = 8.0
 SPLITS_SHOWN = 6  # 0.39.1: the pages a book's checks name, at most
+PROSE_WORDS = 40  # 0.39.2: a paragraph longer makes its part a chapter, which runs on, not a page to fill in
 _TOKENS = re.compile(r"\n|[^\S\n]+|\S+")
 
 
@@ -314,15 +320,16 @@ class Renderer:
                 "or fill the page"
             )
         if self.document.settings.page.endswith("in"):  # 0.39.1: a book (a KDP size)
-            if overruns:
+            if overruns:  # 0.39.2: however many pages it runs on to; a larger line_height costs rows too
                 self.report.warn(
-                    f"a page to fill in (a table with empty rows, or writing lines) runs on to a second page from "
-                    f"{_pages(overruns)}: in a book shorten each to its page (fewer rows or lines, a smaller size)"
+                    f"a page to fill in (a table to fill in, or writing lines) runs on past its page from "
+                    f"{_pages(overruns)}: in a book fit each to its page (fewer rows or lines, a smaller size or "
+                    "line_height) or make two full pages of it with a pagebreak"
                 )
             if self.splits:
                 self.report.warn(
                     f"a table to fill in runs on to the next page from {_pages(self.splits)}: in a book keep each on "
-                    "its page (fewer rows, a smaller size, or a pagebreak before it)"
+                    "its page (fewer rows, a smaller size or line_height, or a pagebreak before it)"
                 )
         return bytes(canvas.pdf.output()), self.report
 
@@ -330,26 +337,34 @@ class Renderer:
 
     def blocks(self, flow: Flow, blocks: list[Block], look: Look, overruns: list[int] | None = None) -> None:
         """Lay out ``blocks``; 0.39.1: with ``overruns`` (the main text), the pages where a part between pagebreaks
-        that holds something to fill in (a table with empty rows, or writing lines: a page to fill in) began and ran on
-        to the next page, unless a table of it broke there (``splits`` says so)."""
-        start, form, split = flow.page, False, len(self.splits)
+        that holds something to fill in (a table to fill in, or writing lines: a page to fill in) began and ran on to
+        the next page, unless a table of it broke there (``splits`` says so). 0.39.2: however many pages it took,
+        unless it is a notebook's, with more writing lines than a page holds, or a chapter's, with a paragraph of more
+        than PROSE_WORDS words (``free``: such parts are meant to run on): 0.39.1 named only a part that ran on to one
+        page more, and the Haushaltsbuch's v14, whose month overviews took three pages each, the third holding
+        "Notizen" alone, went unnamed (analysis-0.39.1, 3.2)."""
+        start, form, split, free = flow.page, False, len(self.splits), False
         for index, block in enumerate(blocks):
             if overruns is not None and isinstance(block, PageBreak):
-                self._overran(flow, start, form and len(self.splits) == split, overruns)
+                self._overran(flow, start, form and not free and len(self.splits) == split, overruns)
             if index + 1 < len(blocks) and not flow.dry and not flow.at_top:
                 self._keep_with(flow, block, blocks[index + 1], look)
             self.block(flow, block, look)
             if isinstance(block, PageBreak):
-                start, form, split = flow.page, False, len(self.splits)
-            elif isinstance(block, Lines) or (isinstance(block, Table) and _blank_rows(block)):
+                start, form, split, free = flow.page, False, len(self.splits), False
+            elif isinstance(block, Lines) or (isinstance(block, Table) and _to_fill(block)):
                 form = True
+                area = flow.bottom - flow.top  # a page's text area
+                free = free or (isinstance(block, Lines) and block.count * WRITING_LINE > area)
+            elif isinstance(block, Paragraph) and len(plain(block.runs).split()) > PROSE_WORDS:
+                free = True
         if overruns is not None:
-            self._overran(flow, start, form and len(self.splits) == split, overruns)
+            self._overran(flow, start, form and not free and len(self.splits) == split, overruns)
 
     @staticmethod
     def _overran(flow: Flow, start: int, form: bool, overruns: list[int]) -> None:
         end = flow.page - 1 if flow.at_top and flow.page > start else flow.page
-        if form and end == start + 1:  # (a part of more pages is meant to be: a notebook's lines, say)
+        if form and end > start:
             overruns.append(start)
 
     def _keep_with(self, flow: Flow, block: Block, after: Block, look: Look) -> None:
@@ -611,7 +626,7 @@ class Renderer:
         if flow.dry:
             flow.y += sum(heights) + self.gap
             return
-        blank = _blank_rows(block)
+        blank = _to_fill(block)
         for r in range(len(rows)):
             is_header = r == 0 and block.header is not None
             height = heights[r]
@@ -798,9 +813,16 @@ class Renderer:
         pdf.text(x, y + (lh - size_mm) / 2 + ascent * size_mm * 0.92, text)
 
 
-def _blank_rows(table: Table) -> bool:
-    """0.39.1: whether a table has a row to fill in (no words in any of its cells)."""
-    return any(all(not "".join(run.text for run in cell).strip() for cell in row) for row in table.rows)
+def _to_fill(table: Table) -> bool:
+    """0.39.1: whether a table is to fill in: a row of it has no words in any of its cells. 0.39.2: or each of its
+    rows has a cell with no words, as a month's overview has an empty amount beside each label ("Gehalt | "): live,
+    such a table broke across two pages unnamed (analysis-0.39.1, 3.2)."""
+
+    def empty(cell: list[Run]) -> bool:
+        return not "".join(run.text for run in cell).strip()
+
+    rows = table.rows
+    return any(all(map(empty, row)) for row in rows) or (bool(rows) and all(any(map(empty, row)) for row in rows))
 
 
 def _pages(numbers: list[int]) -> str:

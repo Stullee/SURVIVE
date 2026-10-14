@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -114,11 +115,14 @@ def test_look_shows_the_model_the_picture(data_dir: Path) -> None:
         ],
     )
     agent.roots()[0].write_bytes("shop/photo.png", png(3000, 2250))
+    made = agent.clock.now()
+    os.utime(agent.roots()[0].root / "shop/photo.png", (made.timestamp(), made.timestamp()))
     agent.run_cycle("schedule")
     result = transport.sent[2]["messages"][-1]["content"][0]
     assert result["type"] == "tool_result" and "is_error" not in result
     words, picture = result["content"]
-    assert words == {"type": "text", "text": "shop/photo.png (1000 x 750 pixels), shown here:"}
+    shown = f"shop/photo.png (1000 x 750 pixels, made {made:%Y-%m-%d %H:%M}), shown here:"  # 0.39.2: when
+    assert words == {"type": "text", "text": shown}
     assert picture["type"] == "image" and picture["source"]["media_type"] == "image/png"
     assert Image.open(io.BytesIO(base64.b64decode(picture["source"]["data"]))).size == (1000, 750)
     stored = tool_rows(agent, "look")[0]

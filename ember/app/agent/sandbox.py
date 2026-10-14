@@ -277,6 +277,16 @@ class Jail:
             return None
         return None if info is None else info.st_size
 
+    def modified(self, path: str, kinds: str = "any") -> float | None:
+        """0.39.2: when a file was last written (seconds since the epoch), or None if it doesn't exist."""
+        *folders, name = self.parts(path, kinds=kinds)
+        try:
+            with self._folder(folders) as folder:
+                info = self._file_info(folder, name)
+        except Missing:
+            return None
+        return None if info is None else info.st_mtime
+
     def exists(self, path: str) -> bool:
         try:
             self.read(path)
