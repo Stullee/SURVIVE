@@ -1073,8 +1073,8 @@ def _agent(state: AppState, full: bool = True) -> str:
         out.append("-- observations (by subject and metric)\n" + _rows(observed, columns))
         # 0.35.2: the numbers the weights and the choice use, so the picks above can be re-scored from the report alone
         out.append(
-            "-- plan tree: its weights' settings (weights.py and plan.py, as this version runs them)\n"
-            + _json(plan.settings())
+            "-- plan tree: its weights' settings (weights.py, plan.py and 0.39.1 quality.py's, as this version runs"
+            " them)\n" + _json(plan.settings())
         )
         # 0.34.0: the step the plan tree takes now (0.35.0: the next cycle's), its next ones with their weight's parts,
         # and what waits. 0.35.3: as the loop decides it (the ventures' turn, what the owner waits for first)

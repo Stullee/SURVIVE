@@ -143,7 +143,10 @@ def test_the_plan_trees_weights_settings_are_listed(ingress_client: TestClient) 
     """0.35.2: the report showed each pick's weight and its parts, but not the numbers they were weighed and chosen
     with (weights.py's, and plan.py's tries for a promise): re-scoring the picks needed Ember's code beside it."""
     records = section(report(ingress_client), "AGENT RECORDS")
-    heading = "\n-- plan tree: its weights' settings (weights.py and plan.py, as this version runs them)\n"
+    heading = (
+        "\n-- plan tree: its weights' settings (weights.py, plan.py and 0.39.1 quality.py's, as this version runs"
+        " them)\n"
+    )
     shown = json.loads(records.split(heading, 1)[1].split("\n-- ", 1)[0])
     assert shown == plan_tree.settings()  # whole: nothing masked or cut
     named = ("MARGIN", "STREAK_CAP", "AGE_PER_DAY", "MOMENTUM", "PROMISE_FLOOR", "KIND", "STAGE_CHANCE")
@@ -151,6 +154,7 @@ def test_the_plan_trees_weights_settings_are_listed(ingress_client: TestClient) 
         assert shown["weights.py"][name] == getattr(weights, name), name
     assert shown["plan.py"]["PROMISE_TRIES"] == plan_tree.PROMISE_TRIES
     assert shown["plan.py"]["OBLIGATION_HOURS"] == plan_tree.OBLIGATION_HOURS
+    assert shown["quality.py"] == {"MIN_PASS": 7, "STUCK_CHECKS": 2}  # 0.39.1: when the critic's fixes are a chore
     listed = plan_tree.settings()["weights.py"]["KIND"]
     listed["ship"] = -1.0
     assert weights.KIND["ship"] != -1.0  # a copy: listing the settings changes no weight

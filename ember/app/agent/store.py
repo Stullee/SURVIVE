@@ -354,13 +354,18 @@ def pending_of_type(conn: sqlite3.Connection, scope: AgentScope, kind: str) -> i
 def unasked_since(conn: sqlite3.Connection, scope: AgentScope, since: str) -> int:
     """The agent's messages since ``since`` that answered none of the owner's (MESSAGES_PER_DAY counts them from the
     start of the owner's day; 0.37.9: here, as the plan counts them too)."""
+    return len(unasked_messages(conn, scope, since))
+
+
+def unasked_messages(conn: sqlite3.Connection, scope: AgentScope, since: str) -> list[sqlite3.Row]:
+    """0.39.1: those messages themselves (id, created_at, text), oldest first: STATUS shows the day's. Live, nine
+    cycles tried to tell the owner what two messages had told them that night, each refused by the day's limit."""
     where, params = scope.where("m")
-    row = conn.execute(
-        f"SELECT COUNT(*) FROM messages m WHERE {where} AND m.sender = 'agent' AND m.created_at >= ?"
-        " AND NOT EXISTS (SELECT 1 FROM messages o WHERE o.answered_by = m.id)",
+    return conn.execute(
+        f"SELECT m.id, m.created_at, m.text FROM messages m WHERE {where} AND m.sender = 'agent' AND m.created_at >= ?"
+        " AND NOT EXISTS (SELECT 1 FROM messages o WHERE o.answered_by = m.id) ORDER BY m.id",
         (*params, since),
-    ).fetchone()
-    return int(row[0])
+    ).fetchall()
 
 
 def expires_at(row: Any) -> str:

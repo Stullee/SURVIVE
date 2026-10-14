@@ -235,7 +235,9 @@ it runs one **wake cycle**:
    update.
    Before anything else it sees its **obligations**, which Ember's code keeps
    (never cut): your messages waiting for an answer, what it promised you (a
-   message's promise, with the day it named), your decisions it must react to
+   message's promise, with the day it named; since 0.39.1 a promise of "none" or
+   "n/a" is none, where three messages were refused as a promise without its
+   day), your decisions it must react to
    (a request you rejected or carried out, or one that failed), milestones
    Ember's code closed missed, overdue milestones and live listings with too
    few photos. It closes a promise only after telling you it is kept (or why
@@ -383,8 +385,13 @@ Ember's code applies each one with the same rules as the agent's own changes (a
 milestone with a metric is left to Ember's code, your goal and the money goal
 can't be closed, a date moves twice at most): the review keeps what came of each
 verdict, and the day's plans see it. Every plan that day shows the
-review, and the agent is told to carry it out: close what it stopped, change
-what it changed, work on each bottleneck. Ember's code adds the review's lesson
+review, and the agent is told to carry it out: change what it changed, work on
+each bottleneck. A **stop** is yours (since 0.35.0 only you close a line): since
+0.39.1 Ember's code asks you on the Plan tab to keep the line or drop it, as at a
+decide-by date, at most once a week a line, and the agent holds the line until
+you decide. Until then the review told the agent to close the line itself, which
+its tools can't: three cycles tried, and the next review said again that the
+stop wasn't carried out. Ember's code adds the review's lesson
 to the agent's lessons itself (since 0.18.0). The next review shows whether it did. You can
 read every review, with the numbers it judged, under **Mind → Daily reviews**.
 
@@ -501,8 +508,15 @@ agent's workspace:
 - **Documents** (`make_document`): a Markdown file with a few settings (theme,
   fonts, colours, page size, footer) and layout lines (sidebar, columns, boxes,
   photo boxes, checklists, tables, writing lines) becomes a PDF, an editable
-  Word copy (`.docx`) and pictures of its first four pages. Good for printables,
-  planners, worksheets, guides, and CV and letter templates. At most 40 pages.
+  Word copy (`.docx`) and pictures of its first four pages (since 0.39.1, or of
+  up to four pages the agent names, such as a book's pages to fill in). Good for
+  printables, planners, worksheets, guides, and CV and letter templates. At most
+  40 pages. Since 0.39.1 a table row with no words is one line tall, as Word
+  draws it: it was 2.2 mm, its padding alone, so the Haushaltsbuch's weekly
+  table of 18 rows to fill in was a band of lines nobody could write in. A
+  table's header stays with its first row, and a heading or a one-line label
+  (**Bilanz**, Notizen:) with the table or writing lines under it; in a book (a
+  KDP size) the agent hears which pages to fill in run on to the next page.
 - **Spreadsheets** (`make_spreadsheet`): a JSON description becomes an Excel
   file with formats, dropdowns, formulas, totals, a chart and a *How to use*
   sheet, plus a picture of each sheet, drawn since 0.37.5 from the file itself:
@@ -810,7 +824,9 @@ decided next (0.13.0), and since 0.37.0 it is that venture's step in your plan:
 
 - **triage** an idea: research it or park it with why, while fewer than 8
   ventures are being researched or proposed (backed ones don't count; until
-  then the step waits for room);
+  then the step waits for room). Since 0.39.1 the step names the other ideas
+  waiting for theirs, so one cycle triages them together: on 10-14 six cycles in
+  a row each parked one idea of one brainstorm ($1.03);
 - **appraise** a venture being researched: what it needs next (research,
   evidence, numbers, a knock-out to fix), then its business case, or park it;
 - **answer** the critic on a proposed venture it says to test or park: with
@@ -818,7 +834,15 @@ decided next (0.13.0), and since 0.37.0 it is that venture's step in your plan:
 - **your decision** on a business case: back it or park it (the step waits on
   you);
 - a **brainstorm**, a step of the Ventures project of its own while fewer than
-  5 ideas wait and fewer than 5 ventures have their numbers.
+  5 ideas wait and fewer than 5 ventures have their numbers; since 0.39.1 not
+  within 7 days of the last one while none of its ideas was researched (the six
+  ideas parked in a day left the funnel empty, and the next brainstorm came at
+  once: $1.76 in two days, nothing researched).
+
+A venture's step can wait for a day (since 0.39.1, `plan_step` wait in a venture
+cycle, at most 14 days ahead): an idea the agent means to take up after your
+"nothing new" week waits until then. Until then nothing could put one off, and
+an idea "paused until 10-20" came back the next day.
 
 A venture you backed has no next decision here (before 0.19.3 it had **build**):
 its project is ordinary cycles' work. Once a venture's stage moves on, its step
@@ -974,8 +998,11 @@ met if its number comes in it). A first test of Pinterest or Printify that is
 still unmet then while no pin or product was ever made never ran: it starts
 once more instead (once). A week before a first test's date, the System log
 tells you once what is at stake (when it is parked), and the agent's plan lists
-it among what it owes. It also parks an idea of the agent's that no one took up
-(researched) within 30 days, the **triage** (your own ideas wait for you), and a
+it among what it owes until a message of the agent's names it (since 0.39.1:
+then it says the agent told you, and to work toward it; on 10-14 nine cycles
+from 04:20 on tried to tell you again what two messages had). It also parks an
+idea of the agent's that no one took up (researched) within 30 days, the
+**triage** (your own ideas wait for you), and a
 **live** venture that has sold nothing 60 days after it went live (no revenue
 recorded for it, no Etsy order of its listings). A live venture that earns more
 than it costs gets a milestone instead: **Scale it** (21 days), a goal of its
@@ -1083,6 +1110,9 @@ posts and blog posts that link the product. A later stage done closes the ones
 before it. Once a product's stages before maintain are done, its maintain stage
 gets a recurring step for each channel its audience uses, and a fix whenever
 the quality check says improve (the step quotes what the critic said). A
+channel's own line (the Pinterest test) gets none since 0.39.1: a pin or post
+links a line's own listings, and it has none (the tools refuse another line's),
+so its steps for them dropped; its products' marketing is theirs. A
 product's audience (English, German or both) comes from its words: since 0.37.8
 a German market (Germany, Deutsch, a lone "DE") makes it German and only an
 English one English, and when the words change, Ember's code drops its steps
@@ -1182,7 +1212,10 @@ as may wait for you wait"): "Propose the listing" (the product, the book),
 proposing one again, and the critic's fixes, which are a change of the listing.
 The limits themselves stay as they are. The [diagnostics](#diagnostics) report
 lists each step's wait with the limits as they stand ('queue', 'messages',
-'sales').
+'sales'). Since 0.39.1 the agent's STATUS lists the day's messages that count
+toward the limit, each with its number, time and first words ("2 of 2"), so it
+sees the limit reached before it writes: on 10-14 nine cycles from 04:20 on
+tried to send what two messages had told you hours before, each refused.
 
 **How a step is weighed.** A product's worth is what it could earn a month (from
 Ember's revenue sub-goal for its line, else its venture's split, else its type's
@@ -1210,7 +1243,13 @@ within a week. The other urgencies: since 0.35.3 a defect the critic found (a
 score of 3 or less) 5, a missed views date 4 on the product's marketing, a live
 product's launch marketing 3 (its first buyers) and the critic's other
 suggestions 1, so a live product's first pins come before its polish (until
-0.35.2 every suggestion counted as a defect, and no pin was made). A step
+0.35.2 every suggestion counted as a defect, and no pin was made). Since 0.39.1
+the critic's other suggestions weigh as a chore, with no urgency, while the
+product's listings have fewer than 10 views in all, or after two checks of a
+listing in a row without a pass: a listing nobody sees can't show whether its
+photo works, and in the analysis of 0.38.0 "The critic passes it" took 8 of
+the 10 cycles #257 to #266 ($2.84) while ten checks scored 5 or 6 and a
+listing had 0 to 4 views. A step
 carries the weight of the most important step waiting on it (since 0.35.1 a
 promise is a step of its own, not carried). Since 0.35.2 the
 [diagnostics](#diagnostics) report lists every one of these numbers, as your
@@ -1224,7 +1263,10 @@ your answer to a request, an upgrade request, another step or a day at most 14
 days ahead (two a day at most); her code lifts the wait once the block is gone.
 Since 0.37.6 a step whose own requests wait for you, and one a cycle took
 without anything moving, wait by themselves (the brake, above): those take none
-of her two.
+of her two. Since 0.39.1 a split, a replacement, done or a wait with no step
+named means the cycle's own step (four calls were refused for naming none), a
+step can't wait on itself, and in a venture cycle she can make a step of her
+ventures (a triage, a brainstorm) wait for a day.
 What you, a promise or Ember's code put in the plan stays. She can **hold** a
 product to work on others, with her reason, and resume it. She can't close,
 drop or delete a project or product: only you do. Each change is kept with its
@@ -2760,7 +2802,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.39.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.39.1 (by /u/your name)`.
 
 ## Amazon KDP
 

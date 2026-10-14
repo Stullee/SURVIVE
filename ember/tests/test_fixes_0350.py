@@ -338,7 +338,7 @@ def test_the_tool_is_an_ordinary_and_marketing_cycles_and_milestone_plan_is_gone
     assert "plan_step" in tools.SPECS and "milestone_plan" not in tools.SPECS
     named = {d["name"] for d in tools.definitions(etsy=True)}
     assert "plan_step" in named and "milestone_plan" not in named
-    assert "plan_step" not in {d["name"] for d in tools.definitions(etsy=True, venture=True)}
+    assert "plan_step" in {d["name"] for d in tools.definitions(etsy=True, venture=True)}  # 0.39.1: its waits
     assert "plan_step" in {d["name"] for d in tools.definitions(etsy=True, marketing=True)}
     assert weights.STREAK_CAP == 3  # the prompts' LINE_STREAK
 

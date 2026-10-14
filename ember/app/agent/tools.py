@@ -169,7 +169,8 @@ LIBRARY_TOOLS = frozenset({"knowledge_search", "library_read"})
 # Offered only in ordinary cycles (0.12.0): a venture cycle researches and decides, so its prompt no longer carries
 # the tools for building and selling (making and looking at files, the workshop, the shop, email and Reddit). They
 # belong to ordinary cycles, like the legs they serve. 0.35.0: so do the changes to the plan tree's steps (plan_step;
-# laying out a roadmap of Ember's own, milestone_plan, retired: the plan tree replaces it).
+# laying out a roadmap of Ember's own, milestone_plan, retired: the plan tree replaces it). 0.39.1: plan_step is every
+# cycle's, a venture cycle's to make a step of its ventures wait (VENTURE_VARIANTS).
 ORDINARY_TOOLS = (
     frozenset(
         {
@@ -182,7 +183,6 @@ ORDINARY_TOOLS = (
             "workshop",
             "draft",
             "propose_reddit_post",
-            "plan_step",
         }
     )
     | ETSY_TOOLS
@@ -441,7 +441,7 @@ SPECS: dict[str, Spec] = {
             "with a check closes when it passes. Free.",
             {
                 "action": _s("", 8, enum=plan.ACTIONS),
-                "step_id": _i("The step (add: the one the new steps come before).", required=False),
+                "step_id": _i("The step (else YOUR STEP; add: the one the new steps go before).", required=False),
                 "steps": _a(
                     "add, split, replace: the new steps, in order.",
                     plan.MAX_NEW_STEPS,
@@ -797,14 +797,15 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "make_document",
-            "Make a finished document from your Markdown file: a PDF, an editable Word copy (.docx) and pictures of "
-            "its first pages, next to the output. For its layout (sidebars, columns, boxes, checklists, writing "
-            "lines) read guide 'documents' first.",
+            # 0.39.1: the layouts are guide 'documents''s (room for pages within the fixed prompt's bound)
+            "Make a finished document from your Markdown file: a PDF, an editable Word copy (.docx) and page "
+            "pictures next to the output. Read guide 'documents' first.",
             {
                 "source": _s("e.g. 'drafts/cv.md'.", 200),
                 "output": _s("e.g. 'shop/cv.pdf'.", 200),
                 "word": _b("Also make the Word copy (default true)."),
-                "pictures": _b(f"Also make pictures of the first {make.PAGE_PREVIEWS} pages (default true)."),
+                "pictures": _b(f"Pictures of the first {make.PAGE_PREVIEWS} pages (default true)."),
+                "pages": _s(f"Or these (at most {make.PAGE_PREVIEWS}), e.g. '6, 7'.", 40, required=False),
             },
             per_cycle=4,
         ),
@@ -1232,6 +1233,18 @@ VENTURE_VARIANTS: dict[str, Spec] = {
         fields={"topic": replace(SPECS["guide"].fields["topic"], enum=("ventures",))},
     ),
     "workspace_write": replace(SPECS["workspace_write"], description=_write_text(venture=True)),
+    # 0.39.1: a venture cycle's plan_step makes a step of its ventures wait, nothing else (_plan_step)
+    "plan_step": replace(
+        SPECS["plan_step"],
+        description=f"Make a step of your ventures (a triage, a brainstorm) wait, with why: for a day at most "
+        f"{plan.WAIT_DAYS} days ahead, a request to your owner, an upgrade request or another step; {plan.WAITS_A_DAY} "
+        "a day. Ember's code takes it up again then. Free.",
+        fields={
+            "action": _s("", 8, enum=("wait",)),
+            "step_id": _i("The step (default: YOUR STEP).", required=False),
+            **{name: SPECS["plan_step"].fields[name] for name in ("on", "ref", "until", "why")},
+        },
+    ),
 }
 
 
@@ -1410,6 +1423,8 @@ class CycleTools:
     # (touched) once it succeeds (_lock).
     one_line: bool = False
     touched: int | None = None
+    # 0.39.1: the step the plan tree took for this cycle (YOUR STEP): plan_step means it when no step_id is named
+    step_id: int | None = None
     journal_written: bool = False
     # 0.24.0: a journal a work step wrote (write_journal's checked arguments): the cycle's, unless the reflection writes
     # one (loop._keep_draft)
@@ -1624,7 +1639,7 @@ def _run(
         if spec is not None and ctx.venture and name in ORDINARY_TOOLS:
             raise ToolError(
                 f"{name} is not one of your tools in a venture cycle: making files, the shop, Pinterest, Bluesky, "
-                "KDP, email, Reddit and your plan's steps belong to ordinary and marketing cycles"
+                "KDP, email and Reddit belong to ordinary and marketing cycles"
             )
         if spec is not None and ctx.marketing and name in BUILDING_TOOLS:  # 0.28.0
             raise ToolError(
@@ -1871,7 +1886,9 @@ def _checked(fields: dict[str, Field], raw: Any, notes: list[str] | None, where:
             if f.max_len and len(value) > f.max_len:
                 if not f.cut:  # 0.15.0: with the numbers (and what to do), so the next try fits
                     remedy = f": {f.remedy}" if f.remedy else ""
-                    raise ToolError(f"{name} is too long: {len(value):,} of {f.max_len:,} characters{remedy}")
+                    # 0.39.1: and how much to cut (live, commits of 101 characters was refused, and a lesson kept)
+                    over = f"(cut {len(value) - f.max_len:,})"
+                    raise ToolError(f"{name} is too long: {len(value):,} of {f.max_len:,} characters {over}{remedy}")
                 if notes is not None:
                     notes.append(f"{name} was cut to {f.max_len:,} of its {len(value):,} characters")
                 value = value[: f.max_len - 1].rstrip() + "…"
@@ -2330,7 +2347,8 @@ def _left_behind(ctx: ToolContext, conn: Any, before: Any) -> str:
 
 def _plan_step(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     """0.35.0: Ember's change to her plan (plan.py), on the cycle's product line (resume names the line on hold: a
-    held line never has a cycle of its own). Each change is kept with its reason, which the owner sees."""
+    held line never has a cycle of its own); 0.39.1: a venture cycle's, a step of its ventures waiting. Each change is
+    kept with its reason, which the owner sees."""
     _no_heading(args, "why")
     steps = args.get("steps") or []
     for step in steps:
@@ -2338,13 +2356,20 @@ def _plan_step(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
             raise ToolError(HEADING_REFUSAL.format(name="steps"))
     action, why = args["action"], " ".join(args["why"].split())
     now = ctx.now()
+    # 0.39.1 (analysis-0.38.0, 3.6): a step to say done, wait, split or replace is YOUR STEP unless one is named. Live,
+    # four calls were refused for naming none (or the step in ref), each meaning the cycle's own.
+    step_id = args.get("step_id")
+    if step_id is None and action in ("split", "replace", "done", "wait"):
+        step_id = ctx.state.step_id
     if action == "resume":
         line = args.get("project_id")
         if line is None:
             raise ToolError("resume names the product line on hold (project_id)")
     else:
-        line = ctx.state.focus_project_id
-        if line is None:
+        # 0.39.1: a venture cycle makes a step of its ventures wait (a day, say; its variant has no other action):
+        # there was no way to put one off
+        line = None if ctx.venture else ctx.state.focus_project_id
+        if line is None and not ctx.venture:
             raise ToolError("this cycle works on no product line yet: plan_step changes the plan of your step's line")
         if action in ("add", "split", "replace") and not steps:
             raise ToolError(f"{action} needs the new steps (steps)")
@@ -2362,17 +2387,17 @@ def _plan_step(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
                 before=args.get("step_id"),
             )
         elif action == "split":
-            text = plan.split_step(conn, ctx.scope, line, args.get("step_id"), steps, why, ctx.cycle_id, now)
+            text = plan.split_step(conn, ctx.scope, line, step_id, steps, why, ctx.cycle_id, now)
         elif action == "replace":
-            text = plan.replace_step(conn, ctx.scope, line, args.get("step_id"), steps, why, ctx.cycle_id, now)
+            text = plan.replace_step(conn, ctx.scope, line, step_id, steps, why, ctx.cycle_id, now)
         elif action == "done":
-            text = plan.step_done(conn, ctx.scope, line, args.get("step_id"), why, ctx.cycle_id, now)
+            text = plan.step_done(conn, ctx.scope, line, step_id, why, ctx.cycle_id, now)
         elif action == "wait":
             text = plan.wait_step(
                 conn,
                 ctx.scope,
                 line,
-                args.get("step_id"),
+                step_id,
                 args.get("on"),
                 args.get("ref"),
                 args.get("until"),
@@ -3468,10 +3493,19 @@ def _promised_line(ctx: ToolContext, conn: Any, project_id: int | None, promises
     return int(project_id)
 
 
+# 0.39.1 (analysis-0.38.0, 3.10): what a message's commits says when it promises nothing ("none - informational
+# only"): live, three messages were refused for a promise without its due day, each meaning none.
+NO_PROMISE = re.compile(r"^(?:none|n/?a|nothing|no promise|-+|—|–)\s*(?:$|[-—–:;,(.].*$)", re.IGNORECASE)
+
+
 def _promise(ctx: ToolContext, args: dict[str, Any]) -> tuple[str, str] | None:
     """(what, due day) of the promise a message makes (0.12.0), or None; raises ToolError."""
     what = " ".join((args.get("commits") or "").split())
     due = args.get("due")
+    if NO_PROMISE.match(what):
+        what = ""
+    if isinstance(due, str) and NO_PROMISE.match(due.strip()):
+        due = None
     if not what and not due:
         return None
     if not what or not due:
@@ -3814,6 +3848,7 @@ def _make_document(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
         args["output"],
         word_copy=args.get("word", True),
         previews=args.get("pictures", True),
+        pages=args.get("pages") or "",  # 0.39.1
     )
     return _made(made, "made a document")
 

@@ -6,6 +6,12 @@ its background first, a heading moves to the next page with the lines it heads, 
 table's header repeats on the next page. The same code measures (a dry flow draws nothing and never breaks pages)
 and draws. Page backgrounds and the sidebar are painted as soon as a page exists, so text always lies on top.
 
+0.39.1 (analysis-0.38.0, 3.1): a row with no words is one line tall, as Word draws it: it was 2.2 mm (its padding), so
+a book's weekly table of 18 rows to fill in was a band of lines no one could write in, the owner's fifth rejection of
+the Haushaltsbuch. A table's header stays with its first row, and a heading or a one-line label (**Bilanz**,
+Notizen:) with the table or writing lines under it; a book says which of its pages to fill in (a table with empty rows,
+or writing lines) run on to the next page.
+
 Everything happens in memory; the caller writes the bytes through the workspace jail.
 """
 
@@ -53,6 +59,7 @@ BOX_PADDING = 4.0
 LIST_INDENT = 5.0
 WRITING_LINE = 8.0  # mm between writing lines
 FOOTER_SPACE = 8.0
+SPLITS_SHOWN = 6  # 0.39.1: the pages a book's checks name, at most
 _TOKENS = re.compile(r"\n|[^\S\n]+|\S+")
 
 
@@ -273,6 +280,7 @@ class Renderer:
         t = self.theme
         self.body_lh = t.size * t.line_height * MM_PER_PT
         self.gap = t.size * 0.62 * MM_PER_PT
+        self.splits: list[int] = []  # 0.39.1: the pages a table to fill in ran on from
 
     # --- the document ---
 
@@ -283,7 +291,8 @@ class Renderer:
         canvas.goto(1)
         left, width = canvas.main_band()
         main = Flow(canvas, left, width, top, bottom, 1, top, dry=False)
-        self.blocks(main, self.document.main, Look(t.text, t.accent, t.accent))
+        overruns: list[int] = []
+        self.blocks(main, self.document.main, Look(t.text, t.accent, t.accent), overruns)
         page_count = canvas.pages
         area = bottom - top
         self.report.main_end = (main.page, max(0.0, min(1.0, (main.y - top) / area)))
@@ -304,13 +313,63 @@ class Renderer:
                 f"page {page} holds only a few lines: shorten the text a little so it fits on {page - 1} page(s), "
                 "or fill the page"
             )
+        if self.document.settings.page.endswith("in"):  # 0.39.1: a book (a KDP size)
+            if overruns:
+                self.report.warn(
+                    f"a page to fill in (a table with empty rows, or writing lines) runs on to a second page from "
+                    f"{_pages(overruns)}: in a book shorten each to its page (fewer rows or lines, a smaller size)"
+                )
+            if self.splits:
+                self.report.warn(
+                    f"a table to fill in runs on to the next page from {_pages(self.splits)}: in a book keep each on "
+                    "its page (fewer rows, a smaller size, or a pagebreak before it)"
+                )
         return bytes(canvas.pdf.output()), self.report
 
     # --- blocks ---
 
-    def blocks(self, flow: Flow, blocks: list[Block], look: Look) -> None:
-        for block in blocks:
+    def blocks(self, flow: Flow, blocks: list[Block], look: Look, overruns: list[int] | None = None) -> None:
+        """Lay out ``blocks``; 0.39.1: with ``overruns`` (the main text), the pages where a part between pagebreaks
+        that holds something to fill in (a table with empty rows, or writing lines: a page to fill in) began and ran on
+        to the next page, unless a table of it broke there (``splits`` says so)."""
+        start, form, split = flow.page, False, len(self.splits)
+        for index, block in enumerate(blocks):
+            if overruns is not None and isinstance(block, PageBreak):
+                self._overran(flow, start, form and len(self.splits) == split, overruns)
+            if index + 1 < len(blocks) and not flow.dry and not flow.at_top:
+                self._keep_with(flow, block, blocks[index + 1], look)
             self.block(flow, block, look)
+            if isinstance(block, PageBreak):
+                start, form, split = flow.page, False, len(self.splits)
+            elif isinstance(block, Lines) or (isinstance(block, Table) and _blank_rows(block)):
+                form = True
+        if overruns is not None:
+            self._overran(flow, start, form and len(self.splits) == split, overruns)
+
+    @staticmethod
+    def _overran(flow: Flow, start: int, form: bool, overruns: list[int]) -> None:
+        end = flow.page - 1 if flow.at_top and flow.page > start else flow.page
+        if form and end == start + 1:  # (a part of more pages is meant to be: a notebook's lines, say)
+            overruns.append(start)
+
+    def _keep_with(self, flow: Flow, block: Block, after: Block, look: Look) -> None:
+        """0.39.1: a heading, or a paragraph of one line (a label: **Bilanz**, Notizen:), moves to the next page with
+        the start of the table or the writing lines under it: a table's header and first row, two lines. Live, with
+        rows one line tall a book's "Bilanz" and its table's header were left at the foot of a page."""
+        if not isinstance(after, (Table, Lines)):
+            return
+        if isinstance(block, Paragraph):
+            t = self.theme
+            if len(self.break_lines(self.words(block.runs, t.font, t.size, look.text), flow.width)) != 1:
+                return
+        elif not isinstance(block, Heading):
+            return
+        if isinstance(after, Table):
+            start: Block = Table(after.header, after.rows[:1], after.align)
+        else:
+            start = Lines(min(after.count, 2))
+        if not flow.fits(self.measure([block, start], flow.width, look)):
+            flow.next_page()
 
     def block(self, flow: Flow, block: Block, look: Look) -> None:  # noqa: C901 - one dispatch
         if isinstance(block, Heading):
@@ -546,18 +605,24 @@ class Renderer:
                 for c, cell in enumerate(row)
             ]
             cell_lines.append(lines)
-            heights.append(max(len(cl) for cl in lines) * self.body_lh + 2 * pad_y)
+            # 0.39.1: a row with no words is one line tall, as Word draws it (it was its padding alone, 2.2 mm)
+            heights.append(max([1, *(len(cl) for cl in lines)]) * self.body_lh + 2 * pad_y)
         header_height = heights[0] if block.header else 0.0
         if flow.dry:
             flow.y += sum(heights) + self.gap
             return
+        blank = _blank_rows(block)
         for r in range(len(rows)):
             is_header = r == 0 and block.header is not None
             height = heights[r]
-            if not flow.fits(height):
+            # 0.39.1: the header goes to the next page with the row under it, never alone at a page's foot
+            keep = height + (heights[1] if is_header and len(rows) > 1 else 0.0)
+            if not flow.fits(keep):
                 if height > flow.bottom - flow.top - header_height:
                     self.report.warn("a table row is taller than a page: shorten its cells")
-                else:
+                elif not flow.at_top:
+                    if blank and not is_header:
+                        self.splits.append(flow.page)
                     flow.next_page()
                     if block.header and not is_header:
                         self._row(flow, cell_lines[0], widths, block.align, heights[0], header_look, True, style, 0)
@@ -731,6 +796,19 @@ class Renderer:
         pdf.set_font(family, style, size)
         pdf.set_text_color(*color)
         pdf.text(x, y + (lh - size_mm) / 2 + ascent * size_mm * 0.92, text)
+
+
+def _blank_rows(table: Table) -> bool:
+    """0.39.1: whether a table has a row to fill in (no words in any of its cells)."""
+    return any(all(not "".join(run.text for run in cell).strip() for cell in row) for row in table.rows)
+
+
+def _pages(numbers: list[int]) -> str:
+    """0.39.1: 'page 7' or 'pages 7, 9, 11 and 20 more'."""
+    pages = sorted(set(numbers))
+    shown = ", ".join(str(p) for p in pages[:SPLITS_SHOWN])
+    more = f" and {len(pages) - SPLITS_SHOWN} more" if len(pages) > SPLITS_SHOWN else ""
+    return f"page{'s' if len(pages) > 1 else ''} {shown}{more}"
 
 
 def _share(total: float, minimum: list[float], natural: list[float]) -> list[float]:

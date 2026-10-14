@@ -458,6 +458,7 @@ class Facts:
     _funnels: dict[int, reach.Funnel] | None = None
     _verdicts: dict[int, str] = field(default_factory=dict)
     _lowest: dict[int, int | None] = field(default_factory=dict)
+    _stuck: dict[int, bool] = field(default_factory=dict)  # 0.39.1
     _requests: list[dict[str, Any]] | None = None
 
     def requests(self) -> list[dict[str, Any]]:
@@ -497,6 +498,14 @@ class Facts:
             self._lowest[project_id] = quality.lowest(self.conn, self.scope, project_id)
         score = self._lowest[project_id]
         return score is not None and score <= weights.DEFECT_SCORE
+
+    def stuck(self, project_id: int) -> bool:
+        """0.39.1: whether a listing of the line had quality.STUCK_CHECKS checks in a row without a pass."""
+        from . import quality
+
+        if project_id not in self._stuck:
+            self._stuck[project_id] = quality.stuck(self.conn, self.scope, project_id)
+        return self._stuck[project_id]
 
     def live(self, project_id: int) -> int:
         rows = metrics.listings(self.conn, self.scope, project_id, None)
@@ -631,6 +640,7 @@ def keep(
         said += _decide_by(facts, product, now, today)
     said += _ventures(conn, scope, now)  # 0.37.0: each venture a node, its next decision a step
     said += _owner_owed(conn, scope, now)  # 0.37.0: and what is owed to the owner of no product
+    said += _review_stops(conn, scope, now, today)  # 0.39.1: a line the review says stop is the owner's to close
     said += _lift_waits(conn, scope, now, today)
     _clocks(conn, scope, now, today, channels, day_start)
     return said
@@ -693,7 +703,8 @@ def _ventures(conn: sqlite3.Connection, scope: AgentScope, now: str) -> list[str
     """The Ventures project with a node for each venture being explored and its next decision as a step (the step
     before it closed once its stage moved on), the node closed once the venture is backed or live (done: its work is
     its product line's) or parked or killed (dropped); and a brainstorm step while the funnel is thin
-    (desk.brainstorm_due). Kept before every plan."""
+    (desk.brainstorm_due; 0.39.1: not while the last brainstorm's ideas had no research, desk.brainstorm_rests).
+    Kept before every plan."""
     top_id = _platform(conn, scope, "ventures", now)
     first = not nodes(conn, scope, "level = 'venture'")
     open_nodes = {int(n["venture_id"]): n for n in nodes(conn, scope, "level = 'venture' AND status = 'open'")}
@@ -735,6 +746,9 @@ def _ventures(conn: sqlite3.Connection, scope: AgentScope, now: str) -> list[str
             conn, scope, now, parent_id=here_id, level="step", kind=kind, template=template, title=title, source="code"
         )
     due = desk.brainstorm_due(rows)
+    rest = desk.brainstorm_rests(rows, now) if due else ""  # 0.39.1: not while the last one's ideas had no research
+    if rest:
+        due = ""
     brainstorms = nodes(conn, scope, "level = 'step' AND status = 'open' AND template = ?", (BRAINSTORM_TEMPLATE,))
     if due and not brainstorms:
         _insert(
@@ -750,7 +764,10 @@ def _ventures(conn: sqlite3.Connection, scope: AgentScope, now: str) -> list[str
         )
     elif not due:
         for step in brainstorms:
-            _close(conn, step["id"], now, "done", "enough ideas wait, or have their numbers")
+            if rest:
+                _close(conn, step["id"], now, "dropped", _cut(rest, 300))
+            else:
+                _close(conn, step["id"], now, "done", "enough ideas wait, or have their numbers")
     if first and made:
         return ["Plan tree: each venture you explore is a node of its Ventures now, its next decision a step."]
     return []
@@ -1655,7 +1672,12 @@ def _test_start(
 
 
 def _owner_decides(
-    conn: sqlite3.Connection, scope: AgentScope, product: Mapping[str, Any], now: str, numbers: str
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    product: Mapping[str, Any],
+    now: str,
+    numbers: str,
+    reached: str = "reached a decide-by date",
 ) -> list[str]:
     """A decide-by date that asks the owner: keep the product or drop it, as a step of theirs (one at a time), in the
     product's maintain stage (it never closes, so the step waits there without holding up its launch)."""
@@ -1681,8 +1703,57 @@ def _owner_decides(
         seq=850,
         source="code",
     )
-    change(conn, scope, step, None, "code", "add", f"a decide-by date: {numbers}", now)
-    return [f"Plan tree: line #{line} reached a decide-by date ({numbers}): your owner decides on it."]
+    change(conn, scope, step, None, "code", "add", f"{reached}: {numbers}", now)
+    return [f"Plan tree: line #{line} {reached} ({numbers}): your owner decides on it."]
+
+
+STOP_ASK_DAYS = 7  # 0.39.1: a line the owner decided on (or was asked about) isn't asked about again this soon
+
+
+def owner_decision(conn: sqlite3.Connection, scope: AgentScope, line: int, since: str) -> str:
+    """0.39.1: 'deciding' while a decision of the owner's on line ``line`` (keep it or drop it) waits for them, 'kept'
+    when they kept it since ``since``, else ""."""
+    asked = "project_id = ? AND level = 'step' AND template = 'decide/owner' AND (status = 'open' OR closed_at >= ?)"
+    found = nodes(conn, scope, asked, (line, since))
+    if any(s["status"] == "open" for s in found):
+        return "deciding"
+    return "kept" if any(s["status"] == "done" and s["closed_by"] == "owner" for s in found) else ""
+
+
+def _review_stops(conn: sqlite3.Connection, scope: AgentScope, now: str, today: date) -> list[str]:
+    """0.39.1 (analysis-0.38.0, 3.5): a line today's review says stop becomes the owner's decision, keep it or drop it
+    (a step of theirs, as at a decide-by date): since 0.35.0 only the owner closes a line, but the review still told the
+    agent to close it with project_update, which can't. Live, three cycles tried, and the next review said again that
+    the stop wasn't carried out. Not while the line waits for a decision of theirs, nor within STOP_ASK_DAYS of one."""
+    where, params = scope.where()
+    row = conn.execute(
+        f"SELECT day, verdicts FROM reviews WHERE {where} AND day = ? AND status = 'ok' ORDER BY id DESC LIMIT 1",
+        (*params, today.isoformat()),
+    ).fetchone()
+    try:
+        verdicts = json.loads(row["verdicts"] or "[]") if row is not None else []
+    except ValueError:
+        return []
+    said: list[str] = []
+    recent = (today - timedelta(days=STOP_ASK_DAYS)).isoformat()
+    for v in verdicts if isinstance(verdicts, list) else []:
+        if not isinstance(v, dict) or v.get("verdict") != "stop" or not isinstance(v.get("project_id"), int):
+            continue
+        line = int(v["project_id"])
+        project = store.project(conn, scope, line)
+        product = nodes(conn, scope, "level = 'product' AND status = 'open' AND project_id = ?", (line,))
+        asked = nodes(
+            conn,
+            scope,
+            "project_id = ? AND level = 'step' AND template = 'decide/owner' AND (status = 'open' OR created_at >= ?)",
+            (line, recent),
+        )
+        if project is None or project["status"] not in OPEN_STATUSES or not product or asked:
+            continue
+        why = " ".join(str(v.get("why") or "").split())
+        stop = f"your review of {str(row['day'])[5:]} says stop: {why}"
+        said += _owner_decides(conn, scope, product[0], now, stop, "has a review's stop")
+    return said
 
 
 def _scale(conn: sqlite3.Connection, scope: AgentScope, product: Mapping[str, Any], now: str) -> list[str]:
@@ -1711,6 +1782,35 @@ def _scale(conn: sqlite3.Connection, scope: AgentScope, product: Mapping[str, An
     return [f"Plan tree: line #{line} sold by day 21: a step to scale it."]
 
 
+CHANNEL_TEMPLATE = "channel"  # 0.39.1: templates.CHANNEL's name
+
+
+def _channel_duties(
+    conn: sqlite3.Connection, scope: AgentScope, product: Mapping[str, Any], maintain_id: int, now: str
+) -> list[str]:
+    """0.39.1 (analysis-0.38.0, 3.4): a channel's line (the Pinterest test, say) gets no weekly pin, post or blog post
+    of its own, and the ones it got drop out: their checks count what links the line's own listings, and it has none,
+    while the tools refuse a pin or a post for another line's listing. Live, its first Bluesky step cost a cycle the
+    minute the channel was set up, refused; each would have taken a cycle a day. Its products' marketing is theirs."""
+    dropped = []
+    duties = "parent_id = ? AND level = 'step' AND status = 'open' AND template LIKE 'recurring/%'"
+    for step in nodes(conn, scope, duties, (maintain_id,)):
+        if step["channel"]:
+            _close(conn, step["id"], now, "dropped", CHANNEL_DUTY)
+            dropped.append(int(step["id"]))
+    if not dropped:
+        return []
+    return [
+        f"Plan tree: line #{product['project_id']} is a channel: its steps {', '.join(f'#{n}' for n in dropped)} for"
+        " pins and posts of its own dropped (its products' marketing is theirs)."
+    ]
+
+
+CHANNEL_DUTY = (
+    "Ember's code: a channel's line has no listing for a pin or a post of its own; its products' marketing is theirs"
+)
+
+
 def _audience_channels(product: Mapping[str, Any]) -> list[str]:
     audience = product["audience"] or "both"
     return [c for c in CHANNELS if audience in CHANNEL_AUDIENCES[c]]
@@ -1730,7 +1830,10 @@ def _recurring(
     said: list[str] = []
     title = str(product["title"])
     launched = not any(s["status"] == "open" for s in stages if s["stage"] != "maintain")
-    if launched and templates.by_key(product["template"]).name != "kdp_book":  # a book can't be linked yet
+    kind = templates.by_key(product["template"]).name
+    if kind == CHANNEL_TEMPLATE:  # 0.39.1: a channel's line has no listing for a pin or a post of its own
+        return _channel_duties(conn, scope, product, int(maintain["id"]), now)
+    if launched and kind != "kdp_book":  # a book can't be linked yet
         funnel = facts.funnel(product["project_id"])
         for channel in _audience_channels(product):
             if not channels.get(channel, False):
@@ -1971,8 +2074,11 @@ def candidates(
                 urgency = weights.REACH
             if step["kind"] == "market" and pid in missed:
                 urgency = max(urgency, weights.MISSED_BAR)
+            quiet = False  # 0.39.1: the critic's suggestions while few see the line, or after checks without a pass
             if step["check_kind"] == "critic" and verdict == "improve":  # 0.35.3: a defect, or suggestions
-                urgency = max(urgency, weights.DEFECT if facts.defect(pid) else weights.IMPROVE)
+                defect = facts.defect(pid)
+                quiet = not defect and ((funnel.views if funnel else 0) < weights.CRITIC_VIEWS or facts.stuck(pid))
+                urgency = max(urgency, weights.DEFECT if defect else 0.0 if quiet else weights.IMPROVE)
             if step["due"] and step["source"] == "code" and date.fromisoformat(step["due"]) <= today:
                 urgency = max(urgency, weights.RECURRING_DUE)
             since = max(filter(None, (step["ready_since"], worked.get(pid))), default=None)
@@ -1980,7 +2086,7 @@ def candidates(
                 step["id"],
                 pid,
                 str(step["title"]),
-                _kind(step),
+                "chore" if quiet else _kind(step),
                 worth,
                 channel=factors.get(step["channel"], 1.0) if step["channel"] else 1.0,
                 urgency=urgency,
@@ -2517,7 +2623,10 @@ def choose(
 
 def settings() -> dict[str, Any]:
     """0.35.2: the numbers a cycle's step is chosen with, for the diagnostics: weights.py's, and this module's that
-    feed them (a channel's factor, the cycles read for the streak, how often a promise or a decision comes first)."""
+    feed them (a channel's factor, the cycles read for the streak, how often a promise or a decision comes first).
+    0.39.1: and the critic's, which decide whether its suggestions weigh as a chore."""
+    from . import quality  # here, not at the top: quality imports prompts, which imports tools, then this
+
     return {
         "weights.py": weights.settings(),
         "plan.py": {
@@ -2530,6 +2639,7 @@ def settings() -> dict[str, Any]:
             "OBLIGATION_HOURS": OBLIGATION_HOURS,
             "PROMISE_TRIES": PROMISE_TRIES,
         },
+        "quality.py": {"MIN_PASS": quality.MIN_PASS, "STUCK_CHECKS": quality.STUCK_CHECKS},  # 0.39.1
     }
 
 
@@ -2830,6 +2940,15 @@ def _venture_step_text(
             lines.append(f"Now: {item.text}")
         if decision == "appraise" and v["next_question"]:
             lines.append(f"Its next question: {_cut(' '.join(str(v['next_question']).split()), 300)}")
+        others = _triages_waiting(conn, scope, int(step.id)) if decision == "triage" else []
+        if others:  # 0.39.1 (analysis-0.38.0, 3.3)
+            lines.append(
+                "Other ideas wait for their triage: "
+                + " · ".join(f"#{o['id']} {_quoted(_cut(str(o['title']), 60))}" for o in others[:TRIAGES_SHOWN])
+                + (f" and {len(others) - TRIAGES_SHOWN} more" if len(others) > TRIAGES_SHOWN else "")
+                + ": triage them in this cycle too (venture_update each: park the ones you would park, with why;"
+                " research the one that deserves it most). A cycle for each costs more than its decision."
+            )
     else:
         lines.append(f"Step #{step.id} of your ventures: {step.title}")
         due = desk.brainstorm_due(ventures.all_ventures(conn, scope))
@@ -2849,6 +2968,21 @@ def _venture_step_text(
             + " · ".join(f"#{s.id} {_cut(s.title, 60)} ({_line_of(s, places)}, {p.total:.1f})" for s, p in others)
         )
     return "\n".join(lines)
+
+
+TRIAGES_SHOWN = 8  # 0.39.1: the other ideas a triage's YOUR STEP names
+
+
+def _triages_waiting(conn: sqlite3.Connection, scope: AgentScope, step_id: int) -> list[sqlite3.Row]:
+    """0.39.1: the other ideas whose triage is open and not put off (plan_step wait), oldest first. Live, six cycles
+    in a row each parked one idea of a brainstorm, $1.03, 30 minutes apart: one cycle could have parked all six."""
+    found = []
+    for s in nodes(conn, scope, "level = 'step' AND status = 'open' AND template = 'triage@1' AND waiting IS NULL"):
+        parent = node(conn, scope, int(s["parent_id"])) if s["id"] != step_id and s["parent_id"] else None
+        v = ventures.get(conn, scope, int(parent["venture_id"])) if parent and parent["venture_id"] else None
+        if v is not None and v["stage"] == "idea":
+            found.append(v)
+    return found
 
 
 def _line_of(step: weights.Step, places: Mapping[int, Place]) -> str:
@@ -3077,13 +3211,17 @@ def _open_product(conn: sqlite3.Connection, scope: AgentScope, line: int) -> sql
     return found[0]
 
 
-def _line_step(conn: sqlite3.Connection, scope: AgentScope, step_id: int | None, line: int) -> sqlite3.Row:
+def _line_step(conn: sqlite3.Connection, scope: AgentScope, step_id: int | None, line: int | None) -> sqlite3.Row:
+    """An open step of product line ``line``; 0.39.1: with no line (a venture cycle's wait), a step of the Ventures."""
     if step_id is None:
         raise PlanError("step_id", "name the step (step_id)")
     row = node(conn, scope, step_id)
     if row is None or row["level"] != "step":
         raise PlanError("step_id", f"there is no step #{step_id}", 404)
-    if row["project_id"] != line:
+    if line is None:
+        if row["template"] not in VENTURE_TEMPLATES:
+            raise PlanError("step_id", f"step #{step_id} isn't a step of your ventures: a venture cycle changes those")
+    elif row["project_id"] != line:
         raise PlanError(
             "step_id", f"step #{step_id} is product line #{row['project_id']}'s: this cycle works on line #{line}"
         )
@@ -3275,7 +3413,7 @@ def step_done(
 def wait_step(
     conn: sqlite3.Connection,
     scope: AgentScope,
-    line: int,
+    line: int | None,
     step_id: int | None,
     on: str | None,
     ref: int | None,
@@ -3287,7 +3425,9 @@ def wait_step(
 ) -> str:
     """A step that waits on a block Ember's code can check: a request to the owner still waiting, an upgrade request
     not released or declined, another open step, or a day at most WAIT_DAYS ahead (WAITS_A_DAY a day). Its age stops
-    meanwhile, and the code takes it up again once the block is gone (``_lift_waits``)."""
+    meanwhile, and the code takes it up again once the block is gone (``_lift_waits``). 0.39.1: with no ``line``, a
+    venture cycle's step of its ventures (a triage, a brainstorm): live, an idea "paused until 10-20" came back the next
+    day, as nothing could make it wait."""
     row = _line_step(conn, scope, step_id, line)
     if row["obligation_id"] is not None or row["kind"] == templates.OWNER_KIND:
         raise PlanError("step_id", f"step #{row['id']} is your owner's: what blocks it goes in your message to them")
@@ -3312,7 +3452,9 @@ def wait_step(
         blocked = f"upgrade request #{ref}, until your owner releases or declines it"
     elif on == "step":
         other = node(conn, scope, ref) if ref is not None else None
-        if other is None or other["level"] != "step" or other["status"] != "open" or other["id"] == row["id"]:
+        if other is not None and other["id"] == row["id"]:  # 0.39.1: live, the step's own number went in ref
+            raise PlanError("ref", f"step #{ref} can't wait on itself: ref names the other step it waits on")
+        if other is None or other["level"] != "step" or other["status"] != "open":
             raise PlanError("ref", f"#{ref} isn't another open step")
         blocked = f"step #{ref}, until it is closed"
     elif on == "date":
