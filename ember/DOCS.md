@@ -284,9 +284,15 @@ it runs one **wake cycle**:
    Every cycle that worked reflects. Since 0.24.0 a journal the agent writes in
    a work step is kept as the reflection's draft: the reflection writes it again
    only to correct it, and when it writes none, or its own is refused, the draft
-   is the cycle's journal. When the model writes another tool's call inside a
-   text (a lesson inside the journal's entry), Ember's code takes it out and runs
-   it as a call of its own.
+   is the cycle's journal. When the model writes another tool's call inside its
+   journal (a lesson inside the entry), Ember's code takes it out, so the
+   journal is kept. Since 0.39.4 it runs such a call only when it only reads, as
+   one of the four tool calls a reply runs (the journal itself isn't counted);
+   any other it refuses, and the agent makes the call itself if it meant it. In
+   any other text (an email saved to its notes, a quote in a message to you)
+   such markup is part of the text and stays there: until 0.39.4 a call written
+   there ran as the agent's own, so a buyer's email could change its lessons and
+   a quote could delete a file.
 
 When a cycle ends, however it ends, Ember's code writes its **digest** from its
 records: what it was aimed at, its goal, what its tools did and what they
@@ -2835,7 +2841,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.39.3 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.39.4 (by /u/your name)`.
 
 ## Amazon KDP
 

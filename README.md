@@ -379,6 +379,19 @@ first marketing is out, without waiting for the critic to pass it: the critic
 passed no listing in 13 checks, so after their first pins and posts the live
 products got no marketing at all, and the day-7 and day-14 pushes pushed nothing.
 
+0.39.4: text Ember quotes runs no tool call (the third codebase analysis, of
+0.39.1, finding 4.1, high). Since 0.24.0 Ember's code took another tool's call
+written inside one of the agent's texts out of it and ran it as the agent's own,
+to rescue the model's slip of a call written inside its journal. It looked into
+every text of every tool and couldn't tell that slip from words the agent
+quoted: in the analysis' tests a buyer's email saved to Ember's notes
+wrote an "Owner rule" into its lessons, and a quote in a message to you deleted
+a product file. Now Ember's code takes a call out of the journal only, runs it
+only when it only reads (any other is refused, and the agent makes it itself if
+it meant it) and counts it toward the reply's four calls. A field written inside
+another moves in the journal only, too: a quote in a message could mark your
+message answered and make a promise.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
@@ -462,6 +475,12 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   post becomes a link the owner opens and posts from their own account; a KDP
   book (0.25.0) becomes a package the owner publishes at KDP from their own
   account (Ember's code never reaches Amazon).
+- **Outside text stays text.** What Ember's code shows the agent from outside
+  (emails, web pages, your library) is marked as data, with a per-cycle nonce
+  the text can't close. What the agent writes back can quote it word for word:
+  since 0.39.4 tool-call markup in a text is only text, except in the agent's
+  journal, where a call written inside it runs only when it only reads
+  (`ember/app/agent/tools.py`, `unleaked` and `run`).
 - **CSRF.** State-changing requests must carry an `X-Ember-Request: 1` header,
   which cross-site pages can't send.
 - **Strict CSP.** No inline scripts or styles; Chart.js is vendored, nothing is
