@@ -30,7 +30,7 @@ LAYOUT LINES (each alone on its line):
 ::: columns 1:2  ::: column  ...  ::: column  ...  :::    2-4 columns side by side (widths optional)
 ::: center  ...  :::           centred text
 ::: photo 35x45 Your photo     a dashed box for a photo, width x height in mm (CV photos: 35x45)
-::: lines 8                    writing lines to fill in
+::: lines 8                    writing lines (8, or 'fill': down to the bottom margin)
 ::: space 10                   empty space in mm
 ::: pagebreak                  start a new page
 Boxes, columns and center can hold each other (4 deep); each one ends with its own ':::' line.

@@ -19,7 +19,7 @@ import pytest
 
 pytest.importorskip("httpx2")
 
-from app.agent import plan, store, tools  # noqa: E402
+from app.agent import plan, store, tools, weights  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from tests.test_fixes_0280 import cycle, lined, now, working  # noqa: E402
@@ -123,6 +123,8 @@ def test_the_critics_fixes_wait_on_the_sell_requests_and_the_pins_on_the_publish
     """The critic's fixes are a change of the listing (etsy_edit, a sell request); the pins are publish requests: each
     waits on its own limit only."""
     agent, line, listing = launched(data_dir)
+    with agent.db.transaction() as conn:  # 0.39.6: seen, or the critic's suggestions wait for views
+        conn.execute("UPDATE etsy_listings SET views = ? WHERE listing_id = ?", (weights.CRITIC_VIEWS, listing))
     critic(agent, line, listing, 5)  # the critic's suggestions: its fixes are a step
     assert waits(agent, CRITIC, line) is None and waits(agent, PINS, line) is None
     posters = project(agent, "Bauhaus posters", "People hang the posters in the living room and the office")

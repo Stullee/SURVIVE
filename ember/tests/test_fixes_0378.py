@@ -242,12 +242,14 @@ def test_a_channel_takes_no_more_while_three_wait_for_their_slots(data_dir: Path
     more = {"title": "Meal prep checklist", "description": "Shop once, cook three times."}
     ctx.state = tools.CycleTools()
     refused = a_pin(agent, ctx, board_name="Meal planning printables", image="shop/pin-4.png", **more)
-    numbers = ", ".join(f"#{n}" for n in waiting)
-    assert not refused.ok and f"3 pins of yours already wait for your owner or for their slot (request {numbers})" in (
-        refused.text
+    # 0.39.6: approved pins of one listing count once toward the 3; another of that listing waits for them all
+    assert (
+        not refused.ok
+        and f"your approved pin (request #{waiting[0]}) for that listing or page waits for its slot" in (refused.text)
     )
-    assert agent.execute_approved() == [(first, "active")]  # one out: room for the next
-    assert a_pin(agent, ctx, board_id=BOARD, image="shop/pin-4.png", **more).ok
+    assert agent.execute_approved() == [(first, "active")]  # one out: the next of that listing still waits
+    again = a_pin(agent, ctx, board_id=BOARD, image="shop/pin-4.png", **more)
+    assert not again.ok and f"(request #{waiting[1]})" in again.text
 
 
 def test_a_proposal_says_when_it_would_go_out(data_dir: Path) -> None:

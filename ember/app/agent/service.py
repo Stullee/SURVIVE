@@ -28,10 +28,12 @@ from ..economy.costs import micros_to_usd
 from ..economy.life import KILLED_KEY
 from ..economy.metering import (
     EVENT_RESERVE_HOUR,
+    MORNING_HOUR,
     MeteredModel,
     OfflineTransport,
     Transport,
     event_reserve,
+    night,
     usd_cap_to_micros,
 )
 from ..economy.pricing import opening_cost, working_cycle_cost
@@ -438,10 +440,14 @@ class Agent:
         today = self.economy.books.cap_spend_on(scope, self.clock.today())
         held = event_reserve(self.settings, self.clock, "schedule", working)  # 0.13.0: kept for events until 20:00
         if daily - today - held < needed <= daily - today:
-            evening = self.clock.at(self.clock.today(), EVENT_RESERVE_HOUR)  # 0.15.0: 20:00 on DST days too
-            reason = f"the rest of the daily cap is kept for event wake-ups until {EVENT_RESERVE_HOUR}:00"
-            self._keep_wake(evening, reason, preview)
-            return Decision(False, reason=reason[0].upper() + reason[1:], wait_until=evening)
+            if night(self.clock):  # 0.39.6: half of the day's cap is the owner's day's until 08:00
+                then = self.clock.at(self.clock.today(), MORNING_HOUR)
+                reason = f"half of the daily cap is kept for your day until {MORNING_HOUR}:00"
+            else:
+                then = self.clock.at(self.clock.today(), EVENT_RESERVE_HOUR)  # 0.15.0: 20:00 on DST days too
+                reason = f"the rest of the daily cap is kept for event wake-ups until {EVENT_RESERVE_HOUR}:00"
+            self._keep_wake(then, reason, preview)
+            return Decision(False, reason=reason[0].upper() + reason[1:], wait_until=then)
         if daily - today < needed:
             tomorrow = self._next_local_midnight(now) + timedelta(minutes=5)
             self._keep_wake(tomorrow, "waiting for the daily cap to reset", preview)

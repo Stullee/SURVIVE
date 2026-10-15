@@ -11,7 +11,7 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any
 
 from ..economy.clock import from_iso, to_iso
@@ -668,9 +668,22 @@ def rules_json(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
     ]
 
 
-def rulebook_text(rows: list[sqlite3.Row]) -> str:
-    """The rulebook as the agent reads it: each rule on a line of its own, with its number ("" while there are none)."""
-    return "\n".join(f"#{r['id']} {' '.join(str(r['text']).split())}" for r in rows)
+def rulebook_text(rows: list[sqlite3.Row], today: date | None = None) -> str:
+    """The rulebook as the agent reads it: each rule on a line of its own, with its number ("" while there are none).
+    0.39.6: and the day it was set, with how long ago (``today``): live, a rule set on 10-08 for "this week" ("3)
+    nothing new. No title or tag edits before 10-20") still held the agent back on 10-15, quoted as "the owner's rule
+    this week", since nothing said when that week began."""
+    return "\n".join(
+        f"#{r['id']} ({_set_on(str(r['created_at']), today)}) {' '.join(str(r['text']).split())}" for r in rows
+    )
+
+
+def _set_on(created_at: str, today: date | None) -> str:
+    day = created_at[:10]
+    if today is None:
+        return f"set {day}"
+    ago = (today - date.fromisoformat(day)).days
+    return f"set {day}, " + ("today" if ago <= 0 else "yesterday" if ago == 1 else f"{ago} days ago")
 
 
 def open_messages(conn: sqlite3.Connection, scope: AgentScope, limit: int = 8) -> list[sqlite3.Row]:

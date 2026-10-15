@@ -108,6 +108,12 @@ CRITIC = "critic"  # 0.13.0: the independent critic of a proposed venture's case
 # 0.30.3: only while the owner's wake_on_events is on (event_reserve); 0.31.0, and a kind of event under it.
 EVENT_RESERVE_SHARE = 0.20
 EVENT_RESERVE_HOUR = 20
+# 0.39.6 (analysis-0.39.5, 4.2.3): until MORNING_HOUR (the owner's time) a scheduled cycle leaves NIGHT_RESERVE_SHARE of
+# the daily cap for the owner's day, the events' share in it. Live, every night from 00:07 the cycles spent four fifths
+# of the cap ($5.18 by 07:29 on 10-15), and the owner's decision at 07:48 got one cycle: the one that could finish it
+# waited for 20:00 with $0.01 to spend.
+NIGHT_RESERVE_SHARE = 0.50
+MORNING_HOUR = 8
 # The purposes outside the cycle cap (WORKSHOP, REVIEW, STUDY, CONSOLIDATE, CRITIC) are ledger.OUTSIDE_CYCLE_CAP, one
 # list for the guard and the books (0.15.0: the books counted the critic and the consolidation toward the cycle cap).
 # 0.15.0: they still keep the burn mode and the event reserve: a maintenance cycle's cap bounds every call in it, and
@@ -452,14 +458,24 @@ def event_reserve(settings: Settings, clock: Clock, trigger: str, working: int =
     of it for a scheduled cycle until EVENT_RESERVE_HOUR (the owner's time), nothing for any other, nor when the rest
     of the cap couldn't pay for a working cycle (``working``: what one needs) anyway. 0.30.3: nor with the owner's
     wake_on_events off: no event can wake the agent to spend it, and a scheduled wake waited until 20:00 for nothing.
-    0.31.0: nor while each kind of event is switched off (Settings.waking_events)."""
-    if not settings.waking_events():
+    0.31.0: nor while each kind of event is switched off (Settings.waking_events). 0.39.6: and until MORNING_HOUR,
+    NIGHT_RESERVE_SHARE for the owner's day (``night``), whatever wakes the agent."""
+    if trigger != "schedule":
         return 0
-    if trigger != "schedule" or clock.now().astimezone(clock.tz).hour >= EVENT_RESERVE_HOUR:
+    hour = clock.now().astimezone(clock.tz).hour
+    share = EVENT_RESERVE_SHARE if settings.waking_events() and hour < EVENT_RESERVE_HOUR else 0.0
+    if night(clock):
+        share = max(share, NIGHT_RESERVE_SHARE)
+    if not share:
         return 0
     daily = usd_cap_to_micros(settings.daily_spend_cap_usd)
-    held = int(daily * EVENT_RESERVE_SHARE)
+    held = int(daily * share)
     return held if daily - held >= working else 0
+
+
+def night(clock: Clock) -> bool:
+    """0.39.6: whether it is before MORNING_HOUR, the owner's time: a scheduled cycle leaves NIGHT_RESERVE_SHARE."""
+    return clock.now().astimezone(clock.tz).hour < MORNING_HOUR
 
 
 def workshop_reservation(
@@ -654,8 +670,9 @@ class MeteredModel:
 
     def cycle_room(self, cycle_id: int | None, mode: burn.Burn) -> tuple[int, str]:
         """0.15.0: (what the cycle may still spend under the cap in force, as its plan is judged; why that is below
-        the options' cycle cap: "maintenance" for the burn mode's cap, "events" for the event reserve, or ""). With no
-        cycle (the diagnostics' preview), a scheduled cycle's, opened now in burn ``mode``."""
+        the options' cycle cap: "maintenance" for the burn mode's cap, "events" for the event reserve, 0.39.6 "night"
+        for the share of the owner's day, or ""). With no cycle (the diagnostics' preview), a scheduled cycle's, opened
+        now in burn ``mode``."""
         if cycle_id is None:
             trigger, opened, room = "schedule", mode.mode, self.opening_cap("schedule", mode)
         else:
@@ -667,7 +684,7 @@ class MeteredModel:
         if opened == burn.MAINTENANCE:
             return room, "maintenance"
         cut = self.held_for_events(trigger) and room < usd_cap_to_micros(self.settings.cycle_spend_cap_usd)
-        return room, "events" if cut else ""
+        return room, ("night" if night(self.clock) else "events") if cut else ""  # 0.39.6: the owner's day
 
     def close_cycle(self, cycle_id: int, status: str = "completed", note: str | None = None) -> bool:
         """End a running cycle. Returns False if it had already ended (e.g. stopped after an overrun)."""
@@ -1209,9 +1226,14 @@ class MeteredModel:
         outside = purpose in OUTSIDE_CYCLE_CAP
         counted, extra = (estimate, 0) if outside else (expected, over.events)
         if for_events and today + pending + counted > daily_cap - for_events + extra:
+            kept = (  # 0.39.6: before the owner's morning, half of the day is theirs
+                f"for your owner's day until {MORNING_HOUR}:00"
+                if night(self.clock)
+                else f"for event wake-ups until {EVENT_RESERVE_HOUR}:00"
+            )
             return (
-                f"${micros_to_usd(for_events):.2f} of the daily cap is kept for event wake-ups until"
-                f" {EVENT_RESERVE_HOUR}:00 (today ${micros_to_usd(today + pending):.4f} of"
+                f"${micros_to_usd(for_events):.2f} of the daily cap is kept {kept}"
+                f" (today ${micros_to_usd(today + pending):.4f} of"
                 f" ${micros_to_usd(daily_cap):.2f}, this call {'up to' if outside else 'about'}"
                 f" ${micros_to_usd(counted):.4f})",
                 "cap",

@@ -52,9 +52,12 @@ def with_rules(text_: str, **extra: Any) -> context.Snapshot:
     return snap
 
 
-def book(*numbered: tuple[int, str]) -> str:
-    """The rulebook as the agent reads it, JSON-quoted: each rule on a line, with its number."""
-    return json.dumps("\n".join(f"#{n} {' '.join(words.split())}" for n, words in numbered), ensure_ascii=False)
+def book(*numbered: tuple[int, str], day: str = "2026-09-01", when: str = "today") -> str:
+    """The rulebook as the agent reads it, JSON-quoted: each rule on a line, with its number (0.39.6: and the day it was
+    set, ``when``: how long ago)."""
+    return json.dumps(
+        "\n".join(f"#{n} (set {day}, {when}) {' '.join(words.split())}" for n, words in numbered), ensure_ascii=False
+    )
 
 
 # --- storage ---

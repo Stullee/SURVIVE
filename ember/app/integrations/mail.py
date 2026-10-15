@@ -49,7 +49,7 @@ TIMEOUT_SECONDS = 20
 MAX_FETCH = 20  # emails per fetch, the oldest new ones first (0.12.0: the newest, and the rest were dropped)
 MAX_MESSAGE_BYTES = 1_000_000  # larger emails are read from their headers and START_BYTES (0.39.5: headers only)
 START_BYTES = 262_144  # 0.39.5: of a larger email's body, where its text comes before its attachments
-BODY_CHARS = 8_000  # of an email's text kept (0.39.6: what it quotes goes first, fit_text)
+BODY_CHARS = 8_000  # of an email's text kept (0.39.7: what it quotes goes first, fit_text)
 SUBJECT_CHARS = 300
 NAME_CHARS = 200
 ID_CHARS = 998
@@ -58,7 +58,7 @@ ATTACHMENTS_CHARS = 2_000
 OWNER_NAME_CHARS = 60
 SMTP_PORTS = {465: "TLS", 587: "STARTTLS"}
 _HTML_FEED = 16_384  # characters of HTML parsed at a time, until enough text is found
-# 0.39.6: of an HTML email's quoted text, parsed for the words below it: only the text outside its quotes counts toward
+# 0.39.7: of an HTML email's quoted text, parsed for the words below it: only the text outside its quotes counts toward
 # the 2 * BODY_CHARS that are enough, so a stop written below a long quote is read. A quote nested deep repeats its ">"
 # on each line, so its text can be many times its HTML: past this much of it the rest isn't read.
 _QUOTED_CHARS = 1_000_000
@@ -422,7 +422,7 @@ def _started(head: bytes, start: bytes, uid: int, size: int | None, authserv_ids
     if mail.body == NO_TEXT:
         raise ValueError("no text at its start")
     note = _too_large(size, started=True)
-    body, cut = fit_text(mail.body, BODY_CHARS - len(note) - 2)  # 0.39.6: what it quotes goes first, as in any email
+    body, cut = fit_text(mail.body, BODY_CHARS - len(note) - 2)  # 0.39.7: what it quotes goes first, as in any email
     return replace(mail, body=f"{body}\n\n{note}", body_cut=mail.body_cut or cut, attachments=[])
 
 
@@ -676,11 +676,11 @@ def _body_text(msg: EmailMessage) -> tuple[str, bool]:
     return text or NO_TEXT, cut
 
 
-LEFT_OUT = "[...]"  # 0.39.6: in an email's kept text, where lines it quotes were left out (fit_text)
+LEFT_OUT = "[...]"  # 0.39.7: in an email's kept text, where lines it quotes were left out (fit_text)
 
 
 def fit_text(text: str, limit: int = BODY_CHARS) -> tuple[str, bool]:
-    """0.39.6: an email's text in ``limit`` characters, and whether any of it was left out. A longer one loses what it
+    """0.39.7: an email's text in ``limit`` characters, and whether any of it was left out. A longer one loses what it
     quotes first: the lines of its deepest quote (the oldest emails of a thread), then of the next one, until it fits,
     each run of them left out as one line "> [...]" as deep as they were; only then is its end cut. Until then its
     first BODY_CHARS were kept: a stop written below a thread quoted three rounds deep (10,259 characters in) was read
@@ -718,7 +718,7 @@ def fit_text(text: str, limit: int = BODY_CHARS) -> tuple[str, bool]:
 
 
 def _depths(lines: list[str]) -> list[int]:
-    """0.39.6: how deep each line of an email's text is quoted (its ">", spaces between them aside), and a blank line as
+    """0.39.7: how deep each line of an email's text is quoted (its ">", spaces between them aside), and a blank line as
     deep as the shallower of the lines around it, so the paragraphs of a quote are left out together."""
     depths = [line[: len(line) - len(line.lstrip("> \t"))].count(">") for line in lines]
     blank = [not line.strip() for line in lines]
@@ -764,8 +764,8 @@ class _HtmlText(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
-        self.size = 0  # characters of text (0.39.6: outside quotes)
-        self.quoted = 0  # 0.39.6: of text inside quotes (_QUOTED_CHARS)
+        self.size = 0  # characters of text (0.39.7: outside quotes)
+        self.quoted = 0  # 0.39.7: of text inside quotes (_QUOTED_CHARS)
         # (tag, hides its content, a link's host, its background: None when it has none, "" when it isn't known)
         self.stack: list[tuple[str, bool, str | None, str | None]] = []
         self.hidden = 0  # open elements that hide their content
@@ -1094,7 +1094,7 @@ def _link_host(attrs: list[tuple[str, str | None]]) -> str | None:
 
 
 def html_to_text(html: str) -> str:
-    """The visible text of an HTML email (parsed only as far as needed for the stored text). 0.39.6: only its text
+    """The visible text of an HTML email (parsed only as far as needed for the stored text). 0.39.7: only its text
     outside quotes counts toward that, so the words below a long quote are read (up to _QUOTED_CHARS of quote): a
     reply below a quote of more than 2 * BODY_CHARS wasn't parsed, its stop with it."""
     parser = _HtmlText()

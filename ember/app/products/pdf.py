@@ -63,6 +63,7 @@ COLUMN_GAP = 6.0
 BOX_PADDING = 4.0
 LIST_INDENT = 5.0
 WRITING_LINE = 8.0  # mm between writing lines
+GAP_LINES = 2  # 0.39.6: a book's writing lines that end a page with room for this many more below them are named
 FOOTER_SPACE = 8.0
 SPLITS_SHOWN = 6  # 0.39.1: the pages a book's checks name, at most
 PROSE_WORDS = 40  # 0.39.2: a paragraph longer makes its part a chapter, which runs on, not a page to fill in
@@ -287,6 +288,7 @@ class Renderer:
         self.body_lh = t.size * t.line_height * MM_PER_PT
         self.gap = t.size * 0.62 * MM_PER_PT
         self.splits: list[int] = []  # 0.39.1: the pages a table to fill in ran on from
+        self.gaps: list[int] = []  # 0.39.6: the pages whose writing lines end with room for GAP_LINES more below them
 
     # --- the document ---
 
@@ -331,6 +333,11 @@ class Renderer:
                     f"a table to fill in runs on to the next page from {_pages(self.splits)}: in a book keep each on "
                     "its page (fewer rows, a smaller size or line_height, or a pagebreak before it)"
                 )
+            if self.gaps:  # 0.39.6: the owner's rejection of request #120, "extend the lines for the notes"
+                self.report.warn(
+                    f"the writing lines on {_pages(self.gaps)} end with room for {GAP_LINES} or more lines below them: "
+                    "in a book end such a page with '::: lines fill', which rules it down to its bottom margin"
+                )
         return bytes(canvas.pdf.output()), self.report
 
     # --- blocks ---
@@ -347,6 +354,7 @@ class Renderer:
         for index, block in enumerate(blocks):
             if overruns is not None and isinstance(block, PageBreak):
                 self._overran(flow, start, form and not free and len(self.splits) == split, overruns)
+                self._gap(flow, blocks[index - 1] if index else None)
             if index + 1 < len(blocks) and not flow.dry and not flow.at_top:
                 self._keep_with(flow, block, blocks[index + 1], look)
             self.block(flow, block, look)
@@ -360,6 +368,18 @@ class Renderer:
                 free = True
         if overruns is not None:
             self._overran(flow, start, form and not free and len(self.splits) == split, overruns)
+            self._gap(flow, blocks[-1] if blocks else None)
+
+    def _gap(self, flow: Flow, last: Block | None) -> None:
+        """0.39.6: a page of the main text that ends (a pagebreak, or the end) with writing lines of a fixed count
+        and room for GAP_LINES more below them: live, the owner rejected the Haushaltsbuch's v15 (request #120) for
+        notes lines that left "all that white space" under them, and no check said so."""
+        if not isinstance(last, Lines) or last.fill or flow.at_top:
+            return
+        if last.count * WRITING_LINE > flow.bottom - flow.top:  # a notebook's pages of lines: its last page ends them
+            return
+        if flow.bottom - (flow.y - self.gap) >= GAP_LINES * WRITING_LINE and flow.page not in self.gaps:
+            self.gaps.append(flow.page)
 
     @staticmethod
     def _overran(flow: Flow, start: int, form: bool, overruns: list[int]) -> None:
@@ -534,7 +554,12 @@ class Renderer:
         flow.y += height + self.gap
 
     def writing_lines(self, flow: Flow, block: Lines, look: Look) -> None:
-        for _ in range(block.count):
+        count = block.count
+        if block.fill and not flow.dry:  # 0.39.6: down to the bottom margin, at least its count (else on the next page)
+            flow.need(count * WRITING_LINE)
+            count = max(count, int((flow.bottom + 0.01 - flow.y) // WRITING_LINE))
+            block.drawn = count  # the Word copy draws as many
+        for _ in range(count):
             flow.need(WRITING_LINE)
             if not flow.dry:
                 self.canvas.draw(tint(look.text, 0.6), 0.2)

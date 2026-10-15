@@ -10,7 +10,7 @@ or "now", not a question), when the subject is one, or when one of its lines or 
 "remove me", "don't email me", "keine E-Mails mehr", "désinscrire", "darme de baja", "non scrivetemi" or "afmelden".
 0.15.0: its first lines are the first FIRST_LINES after a greeting (only the very first counted, so "Hello,\nPlease
 stop." was missed), and more phrases count; 0.39.5: the first lines of each part of their own words, the part below
-a quote too, and (0.39.6) below a quote of any length. A false alarm only means Ember doesn't write to that sender
+a quote too, and (0.39.7) below a quote of any length. A false alarm only means Ember doesn't write to that sender
 again (they can write first); a miss would break the law (GDPR Art. 21, UWG § 7), so the phrases lean towards asking.
 The agent marks what this misses (mark_opt_out), and the owner can add any address.
 """
@@ -21,7 +21,7 @@ import re
 import unicodedata
 
 OWN_CHARS = 2_000  # of the sender's own words: an opt-out comes first
-# 0.39.5: of the text read for them. 0.39.6: what they quote (">") doesn't count, however long it is: counted with
+# 0.39.5: of the text read for them. 0.39.7: what they quote (">") doesn't count, however long it is: counted with
 # the quotes, these 8,000 characters missed a stop written below a thread quoted three rounds deep
 READ_CHARS = 8_000
 REASON_CHARS = 60
@@ -179,7 +179,7 @@ def own_parts(body: str) -> list[list[tuple[str, str]]]:
     """The sender's own lines (each as written and plain), without what they quote and their signature, in parts: the
     lines above a quote, and (0.39.5) those after a quote marked with ">", a reply written below the quote or into
     it, each a part of its own. Lines that follow a quote's first line without ">" are a quote its writer's program
-    didn't mark, and end them. 0.39.6: what they quote doesn't count toward the READ_CHARS read."""
+    didn't mark, and end them. 0.39.7: what they quote doesn't count toward the READ_CHARS read."""
     parts: list[list[tuple[str, str]]] = [[]]
     size = read = 0
     cited = False

@@ -133,7 +133,8 @@ def test_a_missed_views_bar_puts_the_products_marketing_above_its_launch_and_its
     critic(agent, line, listing, 5)
     decide(agent, line, 7)  # day 7 with no view: its marketing comes first for a week
     found = urgencies(agent, line)
-    assert (found[PINS], found[CRITIC]) == (weights.MISSED_BAR, 0.0)  # 0.39.1: no one sees it: its polish waits
+    assert found[PINS] == weights.MISSED_BAR  # 0.39.1: no one sees it: its polish waits (0.39.6: for views)
+    assert CRITIC not in found
 
 
 # --- a channel is judged on results old enough to exist ---
