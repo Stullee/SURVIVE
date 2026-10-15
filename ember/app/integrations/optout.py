@@ -2,14 +2,14 @@
 
 Only the sender's own words count: what they quote of an earlier email (lines starting with ">", and everything from a
 header such as "-----Original Message-----" or "From: ..." on, which starts a quote without ">") and their signature
-are left out, so Ember's own footer ('Reply "stop" ...') in a quoted reply never counts. 0.39.3: a quote's first line
+are left out, so Ember's own footer ('Reply "stop" ...') in a quoted reply never counts. 0.39.4: a quote's first line
 ("On ... wrote:", "Am ... schrieb ...:") ended them too, so a reply written below the quote (Thunderbird's default) or
 into it was never read; now their words after a quote marked with ">" count. It asks when one of its first lines is
 only a word like "stop", "unsubscribe" or "abmelden" (or a short line with "stop" and only words like "please", "no"
 or "now", not a question), when the subject is one, or when one of its lines or its subject holds a phrase such as
 "remove me", "don't email me", "keine E-Mails mehr", "désinscrire", "darme de baja", "non scrivetemi" or "afmelden".
 0.15.0: its first lines are the first FIRST_LINES after a greeting (only the very first counted, so "Hello,\nPlease
-stop." was missed), and more phrases count; 0.39.3: the first lines of each part of their own words, the part below
+stop." was missed), and more phrases count; 0.39.4: the first lines of each part of their own words, the part below
 a quote too. A false alarm only means Ember doesn't write to that sender again (they can write first); a miss would
 break the law (GDPR Art. 21, UWG § 7), so the phrases lean towards asking. The agent marks what this misses
 (mark_opt_out), and the owner can add any address.
@@ -21,11 +21,11 @@ import re
 import unicodedata
 
 OWN_CHARS = 2_000  # of the sender's own words: an opt-out comes first
-READ_CHARS = 8_000  # 0.39.3: of the text read for them, quotes included (all of a stored email's: mail.BODY_CHARS)
+READ_CHARS = 8_000  # 0.39.4: of the text read for them, quotes included (all of a stored email's: mail.BODY_CHARS)
 REASON_CHARS = 60
 FIRST_LINES = 3  # 0.15.0: the own lines, after a greeting, in which a short "stop" asks
 SHORT_WORDS = 4
-# A quote's first line. 0.39.3: the sender's own words may follow its lines (">"): below it, or between its parts.
+# A quote's first line. 0.39.4: the sender's own words may follow its lines (">"): below it, or between its parts.
 _ATTRIBUTION = re.compile(
     r"^(?:on|am|le|el|il|op|em|w dniu)\b.{0,300}\b(?:wrote|schrieb|a ecrit|escribio|ha scritto|schreef|escreveu"
     r"|napisal)\b.{0,100}:$"
@@ -175,7 +175,7 @@ def _bare(plain: str) -> str:
 
 def own_parts(body: str) -> list[list[tuple[str, str]]]:
     """The sender's own lines (each as written and plain), without what they quote and their signature, in parts: the
-    lines above a quote, and (0.39.3) those after a quote marked with ">", a reply written below the quote or into
+    lines above a quote, and (0.39.4) those after a quote marked with ">", a reply written below the quote or into
     it, each a part of its own. Lines that follow a quote's first line without ">" are a quote its writer's program
     didn't mark, and end them."""
     parts: list[list[tuple[str, str]]] = [[]]
@@ -214,7 +214,7 @@ def opt_out(subject: str | None, body: str | None) -> str | None:
     """The words in which an email asks not to be emailed again (its line that does, or its subject), or None."""
     parts = own_parts(body or "")
     topic = _SUBJECT_PREFIX.sub("", _plain(subject or ""))
-    for part in parts:  # 0.39.3: each part's, a reply's below the quote too (only the email's first lines counted)
+    for part in parts:  # 0.39.4: each part's, a reply's below the quote too (only the email's first lines counted)
         counted = 0
         for written, plain in part:  # the first lines, a greeting aside (0.15.0: only the first line counted)
             if _asks_alone(plain):

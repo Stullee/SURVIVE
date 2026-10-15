@@ -47,8 +47,8 @@ from ..economy.clock import to_iso
 
 TIMEOUT_SECONDS = 20
 MAX_FETCH = 20  # emails per fetch, the oldest new ones first (0.12.0: the newest, and the rest were dropped)
-MAX_MESSAGE_BYTES = 1_000_000  # larger emails are read from their headers and START_BYTES (0.39.3: headers only)
-START_BYTES = 262_144  # 0.39.3: of a larger email's body, where its text comes before its attachments
+MAX_MESSAGE_BYTES = 1_000_000  # larger emails are read from their headers and START_BYTES (0.39.4: headers only)
+START_BYTES = 262_144  # 0.39.4: of a larger email's body, where its text comes before its attachments
 BODY_CHARS = 8_000
 SUBJECT_CHARS = 300
 NAME_CHARS = 200
@@ -230,7 +230,7 @@ _ESCAPED = re.compile(r"[\udc80-\udcff]")  # a byte the parser couldn't decode, 
 
 
 def storable(text: str) -> str:
-    """0.39.3: text without surrogates, which SQLite (and UTF-8) refuse. The email parser keeps a header's raw 8-bit
+    """0.39.4: text without surrogates, which SQLite (and UTF-8) refuse. The email parser keeps a header's raw 8-bit
     bytes (allowed since RFC 6532, and common in spam) as surrogates: they are read as UTF-8 again (M\\xc3\\xbcller is
     Müller), and what isn't UTF-8 becomes U+FFFD. One sender's name in raw bytes made every read of the mailbox fail
     for good, the emails after it unread, their stops too."""
@@ -241,14 +241,14 @@ def storable(text: str) -> str:
 
 
 def one_line(text: Any, limit: int) -> str:
-    """Header text on one line: invisible characters and (0.39.3) surrogates removed, whitespace collapsed, cut to
+    """Header text on one line: invisible characters and (0.39.4) surrogates removed, whitespace collapsed, cut to
     ``limit``."""
     flat = " ".join(_INVISIBLE.sub("", storable(str(text or ""))).split())
     return flat[:limit]
 
 
 def clean_text(text: str) -> str:
-    """Body text: line breaks kept, invisible characters and (0.39.3) surrogates removed, spaces and blank lines
+    """Body text: line breaks kept, invisible characters and (0.39.4) surrogates removed, spaces and blank lines
     collapsed."""
     text = _INVISIBLE.sub("", storable(text).replace("\r\n", "\n").replace("\r", "\n"))
     lines = [_SPACES.sub(" ", line).strip() for line in text.split("\n")]
@@ -298,7 +298,7 @@ class IncomingMail:
         return json.dumps(self.attachments, ensure_ascii=False)
 
     def headers_only(self) -> IncomingMail:
-        """0.39.3: this email with its headers only, each of them storable whatever it holds, and UNSTORABLE as its
+        """0.39.4: this email with its headers only, each of them storable whatever it holds, and UNSTORABLE as its
         text: what mailstore stores when the database refused the email as it was. A "stop" in its subject still
         counts."""
 
@@ -363,7 +363,7 @@ _NEVER = b"\n"  # a boundary no line matches: the parser's has characters no lin
 _CONTENT_TYPE = re.compile(rb"^content-type:[^\n]*(?:\n[ \t][^\n]*)*\n?", re.IGNORECASE | re.MULTILINE)
 TOO_COMPLEX = "[This email is nested deeper or has more parts than any real email, so only its headers were stored.]"
 UNREADABLE = "[Ember couldn't read this email, so only its headers were stored.]"
-UNSTORABLE = "[Ember couldn't store this email as it was, so only its headers were stored.]"  # 0.39.3
+UNSTORABLE = "[Ember couldn't store this email as it was, so only its headers were stored.]"  # 0.39.4
 
 
 def parse_message(
@@ -378,7 +378,7 @@ def parse_message(
     """One email as Ember stores it: decoded, cleaned and capped. 0.21.0: never raises. An email too deeply nested
     (``too_complex``), or one the parser fails on, is stored with its headers only, so it can't stop the mailbox
     being read past it, and a "stop" in its subject still counts. 0.22.1: ``authserv_ids`` are the provider's
-    (email_authserv_id, see ``_authenticated``). 0.39.3: ``start`` is the start of a larger email's body (with
+    (email_authserv_id, see ``_authenticated``). 0.39.4: ``start`` is the start of a larger email's body (with
     ``headers_only``, ``raw`` its headers): the text there is stored, so its "stop" counts (one sent with a photo
     was read by neither the check nor the agent), without the attachments; with none there, its headers only."""
     if headers_only and start:
@@ -407,7 +407,7 @@ def parse_message(
 
 
 def _started(head: bytes, start: bytes, uid: int, size: int | None, authserv_ids: tuple[str, ...]) -> IncomingMail:
-    """0.39.3: a larger email read from its headers and the start of its body: the text found there, and a note that
+    """0.39.4: a larger email read from its headers and the start of its body: the text found there, and a note that
     the rest wasn't read. Raises when there is none, or the start is too complex (``too_complex``)."""
     text = _lines(head)
     end = text.find(b"\n\n")
@@ -650,7 +650,7 @@ def _header(msg: Message, name: str, limit: int) -> str | None:
 
 def _too_large(size: int | None, started: bool = False) -> str:
     shown = f"{size / 1_000_000:.1f} MB" if size else "unknown size"
-    if started:  # 0.39.3
+    if started:  # 0.39.4
         return f"[This email is larger than 1 MB ({shown}): Ember read the text at its start, not its attachments.]"
     return f"[This email is larger than 1 MB ({shown}), so only its headers were stored.]"
 
@@ -708,16 +708,16 @@ class _HtmlText(HTMLParser):
         self.hidden = 0  # open elements that hide their content
         self.overflow = False
         self.css = ""  # the style sheet being read, without its comments (at most _CSS_CHARS of it)
-        self.css_comment = False  # 0.39.3: inside one of its comments
-        self.css_held = ""  # 0.39.3: a "/" or "*" ending a piece of it, which may start or end a comment with the next
+        self.css_comment = False  # 0.39.4: inside one of its comments
+        self.css_held = ""  # 0.39.4: a "/" or "*" ending a piece of it, which may start or end a comment with the next
         # Rules by a class (".x"), id ("#x") or tag they select: (tag, classes, id, declarations)
         self.rules: dict[str, list[tuple[str | None, frozenset[str], str | None, str]]] = {}
         self.hiding: set[str] = set()  # classes, ids and tags with more hiding rules than are kept: they hide
         self.page: str = _WHITE
         self.work = 0  # 0.23.0: characters of style read (_STYLE_WORK)
         self.heavy = False
-        self.quotes = 0  # 0.39.3: open <blockquote> elements, whose lines start with ">"
-        self.fresh = True  # 0.39.3: no text yet on the line being written
+        self.quotes = 0  # 0.39.4: open <blockquote> elements, whose lines start with ">"
+        self.fresh = True  # 0.39.4: no text yet on the line being written
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self._break(tag)
@@ -798,7 +798,7 @@ class _HtmlText(HTMLParser):
         self._break(tag)
 
     def _style(self, data: str) -> None:
-        """0.39.3: a piece of a style sheet, kept without its comments, read once and only while the sheet is under
+        """0.39.4: a piece of a style sheet, kept without its comments, read once and only while the sheet is under
         _CSS_CHARS (comments don't count). An unclosed comment ends the sheet, as in a browser. The pattern before
         took time growing with the square of a run of unclosed comments, and it ran over the whole sheet with every
         piece before the cap was applied: one HTML email of 1 MB held the scheduler for 24 minutes."""
@@ -869,7 +869,7 @@ class _HtmlText(HTMLParser):
             if index:
                 self.fresh = True
             if _INVISIBLE.sub("", line).strip():
-                # 0.39.3: a quote's lines start with ">", as in a plain-text email: the opt-out check left out only the
+                # 0.39.4: a quote's lines start with ">", as in a plain-text email: the opt-out check left out only the
                 # sender's words above a quote, and missed a "stop" written below an HTML reply's
                 if self.fresh and self.quotes:
                     lines[index] = ">" * self.quotes + " " + line
@@ -1142,7 +1142,7 @@ class LiveMailbox:
 
     @staticmethod
     def _start(conn: Any, uid: int) -> bytes | None:
-        """0.39.3: the first START_BYTES of a larger email's body, where its text comes before its attachments (PEEK:
+        """0.39.4: the first START_BYTES of a larger email's body, where its text comes before its attachments (PEEK:
         nothing is marked read); None when the server refuses them. A broken connection still fails the read, so the
         email is read again next time."""
         try:

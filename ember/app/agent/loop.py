@@ -996,6 +996,13 @@ class CycleRunner:
                         + (", until they take the venture up again." if held["stage"] == "parked" else ".")
                     )
                     plan.focus_project_id, focus = None, None
+                elif (why := plan_tree.line_held(conn, self.scope, int(focus["id"]))) is not None:
+                    # 0.39.3 (analysis-0.39.1, 4.4): and so does their hold of a product; a focus on one carried it on
+                    stopped = (
+                        f"No focus project: your plan's #{focus['id']} waits, because your owner holds it"
+                        f" ({why}). Work on what doesn't need it, until they resume it."
+                    )
+                    plan.focus_project_id, focus = None, None
             if plan.focus_venture_id is not None:
                 venture = ventures.get(conn, self.scope, plan.focus_venture_id)
                 if venture is None or venture["stage"] not in ventures.OPEN_STAGES:

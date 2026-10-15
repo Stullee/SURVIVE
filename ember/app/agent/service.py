@@ -1009,7 +1009,7 @@ class Agent:
     def execute_approved(self) -> list[tuple[int, str]]:
         """Send the approved emails, create the approved Etsy listings and (0.13.0) pins and Printify products and
         (0.19.0) Bluesky posts that are due (the scheduler calls this before every decision). 0.15.0: while the agent
-        is paused or waits for money, only the owner's Undo. 0.39.3: each executor on its own, so one that fails holds
+        is paused or waits for money, only the owner's Undo. 0.39.4: each executor on its own, so one that fails holds
         back none of the others: the emails' read of the mailbox raised, and while an approved email waited no
         listing, pin, post, Printify product or upload to the website went out."""
         runs: list[tuple[str, Callable[[], list[tuple[int, str]]]]]

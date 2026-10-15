@@ -367,7 +367,19 @@ step's kind tells Ember that pins and posts are a marketing cycle's (a step for
 pins went to a cycle that couldn't pin), and a step said done needs a reason of
 more than one word (one was closed with "placeholder").
 
-0.39.3: three fixes of Ember's mailbox from the analysis of 0.39.1 (4.2, 4.3
+0.39.3: two plan fixes from the third codebase analysis (the analysis of 0.39.1,
+its 4.4 and 4.5). **Hold it** now holds a product's promises and your decisions
+on its requests too: a product you held after rejecting its listing got the next
+cycle for the rejection, and a promise about it one a day. No cycle is aimed at
+a product you hold, Ember's tools refuse its work, and holding it names what
+waits with it. **Hold new things** refuses a new venture too, and a new product
+whatever venture it names (a product of an idea Ember had just made got
+through). And a live product's weekly pin, post and blog post come once its
+first marketing is out, without waiting for the critic to pass it: the critic
+passed no listing in 13 checks, so after their first pins and posts the live
+products got no marketing at all, and the day-7 and day-14 pushes pushed nothing.
+
+0.39.4: three fixes of Ember's mailbox from the analysis of 0.39.1 (4.2, 4.3
 and 4.12). A "stop" written below the quote (Thunderbird's way, and German
 netiquette's), between its parts or under an HTML reply's quote is recognised:
 only the words above a quote's first line counted, so 0.37.3's read before
@@ -457,7 +469,7 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   email it proposes is sent by Ember's code only after the owner approves it,
   exactly as approved, once, to one recipient, with a footer saying an AI wrote
   it and within a daily limit, and (0.37.3) only after Ember's code read its
-  mailbox since the approval, so a "stop" waiting there is seen first (0.39.3:
+  mailbox since the approval, so a "stop" waiting there is seen first (0.39.4:
   also one written below the quote, or sent with a photo); a send is recorded
   before it starts and never retried
   (`ember/app/integrations/executor.py`). The kill switch stops whatever
