@@ -1054,7 +1054,8 @@ marketing step: a pin, a Bluesky post, a blog post, or a request that a
 marketing cycle makes. (0.28.0 to 0.34.0 the **Share for marketing** option gave
 marketing cycles a part of each day's spending; that option is gone.) A
 product's marketing steps come from its type's launch stage and, once it is
-launched, the recurring steps of its maintain stage: a pin a week, a Bluesky
+launched (its first marketing out; since 0.39.3 whether or not the critic has
+passed it), the recurring steps of its maintain stage: a pin a week, a Bluesky
 post a week for English products, a blog post a month for German ones. A missed
 day-7 views date makes its marketing urgent for a week.
 
@@ -1120,9 +1121,15 @@ product has stages (research, create, release, launch, maintain), and each stage
 has small steps. A step or a stage counts as done only when its check passes in
 Ember's records: a demand note, a request to you, a live listing, pins, Bluesky
 posts and blog posts that link the product. A later stage done closes the ones
-before it. Once a product's stages before maintain are done, its maintain stage
-gets a recurring step for each channel its audience uses, and a fix whenever
-the quality check says improve (the step quotes what the critic said). A
+before it. Once a product is launched, its maintain stage gets a recurring step
+for each channel its audience uses, and a fix whenever the quality check says
+improve (the step quotes what the critic said). It is launched when its stages
+before maintain are done, and since 0.39.3 its launch counts once its first
+marketing is out: the critic's pass (maintain's fixes take its suggestions
+over) and a step waiting on a channel that is off no longer hold its weekly
+steps back, and once launched it stays so. Live, the critic passed no listing in
+13 checks, so after their first pins and posts the live products had no
+marketing step at all, and a missed day-7 date had nothing to put first. A
 channel's own line (the Pinterest test) gets none since 0.39.1: a pin or post
 links a line's own listings, and it has none (the tools refuse another line's),
 so its steps for them dropped; its products' marketing is theirs. A
@@ -1340,9 +1347,18 @@ it** or **Drop it**. **Close as done** or **Drop it** ends a product (and its
 line) whenever you want. **Lift the hold** puts a product Ember held back in the
 plan. Since 0.36.0 **Hold it** holds a product yourself, with an optional
 reason: its steps wait until you **Resume it**, and Ember can't lift your hold
-(her own she can). **Hold new things** on the Ventures box is "nothing new":
-no venture cycle and no new product (Ember's code refuses one) until you
-**Resume**. **Explore next** on a venture's step has the next venture cycle
+(her own she can). Since 0.39.3 that holds the promises Ember made you about it
+and your decisions on its requests too, as your park of its venture does: until
+then they took cycles on the product you held (a rejection on its day, a promise
+each day as its day neared). No cycle is aimed at it, and Ember's tools refuse
+its work (a request, a listing, a pin or a post; she can still note its record).
+**Hold it** names what waits with it. Ember's own hold leaves what she owes
+you going on. **Hold new things** on the Ventures box is "nothing new":
+no venture cycle and no new product until you **Resume**. Ember's code refuses
+a new product whatever venture it names, and (since 0.39.3) a new venture:
+until then a new product of an idea went through, and an ordinary cycle could
+make the idea. You can still add an idea yourself.
+**Explore next** on a venture's step has the next venture cycle
 take it (0.37.0). **Freeze** on the Titles and tags card
 keeps the live listings' titles and tags as they are until the day you choose
 (at most 60 days ahead): Ember's code refuses a change of them, the quality
@@ -2819,7 +2835,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.39.2 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.39.3 (by /u/your name)`.
 
 ## Amazon KDP
 
