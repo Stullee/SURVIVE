@@ -4716,7 +4716,7 @@ def _propose_pin(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     replaced: list[int] = []
     if store.pending_approval_by_payload(conn, ctx.scope, store.sha256(payload)) is None:  # that one: as before
         replaced = _repeated_pin(conn, ctx.scope, pin)  # 0.37.8
-        _room_in_queue(ctx, conn, "pinterest", replaced)
+        _room_in_queue(ctx, conn, "pinterest", replaced, publish_queue.keys([pin.link]))
         for old in replaced:
             store.withdraw_request(conn, ctx.scope, old, REPLACED_PIN, ctx.cycle_id, ctx.now())
     made_id = _new_request(
@@ -4768,9 +4768,20 @@ def _slot_words(ctx: ToolContext, conn: Any, channel: str, per_day: int, approva
     return f"{rules}; approved now, {then}" + (f" ({cause})" if slot.why not in ("now", "gap") else "")
 
 
-def _room_in_queue(ctx: ToolContext, conn: Any, channel: str, replaced: list[int]) -> None:
+def _room_in_queue(ctx: ToolContext, conn: Any, channel: str, replaced: list[int], links: tuple[str, ...] = ()) -> None:
     """0.37.8: a channel takes no more of the agent's requests while publish_queue.WAITING of them wait for the owner or
-    for their slot (what a day of it holds): a long queue would publish days later what was planned for now."""
+    for their slot (what a day of it holds): a long queue would publish days later what was planned for now. 0.39.6:
+    approved ones of one listing count once there, and a request for a listing (``links``, the queue's keys) that has
+    an approved one waiting for its slot is refused: it would only go out LINK_DAYS after that one."""
+    held = publish_queue.slotted(conn, ctx.scope, channel)
+    taken = sorted({held[k] for k in links if k in held and held[k] not in replaced})
+    if taken:
+        one, many = publish_queue.THINGS[channel]
+        raise ToolError(
+            f"your approved {one} (request {_numbers(taken)}) for that listing or page waits for its slot, and a"
+            f" listing gets one {one} in {publish_queue.LINK_DAYS} days: make the next {one} for a listing with none"
+            f" waiting (approved {many} of one listing count once toward the {publish_queue.WAITING} that may wait)"
+        )
     found = [n for n in publish_queue.waiting(conn, ctx.scope, channel) if n not in replaced]
     if len(found) >= publish_queue.WAITING:
         one, many = publish_queue.THINGS[channel]
@@ -4975,7 +4986,7 @@ def _propose_bluesky_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
         repeated = _repeated_post(conn, ctx.scope, text)
         if repeated:
             raise ToolError(f"it says what {repeated} says: never the same post twice; write a new one (or none)")
-        _room_in_queue(ctx, conn, "bluesky", [])  # 0.37.8
+        _room_in_queue(ctx, conn, "bluesky", [], publish_queue.keys([post.link, post.second_link]))  # 0.37.8
     reason = args["reason"].strip()
     made_id = _new_request(
         ctx,

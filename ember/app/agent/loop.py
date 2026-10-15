@@ -37,6 +37,7 @@ from ..economy.metering import (
     CONSOLIDATE,
     CRITIC,
     EVENT_RESERVE_HOUR,
+    MORNING_HOUR,
     RESEARCH_CHECK,
     REVIEW,
     STUDY,
@@ -1451,7 +1452,7 @@ class CycleRunner:
             spent = books.api_spend_between(ledger_scope, start, now)
             lines.append(f"Last {days} days: revenue less expenses {_usd(earned)}, API spending {_usd(spent)}.")
         with self.db.connection() as conn:
-            rulebook = store.rulebook_text(store.rules(conn, self.scope))  # 0.36.0: the standing instructions retired
+            rulebook = store.rulebook_text(store.rules(conn, self.scope), self.clock.today())  # 0.39.6: dated
             whole = weekly.view(
                 conn,
                 self.scope,
@@ -2322,7 +2323,7 @@ class CycleRunner:
             with self.db.connection() as conn:
                 tree = ventures.all_ventures(conn, self.scope)
                 parent = ventures.get(conn, self.scope, venture_id) if venture_id is not None else None
-                rulebook = store.rulebook_text(store.rules(conn, self.scope))
+                rulebook = store.rulebook_text(store.rules(conn, self.scope), self.clock.today())
             if venture_id is not None and (parent is None or parent["stage"] == "killed"):
                 return tools.Outcome(False, f"Error: there is no venture #{venture_id} to branch from.", "refused")
             if len(tree) >= ventures.MAX_VENTURES:
@@ -2794,6 +2795,8 @@ def _cap_note(why: str) -> str:
         return f" (maintenance: ${burn.MAINTENANCE_CYCLE_USD:.2f} a cycle, every call counted)"
     if why == "events":
         return f" (until {EVENT_RESERVE_HOUR}:00 a fifth of today's cap is kept for event wake-ups)"
+    if why == "night":  # 0.39.6
+        return f" (until {MORNING_HOUR}:00 half of today's cap is kept for your owner's day)"
     return ""
 
 

@@ -36,6 +36,12 @@ once the day's messages that answer none of theirs are sent. Of the 30 cycles #1
 a refusal after the sleep was cut for them. plan.busy reads the limits as the cycle ends (plan.limits): a cycle whose
 own request filled the queue has nothing left it can advance there. 0.38.1: and a listing, a change of one or a
 product while the sell requests that may wait for the owner wait.
+
+0.39.6 (analysis-0.39.5, 4.2.1): live on 2026-10-15 the cut still came 16 times from 00:07 to 07:55 ($5.59 of the $7
+cap), for whatever step was ready: the critic's chores on listings 1 to 3 people had seen, a views baseline. The agent
+had chosen 4 to 6 hours each time, with reasons ("No urgent action possible until that approval lands"). Now only work
+counts (plan._works): a step that is urgent, or one that makes or ships on a channel above its floor; a chore or a
+report leaves the agent's own sleep standing. A venture's step still counts: exploring is work.
 """
 
 from __future__ import annotations

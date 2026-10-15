@@ -360,7 +360,7 @@ class Writer:
         elif isinstance(block, Photo):
             self.photo(container, block, text, width)
         elif isinstance(block, Lines):
-            for _ in range(block.count):
+            for _ in range(block.drawn or block.count):  # 0.39.6: '::: lines fill' as many as the PDF drew
                 p = self._paragraph(container)
                 p.paragraph_format.space_after = Pt(0)
                 p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY

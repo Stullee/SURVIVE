@@ -45,7 +45,8 @@ HOURS: dict[str, dict[str, tuple[int, int]]] = {
 GAP = timedelta(hours=3)  # between two pins, and between two posts
 JITTER_MINUTES = 30  # a request's slot comes up to this many minutes after its bound (never at the same minute)
 LINK_DAYS = 2  # a listing or a page at most once in this many days on a channel
-WAITING = 3  # a channel's requests waiting for the owner or for their slot: the agent proposes no more there
+WAITING = 3  # a channel's requests waiting for the owner or for their slot: the agent proposes no more there (0.39.6:
+# approved ones of one listing count once)
 DAYS_AHEAD = 14  # how far ahead a slot is looked for
 APPROVED = ("approved", "approved_with_changes")
 THINGS = {"pinterest": ("pin", "pins"), "bluesky": ("post", "posts")}
@@ -268,14 +269,36 @@ def if_approved_now(
 
 
 def waiting(conn: sqlite3.Connection, scope: AgentScope, channel: str) -> list[int]:
-    """A channel's requests that wait for the owner's decision or, approved, for their slot."""
+    """A channel's requests that wait for the owner's decision or, approved, for their slot. 0.39.6: approved ones of
+    one listing or page count once (the oldest): LINK_DAYS holds each of them back, not the others' listings. Live on
+    10-15 three approved pins of the Haushaltsbuch listing had their slots on 10-16, 10-18 and 10-20, and as WAITING
+    they kept every other listing's pin out of the queue until 10-20."""
     where, params = scope.where("a")
     rows = conn.execute(
-        f"SELECT a.id FROM approvals a WHERE {where} AND a.executor = ? AND (a.status = 'pending'"
+        f"SELECT a.id, a.status, a.action FROM approvals a WHERE {where} AND a.executor = ? AND (a.status = 'pending'"
         f" OR (a.status IN {APPROVED} AND {_not_begun('a', channel)})) ORDER BY a.id",
         (*params, EXECUTORS[channel]),
     ).fetchall()
-    return [int(r[0]) for r in rows]
+    found, linked = [], set()
+    for r in rows:
+        if r["status"] != "pending":
+            links = set(_parsed(channel, r["action"])[0])
+            if links & linked:
+                continue
+            linked |= links
+        found.append(int(r["id"]))
+    return found
+
+
+def slotted(conn: sqlite3.Connection, scope: AgentScope, channel: str) -> dict[str, int]:
+    """0.39.6: what a channel's approved requests waiting for their slot link (as ``keys`` says), each with the oldest
+    request that links it: a listing with one gets no other request on the channel until it is out (its pins count
+    once toward WAITING, ``waiting``, and LINK_DAYS would only push another days back)."""
+    found: dict[str, int] = {}
+    for item in queued(conn, scope, channel):
+        for link in item.links:
+            found.setdefault(link, item.approval_id)
+    return found
 
 
 # --- in words ---

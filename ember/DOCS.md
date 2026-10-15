@@ -356,7 +356,11 @@ spare it. Every call of that cycle leaves it, workshop runs, the daily review,
 library study and the critic too. When a scheduled wake would need that share,
 it waits until 20:00. With **Wake Ember for events** off, nothing is kept: no
 event can wake the agent to spend it (0.30.3; 0.31.0, nor with all three of its
-events' options off).
+events' options off). Since 0.39.6 a scheduled cycle also leaves **half of the
+daily cap** for your day until **08:00** (your time), whatever wakes Ember, and a
+scheduled wake that would need it waits until 08:00: every night from 00:07 the
+cycles spent four fifths of the cap, and your decision at 07:48 got one cycle
+before the next waited for 20:00 with $0.01 to spend.
 Your **Wake now**, messages and decisions are never held back. The activity
 list shows an event's cycle as *woken by an event*, and the System log shows
 what was noted.
@@ -397,7 +401,11 @@ each bottleneck. A **stop** is yours (since 0.35.0 only you close a line): since
 decide-by date, at most once a week a line, and the agent holds the line until
 you decide. Until then the review told the agent to close the line itself, which
 its tools can't: three cycles tried, and the next review said again that the
-stop wasn't carried out. Ember's code adds the review's lesson
+stop wasn't carried out. Since 0.39.6 a **change** of a live or launched line
+is a step of its own, due that day ("Review 10-16: ..."), which Ember carries out
+and says done; the next review's change takes the place of one still open. A
+change waited for its line's cycle, which took the heaviest step instead: three
+reviews decided on a small Etsy Ads test, and no request for it was made. Ember's code adds the review's lesson
 to the agent's lessons itself (since 0.18.0). The next review shows whether it did. You can
 read every review, with the numbers it judged, under **Mind → Daily reviews**.
 
@@ -497,7 +505,12 @@ work, like a manager's calendar (the design is in `vision/learning.md`):
   cycle's own step if nothing it is checked by moved during the cycle, nor one
   a cycle took before with nothing moved since (see [Plan](#plan)). Live on
   2026-10-09 a step no cycle could advance cut every sleep to 30 minutes, 21
-  cycles by 12:35. Since 0.37.9 not a step whose work one of your limits would
+  cycles by 12:35. Since 0.39.6 only work counts: a step that is urgent (a
+  promise or decision near its day, a defect, a missed views date, a launch's
+  first marketing, a step due today) or one that makes or ships on a channel
+  above its floor, a venture's step too; a chore or a report leaves the sleep
+  Ember chose (on 10-15 she chose 4 to 6 hours 16 times, and each was cut to 30
+  minutes, $5.59 by 07:55). Since 0.37.9 not a step whose work one of your limits would
   refuse either (a pin while the publishing queue is full, a report once the
   day's messages are sent: [Plan](#plan), **Your limits**).
 
@@ -527,7 +540,11 @@ agent's workspace:
   and a chapter's prose run on as they should), and a table whose rows each
   have an empty cell, a label and its amount to fill in, counts as one to fill
   in: the Haushaltsbuch's v14 made each month's overview three pages, the third
-  holding only "Notizen", and was told nothing.
+  holding only "Notizen", and was told nothing. Since 0.39.6 `::: lines fill`
+  rules a page down to its bottom margin (at least 2 lines, on the next page with
+  its label if fewer fit; in the main text only, and the Word copy draws as many),
+  and a book names writing lines that end a page with room for 2 or more below
+  them: you rejected the Haushaltsbuch a sixth time for that white space.
 - **Spreadsheets** (`make_spreadsheet`): a JSON description becomes an Excel
   file with formats, dropdowns, formulas, totals, a chart and a *How to use*
   sheet, plus a picture of each sheet, drawn since 0.37.5 from the file itself:
@@ -1216,7 +1233,10 @@ checked by moved"); pin it to have the next cycle try it again today.
 **Your limits** (0.37.9). Two of your protections were enforced by Ember's tools
 alone: at most 3 publish requests (pins, Bluesky posts, blog posts, the link
 page) wait for your decision at once, and since 0.37.8 at most 3 of a channel's
-pins (or posts) wait for you or their slot; at most 2 of Ember's messages a day
+pins (or posts) wait for you or their slot (since 0.39.6 approved ones of one
+listing count once, and another of that listing waits until they are out: three
+of the Haushaltsbuch's, slotted two days apart, kept every other listing's pins
+out until 10-20); at most 2 of Ember's messages a day
 answer none of yours. The plan took a pin, a post or a report as ready whatever
 they said: the sleep was cut, a plan was paid for, and the tool refused the
 request (in the analysis of 0.37.8, 16 of the 30 cycles #192 to #221, $4.12).
@@ -1275,7 +1295,10 @@ product's listings have fewer than 10 views in all, or after two checks of a
 listing in a row without a pass: a listing nobody sees can't show whether its
 photo works, and in the analysis of 0.38.0 "The critic passes it" took 8 of
 the 10 cycles #257 to #266 ($2.84) while ten checks scored 5 or 6 and a
-listing had 0 to 4 views. A step
+listing had 0 to 4 views. Since 0.39.6 they wait for views while the listings
+have fewer than 10 (waiting *views*), as a chore they still took cycles: on
+10-15 five ($1.95) made new covers for listings 1 to 3 people had seen. A
+defect still comes first. A step
 carries the weight of the most important step waiting on it (since 0.35.1 a
 promise is a step of its own, not carried). Since 0.35.2 the
 [diagnostics](#diagnostics) report lists every one of these numbers, as your
@@ -1372,7 +1395,10 @@ critic asks for none, and Ember's plan says so; **Lift the freeze** ends it.
 Live, "no title or tag edits before 10-20" was a sentence in the standing
 instructions that the plan and the critic never read. Your **rulebook** is for
 how Ember works (languages, style, what to avoid); what comes next is the
-plan's. **Add milestone** puts a milestone of yours under the goal or the
+plan's. Since 0.39.6 Ember reads each rule with the day it was set, in UTC
+("set 2026-10-07, 8 days ago"): rule #1's "This week ... 3) nothing new", set in
+the night to 10-08, still held her back on 10-15, quoted as "the owner's rule
+this week". Remove a rule that has done its job. **Add milestone** puts a milestone of yours under the goal or the
 milestone you choose; it stays yours: only you drop it, and Ember can't move its
 date (she may propose one; **Accept new date** or **Keep the date**). **Note**
 leaves a comment on a milestone, and **Drop** takes an open one (and the open
@@ -2368,7 +2394,9 @@ the first. A slot is:
 The approval card says when each goes out and why then (**In the queue**), and
 the Plan tab's **Channels** list the queue with each one's time. The agent
 hears the time with your approval, sees the queue in its plan, and proposes no
-more pins (or posts) while 3 of them wait for you or their slot.
+more pins (or posts) while 3 of them wait for you or their slot (approved ones of
+one listing or page count once, since 0.39.6, and none for a listing whose
+approved one waits for its slot).
 
 ## Bluesky
 
@@ -2855,7 +2883,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.39.5 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.39.6 (by /u/your name)`.
 
 ## Amazon KDP
 

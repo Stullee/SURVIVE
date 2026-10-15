@@ -406,6 +406,25 @@ listing, pin, post, product or upload, and a read that fails shows on System →
 Email and on the email's card. An HTML email's style sheet is read in linear
 time: one email of 1 MB held the scheduler for 24 minutes.
 
+0.39.6: the fixes from the diagnostics report of 2026-10-15 (the analysis of
+0.39.5: why Ember earns nothing). Only work cuts the sleep Ember chooses: a
+chore or a report no longer wakes her every 30 minutes (16 cycles from 00:07 to
+07:55 spent $5.59 of the $7 cap, many on covers for listings 1 to 3 people had
+seen), while a venture's step still does. Until 08:00 a scheduled cycle leaves
+half the day's cap for your day, so a decision you make in the morning gets its
+follow-up the same morning. `::: lines fill` rules a page down to its bottom
+margin, and a book names writing lines that leave white space under them: the
+KDP book's sixth rejection. A line's change in the daily review becomes a step
+of its own (three reviews decided on an Etsy Ads test that no request ever
+asked for). Bluesky and the blog are judged by the listing views that followed
+their posts, not by likes or not at all. Approved pins of one listing count once
+in the queue, so they no longer keep every other listing's pins out (another pin
+of that listing waits until they are out). The
+critic's suggestions wait until a line's listings have 10 views. Each rule of
+yours shows the day it was set: "this week" in a rule of 10-08 still held Ember
+back on 10-15. And a venture cycle hears that a marketplace with its own buyers
+is a test of its own, whatever the Etsy shop's views.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

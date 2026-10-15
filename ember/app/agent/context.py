@@ -372,7 +372,7 @@ def snapshot(
         params,
     ).fetchone()
     files = _safe_listing(workspace)
-    rulebook = store.rulebook_text(store.rules(conn, scope))
+    rulebook = store.rulebook_text(store.rules(conn, scope), today)  # 0.39.6: with each rule's day
     memories = memory.read_all()
     written = {int(r["cycle_id"]) for r in (journal[:1] + ([handoff] if handoff is not None else []))}
     return Snapshot(

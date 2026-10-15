@@ -44,8 +44,9 @@ I checked every finding against the code. Labels, as in the earlier analyses:
   30 views a month.
 
 What to do, in short (4):
-1. **You, this week:** finish the KDP book, turn on a small Etsy Ads test, lift the title and tag freeze, lower the
-   daily cap until the first sale, and decide the six requests waiting for you.
+1. **You, this week:** finish the KDP book, turn on a small Etsy Ads test, remove rule #1 (the title and tag freeze
+   and "nothing new", which you say you never asked for: 6.1), lower the daily cap until the first sale, and decide
+   the six requests waiting for you.
 2. **Code, for 0.39.6:** let the agent's sleep stand unless real work is ready, keep some of the day's money for your
    hours, add `::: lines fill`, make the reviews' decisions plan steps, and stop scoring a stopped channel as
    untested.
@@ -92,8 +93,8 @@ Why Etsy shows them so little:
   for it, and Etsy's API has no ads.
 - **Pins are throttled by one listing** (3.5): the Pinterest queue is full until 10-20 with three pins of the
   Haushaltsbuch listing, so no other listing can get a pin before then.
-- **Titles and tags are frozen until 10-20** (your rule #1). Titles and tags are the main thing Etsy's search reads.
-  The freeze protects a before/after measurement that one view a day can't make.
+- **Titles and tags are frozen until 10-20** by rule #1 of the rulebook (6.1). Titles and tags are the main thing
+  Etsy's search reads. The freeze protects a before/after measurement that one view a day can't make.
 
 Ember's API view count can't tell "not shown" from "shown but not clicked". Etsy Ads' dashboard shows impressions
 and clicks for each advertised listing. That is the first data that would say whether the covers are the problem
@@ -172,7 +173,7 @@ note lines too short. 0.38.x and 0.39.1 fixed the renderer's row heights. What i
   one, and the plan tree has no step for it. The review says "A change … waits for its line's cycle". But the line's
   cycle takes the tree's heaviest step, which was a critic chore every time.
 - **The German title and tag batch.** The same three reviews say it "goes out today" or "is in the pending batch".
-  No batch exists, and your rule #1 forbids it until 10-20. The reviews keep planning around work that can't happen.
+  No batch exists, and rule #1 forbids it until 10-20. The reviews keep planning around work that can't happen.
 - **The blog.** The review stopped line #10 on 10-14. Yet the plan tree's heaviest steps after the KDP book are now
   four "This month's blog post for …" steps, at 2.0 each. `_channel_factors` (`agent/plan.py:1964`) scores
   Pinterest by clicks (0 so far: the floor, 0.2, once four pins are a week old) and Bluesky by reactions. It never
@@ -229,15 +230,16 @@ live listing". Lower priority than 3.1 to 3.4, since pins have brought no click 
    cover can tell today. Etsy sets the price of a click. Look at the real cost after two or three days, and record
    it as an expense so Ember sees it. If a few hundred ad clicks sell nothing, that is the first real evidence
    against a product or its price.
-3. **Lift the title and tag freeze now** (rule #1). It protects a measurement that one view a day can't make. Let
-   Ember send the German keyword batch as one request.
+3. **Remove rule #1 now** (Inbox, the rulebook), or keep only its Bluesky sentence. It holds the title and tag freeze
+   and "nothing new" (6.1). Then let Ember send the German keyword batch as one request.
 4. **Lower the daily cap until the first sale**, from $7 to about $2 to $3, or choose the spending stance "steady".
    At $2.50 a day, the $100 left lasts about 40 days instead of 14: into the KDP season and through an ads test.
    The cap is the only brake by your design, so this is your decision. Code change 4.2.1 makes the same money go
    further at any cap.
 5. **Decide the six requests that wait for you** (#175 to #179, #189). A sensible answer: keep every listing live
    (they cost nothing more), stop work on all but the three in the ads test and the KDP book, and close line #10.
-   Tell Ember in one standing instruction: no new ventures and no cover redesigns until a listing has 100 views.
+   Tell Ember in one rule: no cover redesigns until a listing has 100 views. (I first wrote "no new ventures" here
+   too. That was wrong: see 6.2.)
 6. **Don't judge the lines on 10-20 by "under 10 views".** At this traffic that judges the reach, not the product.
    Judge them after the ads test.
 
@@ -245,8 +247,8 @@ live listing". Lower priority than 3.1 to 3.4, since pins have brought no click 
 
 1. **Let the agent's sleep stand unless real work is ready** (`agent/slack.py`, `plan.busy`). Today any ready step
    cuts it to 30 minutes.
-   - These never cut it: a chore (a quiet critic step), a report or tracking step, venture triage or a brainstorm,
-     and a step of a channel at its floor.
+   - These never cut it: a chore (a quiet critic step), a report or tracking step, and a step of a channel at its
+     floor. (I first listed venture triage and brainstorms here too; 0.39.6 keeps them: 6.2.)
    - A step that can bring a sale nearer still does: shipping, a launch, a real fix, marketing, a promise or a
      decision due.
    - On 10-15, 10 of the 16 cycles did chores, checks, tracking or venture triage (#288 to #298, except #292).
@@ -294,3 +296,67 @@ real screenshots of the file. Ember can't make those today.
   ads test is the fastest way to learn whether one exists for these products. If a few hundred paid visits sell
   nothing, the products or prices are wrong, not the reach. Then the next products should be ones a free AI chat
   can't hand over: printed books, legally specific tools, licences for professionals.
+
+---
+
+## 6. After your answers
+
+### 6.1 Where the freeze comes from
+
+You wrote: "i didnt ask for any freez for etsy". The freeze is rule #1 of the rulebook:
+
+> Bluesky: English only; link the Etsy listing itself, never a German blog post. The blog stays German. This week, in
+> order: 1) pins for every live listing, 2) the Haushaltsbuch 2027 KDP proposal by 10-10, 3) nothing new. No title or
+> tag edits before 10-20. Every promise to me goes in commits with a due date.
+
+It was saved as standing instruction #7 through the dashboard's instructions box on 2026-10-07 23:01 UTC (10-08 01:01
+Berlin), under the Home Assistant user shown as the owner (the report masks the name). 0.36.0 turned the standing
+instructions into the rulebook, and this text became rule #1 (`migrations/0090_rulebook.sql`). Nothing in Ember's code
+writes a rule: only that box (`owner.set_instructions` until 0.36.0, `owner.add_rule` since). If you didn't write it,
+check who else can use your Home Assistant login, or whether it was pasted from somewhere.
+
+The agent quotes it every night: "The owner's rule this week is 'nothing new'", "The rulebook bans new products and
+title or tag edits until 10-20". Nothing told it when "this week" began. **Remove it, or keep only its Bluesky
+sentence: that is your data, and only you can change it.** 0.39.6 shows each rule's day (6.3).
+
+### 6.2 Why she stopped exploring, and what I got wrong
+
+You asked why she isn't trying new ventures if what she does doesn't work. Three things stopped her:
+1. Rule #1's "nothing new" (6.1).
+2. Her own reviews. In week 2, 24 venture cycles ($10.45) scored and researched ideas without a single test. So the
+   weekly review of 10-09 said to stop planning new ventures, and today's daily review says "No new ideas until Ads
+   and keyword fixes show whether paid reach brings views."
+3. Her principle #1: "Before adding a listing, marketplace or product, check that the existing ones get views." No
+   listing gets views, so nothing new is ever allowed. This week she parked 9 ideas untested (cases #27 to #35).
+   Some of them sell on marketplaces with their own buyers (Creative Fabrica, Zazzle, Teachers Pay Teachers, KDP
+   logbooks), and she parked them because the Etsy shop got no views. That doesn't follow.
+
+You are right, and 4.1.5 was wrong to say "no new ventures". The problem was never that she explored. It was that
+her exploring produced research and scores instead of cheap live tests. 0.39.6 keeps a venture's step as work that
+cuts her sleep, and a venture cycle is told that a marketplace with its own buyers is a test of its own.
+
+### 6.3 What 0.39.6 does
+
+| | Change | Where |
+|---|---|---|
+| 4.2.1 | Only work cuts the agent's sleep: an urgent step, or one that makes or ships on a channel above its floor (a venture's step too). Chores and reports leave her own sleep | `agent/plan.py` (`_works`, `busy`) |
+| 4.2.2 | `::: lines fill` rules the page down to its bottom margin (at least 2 lines, else on the next page; main text only; the Word copy draws as many). A book names writing lines that end a page with room for 2 more | `products/markup.py`, `products/pdf.py`, `products/word.py`, the documents and KDP guides |
+| 4.2.3 | Until 08:00 a scheduled cycle leaves half the day's cap for your day; a wake that needs it waits for 08:00 | `economy/metering.py`, `agent/service.py` |
+| 4.2.4 | A line's change in today's review is a step of its own, due today ("Review MM-DD: ..."), for a line that is live or launched; the next review's change takes the place of one still open | `agent/plan.py` (`_review_changes`), `agent/review.py` |
+| 4.2.5 | Bluesky and the blog are worth the listing views that followed their posts in their first week (Pinterest stays by clicks) | `agent/plan.py` (`_channel_factors`, `_views_after`) |
+| 4.2.6 | Approved pins or posts of one listing count once in the queue's limit of 3; another for that listing waits until they are out (the tool refuses it, the plan's step waits) | `integrations/publish_queue.py`, `agent/tools.py`, `agent/plan.py` |
+| 4.2.7 | The critic's suggestions for a line with fewer than 10 views wait for views ("views"); a defect still comes first | `agent/plan.py` |
+| 6.1 | Each rule shows the day it was set and how long ago | `agent/store.py` |
+| 6.2 | A venture cycle hears that a marketplace with its own buyers is a test of its own | `agent/prompts.py` |
+
+Where 0.39.6 differs from 4.2:
+- 4.2.4's "a request your own rule forbids waits until that date" isn't built. Rules are free text, and with rule #1
+  removed there is nothing for it to wait on.
+- 4.2.5: a stopped channel isn't put at the floor by a stop as such. It gets there by its numbers: the blog's posts were
+  followed by almost no views.
+- 4.2.6: approved requests still count, but those of one listing count once, and a listing with one waiting gets no
+  other until it is out. Counting only the ones waiting for you would let a backlog grow that goes out days later,
+  which 0.37.8's queue was made to stop.
+- 4.2.7: your pin on a critic step still has it done at once, views or not.
+- The notes check (4.2.2) leaves out a notebook's pages of lines (more lines than a page holds), as 0.39.2's run-on
+  check does.

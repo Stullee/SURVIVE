@@ -23,6 +23,7 @@ MAX_DEPTH = 4
 MAX_TABLE_COLUMNS = 12
 MAX_TABLE_ROWS = 300
 MAX_LINES = 60
+FILL_LEAST = 2  # 0.39.6: the writing lines '::: lines fill' draws at least (with a label kept with them)
 MAX_SPACE_MM = 120.0
 THEMES = ("modern", "classic", "minimal", "bold")
 FONT_KEYS = {"sans": "sans", "calibri": "sans", "carlito": "sans", "serif": "serif", "cambria": "serif",
@@ -110,6 +111,10 @@ class Photo:
 @dataclass
 class Lines:
     count: int
+    # 0.39.6: '::: lines fill' rules the page down to its bottom margin: at least ``count`` lines (FILL_LEAST), on the
+    # next page if fewer fit; the PDF keeps how many it drew (``drawn``), and the Word copy draws as many
+    fill: bool = False
+    drawn: int = 0
 
 
 @dataclass
@@ -521,7 +526,18 @@ class _Parser:
             self._emit(Photo(width, height, label.strip()[:60]), number)
             return
         if name == "lines":
-            count = _at(number, lambda: int(_number("lines", rest or "5", 1, MAX_LINES)))
+            if rest.lower() == "fill":  # 0.39.6: the rest of the page, which only the main text knows
+                if self.stack or self.target is self.sidebar:
+                    raise DocumentError(
+                        f"line {number}: '::: lines fill' rules the page down to its bottom margin, so it belongs in "
+                        "the main text, not inside a box, columns, center or the sidebar: give those a count"
+                    )
+                self._emit(Lines(FILL_LEAST, fill=True), number)
+                return
+            try:
+                count = int(_number("lines", rest or "5", 1, MAX_LINES))
+            except DocumentError as exc:
+                raise DocumentError(f"line {number}: {exc}, or '::: lines fill' for the rest of the page") from None
             self._emit(Lines(count), number)
             return
         if name == "space":

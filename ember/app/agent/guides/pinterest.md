@@ -21,7 +21,8 @@ WHEN IT GOES OUT (the publishing queue): an approved pin waits for its slot and 
 (Pinterest reads bursts and one link pinned again and again as spam): from 8:00 to 22:00 your owner's time, at least 3
 hours after your last pin, a listing at most once in 2 days, at most the daily limit. The oldest approval goes first
 unless its listing must wait; then the next listing's pin goes. propose_pin says when a pin would go out, and the
-queue is in PINTEREST and pinterest_boards. While 3 of your pins wait for your owner or their slot, propose no more.
+queue is in PINTEREST and pinterest_boards. While 3 of your pins wait for your owner or their slot, propose no more
+(approved pins of one listing count once: pin the listings that have none waiting).
 
 RULES: only your own pictures and listings; no claim the listing doesn't make; one pin per listing and picture (a
 listing's next pin needs a new picture and new words: one that repeats a live or approved pin of its listing is
