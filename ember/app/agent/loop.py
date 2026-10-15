@@ -1987,7 +1987,9 @@ class CycleRunner:
             else:
                 with self.db.transaction() as conn:
                     store.update_cycle(conn, ctx.cycle_id, current_action=f"Using {name}"[:300])
-                outcome = tools.run(ctx, name, raw, use_id, call_id, phase)
+                # 0.39.3: a call Ember's code takes out of the journal and runs counts (8 journals in one reply ran 16)
+                outcome = tools.run(ctx, name, raw, use_id, call_id, phase, MAX_TOOL_CALLS_PER_TURN - counted)
+                counted += outcome.taken
             results.append(self._result_block(use, outcome))
         return results
 

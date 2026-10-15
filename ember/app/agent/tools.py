@@ -217,6 +217,24 @@ BUILDING_TOOLS = (
 # Model calls of their own (and, 0.12.0, the Etsy market probe of a demand note): they need the network, and no
 # database transaction is held meanwhile.
 CALLING_TOOLS = frozenset({"research", "workshop", "brainstorm", "draft", "demand_note", "printify_catalog"})
+# 0.39.3: the tools that only read: they change no record, file, request or message, and cost nothing. A call the
+# model wrote inside its journal runs only when it is one of these (run): a journal can quote someone else's words
+# too. memory_read (a replace needs it), email_read (it marks the email read) and look (a picture) are left out.
+READ_ONLY_TOOLS = frozenset(
+    {
+        "workspace_list",
+        "workspace_read",
+        "project_list",
+        "knowledge_search",
+        "library_read",
+        "guide",
+        "email_inbox",
+        "etsy_categories",
+        "etsy_listing",
+        "pinterest_boards",
+        "bluesky_posts",
+    }
+)
 WORKSHOP_INPUTS = 5  # files handed over to one workshop run
 WORKSHOP_INPUT_MB = 10  # their size together
 # 0.12.0: a long file written in one call of its own (draft; prompts takes these from here). A work reply holds only
@@ -1473,6 +1491,9 @@ class Outcome:
     # 0.12.0: answered from an earlier call without a new one (a repeated research question): free, and it doesn't
     # count toward the tool's per-cycle limit.
     reused: bool = False
+    # 0.39.3: the calls Ember's code took out of this one's journal and ran (run): they count toward the reply's
+    # MAX_TOOL_CALLS_PER_TURN, which the journal itself doesn't (one reply of 8 journals ran 16 calls).
+    taken: int = 0
 
 
 # question, a page to read, cycle, the site searched, the venture it is for (0.12.0)
@@ -1604,19 +1625,37 @@ class ToolContext:
         return to_iso(self.clock.now())
 
 
-def run(ctx: ToolContext, name: str, raw_input: Any, tool_use_id: str, llm_call_id: int, phase: str) -> Outcome:
+def run(
+    ctx: ToolContext,
+    name: str,
+    raw_input: Any,
+    tool_use_id: str,
+    llm_call_id: int,
+    phase: str,
+    room: int = MAX_TOOL_CALLS_PER_TURN,
+) -> Outcome:
     """Validate and run one tool call; always returns an Outcome (never raises). 0.24.0: a call of another tool the
-    model wrote inside one of its texts (``unleaked``) runs after it, as a call of its own, and its answer is added."""
+    model wrote inside its journal (``unleaked``) is taken out of it, and what became of it is added to the answer.
+    0.39.3: it runs only when it reads (READ_ONLY_TOOLS), as one of the ``room`` calls its reply may still run (the
+    answer's ``taken``); any other is refused (TAKEN_OUT). It used to run whatever a text held: a buyer's email saved
+    to notes wrote an "Owner rule" into LESSONS, a quote in a message deleted a product file (analysis-0.39.1, 4.1)."""
     leaked: list[tuple[str, dict[str, Any]]] = []
     outcome = _run(ctx, name, raw_input, tool_use_id, llm_call_id, phase, leaked)
+    if not leaked:
+        return outcome
+    taken = 0
     for number, (other, args) in enumerate(leaked, 1):
-        more = _run(ctx, other, args, f"{tool_use_id}~{number}", llm_call_id, phase, None)
-        outcome = replace(
-            outcome,
-            text=f"{outcome.text}\nEmber's code ran the {other} call you wrote inside {name} as a call of its own: "
-            f"{more.text}",
-        )
-    return _clip(outcome, RESULT_CHARS.get(str(name), MAX_RESULT_CHARS)) if leaked else outcome
+        use_id = f"{tool_use_id}~{number}"
+        if other in READ_ONLY_TOOLS and taken < room:
+            more = _run(ctx, other, args, use_id, llm_call_id, phase, None)
+            taken += more.ok  # refused (a read in the reflection), it did nothing and leaves the reply its calls
+            said = f"ran the {other} call you wrote inside {name} as a call of its own: {more.text}"
+        else:
+            why = f"at most {MAX_TOOL_CALLS_PER_TURN} tool calls per turn" if other in READ_ONLY_TOOLS else TAKEN_OUT
+            skip(ctx, other, args, use_id, llm_call_id, phase, why)
+            said = f"didn't run the {other} call you wrote inside {name}: {why}."
+        outcome = replace(outcome, text=f"{outcome.text}\nEmber's code {said}")
+    return replace(_clip(outcome, RESULT_CHARS.get(str(name), MAX_RESULT_CHARS)), taken=taken)
 
 
 def _run(
@@ -1628,8 +1667,8 @@ def _run(
     phase: str,
     leaked: list[tuple[str, dict[str, Any]]] | None,
 ) -> Outcome:
-    """One tool call (run): ``leaked`` collects the calls of other tools written inside its texts (None: a call taken
-    out of another's, whose texts are not searched again)."""
+    """One tool call (run): ``leaked`` collects the calls of other tools written inside its journal's texts (None: a
+    call taken out of a journal, whose texts are not searched again)."""
     tool_input = raw_input if isinstance(raw_input, dict) else {"_raw": raw_input}
     ctx.state.reply = llm_call_id
     with ctx.db.transaction() as conn:
@@ -1804,14 +1843,22 @@ _CLOSING = re.compile(r"(?:\s*</[a-z_:]{1,40}>)+\s*$", re.IGNORECASE)
 # name="file">lessons', with "content" and "mode" given as if they were this call's. Live, two reflections lost their
 # journal to it ("unknown field 'content'", "unknown field 'next_step'"), with the lessons or the project update in it.
 _INVOKE = re.compile(r'</invoke>\s*<invoke name="([a-z_]{1,40})">', re.IGNORECASE)
+# 0.39.3: why a call taken out of a journal that doesn't only read isn't run (run). The model can tell its own call from
+# words it quoted; Ember's code can't.
+TAKEN_OUT = (
+    "only a call that reads runs from inside a journal, as a journal can quote what someone else wrote (an email, a "
+    "web page). If you meant this call yourself, make it as a call of its own"
+)
 
 
 def unleaked(spec: Spec, raw: Any, notes: list[str], leaked: list[tuple[str, dict[str, Any]]] | None = None) -> Any:
-    """The input with each text field another one's markup holds moved to its own field (unless that field is
-    given), when every such mark names another text field of the tool; what was moved is noted. 0.24.0: with
+    """The journal's input with each text field another one's markup holds moved to its own field (unless that field
+    is given), when every such mark names another text field of the journal; what was moved is noted. 0.24.0: with
     ``leaked`` (a list), a call of another tool written inside a text is taken out of it, with the fields it was
-    given beside this call's, and added to ``leaked`` to run on its own."""
-    if not isinstance(raw, dict):
+    given beside this call's, and added to ``leaked`` (run says whether it runs). 0.39.3: in the journal only, whose
+    texts are the model's own words: any other tool's text can quote someone else word for word (a buyer's email saved
+    to notes, a passage quoted to the owner), and markup in it is part of the quote, left as it is."""
+    if not isinstance(raw, dict) or spec.name != "write_journal":
         return raw
     fixed = dict(raw)
     if leaked is not None:
@@ -1838,8 +1885,8 @@ def unleaked(spec: Spec, raw: Any, notes: list[str], leaked: list[tuple[str, dic
 def _take_out(
     spec: Spec, raw: dict[str, Any], fixed: dict[str, Any], notes: list[str], leaked: list[tuple[str, dict[str, Any]]]
 ) -> None:
-    """0.24.0: the first call of another tool written inside one of the input's texts, taken out of ``fixed`` (the
-    text cut where it starts, its fields this tool doesn't have removed) into ``leaked``."""
+    """0.24.0: the first call of another tool written inside one of the journal's texts, taken out of ``fixed`` (the
+    text cut where it starts, its fields the journal doesn't have removed) into ``leaked``."""
     for name, value in raw.items():
         field = spec.fields.get(name)
         if field is None or field.type != "string" or not isinstance(value, str):
@@ -1851,7 +1898,8 @@ def _take_out(
         call: dict[str, Any] = {}
         tail = value[found.end() :]
         marks = list(_LEAKED.finditer(tail))
-        for mark, after in zip(marks, [*marks[1:], None], strict=True):
+        # 0.39.3: a call with no field written after it (all beside the journal's, or none) failed the journal
+        for mark, after in zip(marks, [*marks[1:], None] if marks else [], strict=True):
             if mark[1] in other.fields:
                 call[mark[1]] = _CLOSING.sub("", tail[mark.end() : after.start() if after else len(tail)]).strip()
         for key in raw:
