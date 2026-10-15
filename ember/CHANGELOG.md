@@ -3,6 +3,47 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.39.6
+
+Fixes from the diagnostics report of 2026-10-15 (the analysis of 0.39.5: why you earn nothing yet): your own sleep
+stands unless real work waits, half of the day's cap is kept for your owner's day until 08:00, `::: lines fill`, your
+review's changes become steps, channels are judged by the views they bring, and a listing's pins no longer block the
+others'.
+
+- The sleep you choose stands unless a step of real work is ready: one that is urgent (a promise or decision near its
+  day, a defect, a missed views date, a launch's first marketing, a step due today) or one that makes or ships on a
+  channel above its floor. A venture's step counts: exploring is work. A chore or a report no longer cuts your sleep
+  to 30 minutes: on 10-15 you chose 4 to 6 hours 16 times, and each was cut, so 16 cycles from 00:07 to 07:55 spent
+  $5.59 of the $7 cap, five of them on covers for listings 1 to 3 people had seen. Choose a short sleep yourself when
+  you have work that can't wait.
+- Until 08:00 your owner's time a scheduled cycle leaves half of the day's cap for their day ("until 8:00 half of
+  today's cap is kept for your owner's day" in STATUS). Your owner decides your requests in the morning, and on 10-15
+  their decision at 07:48 got one cycle: the one that could finish the book waited for 20:00 with $0.01 to spend.
+- `::: lines fill` (make_document) rules the page down to its bottom margin: at least 2 lines, on the next page with
+  its label if fewer fit, in the main text only (not in a box, columns, center or the sidebar). The Word copy draws as
+  many as the PDF. A book's result names writing lines that end a page with room for 2 or more below them. Your
+  owner rejected the Haushaltsbuch a sixth time for that ("extend the lines for the notes so there isn't all that
+  white space"): end each notes area with `::: lines fill`, render a week, a month and the year, and propose it.
+- A line's change in your daily review is now a step of that line, due today ("Review 10-16: ..."), for a line that is
+  live or launched: carry it out (with a request to your owner where it needs one), then plan_step done. The next
+  review's change takes the place of one still open. Until now a change waited for its line's cycle, which took the
+  heaviest step instead: three reviews decided on a small Etsy Ads test, and no request for it was made.
+- Bluesky and the blog are worth what followed their posts: the views the listings a post links gained in its first
+  7 days, 1 a post making the channel worth 1.0 (Pinterest is still judged by clicks). Bluesky was worth its
+  reactions, from people following your story, and the blog 1.0, never measured: its monthly posts ranked second
+  after your review had stopped its test.
+- Approved pins (or posts) of one listing count once toward the 3 a channel may hold: three approved pins of the
+  Haushaltsbuch listing, slotted for 10-16, 10-18 and 10-20, kept every other listing's pin out of the queue until
+  10-20. Another pin of a listing whose pin waits for its slot is refused, and your plan's pin step for its line
+  waits until it is out: pin the listings that have none waiting.
+- The critic's suggestions for a line whose listings have fewer than 10 views in all wait for views (waiting
+  "views"): a cover few have seen can't be judged, as your own case #35 says. A defect still comes first, and so
+  does a step your owner pinned.
+- Each rule in YOUR OWNER'S RULEBOOK shows the day it was set and how long ago: a rule of 10-08 that says "this week"
+  was written for that week. Read each rule's words with its day.
+- A marketplace with buyers searching of its own (Amazon KDP, eduki, Creative Fabrica) is a test of its own: the Etsy
+  shop's views are no reason to park an idea there. Its first test is a listing there within days, not more research.
+
 ## 0.39.5
 
 Fixes of your mailbox from the analysis of 0.39.1 (4.2, 4.3, 4.12): a "stop" written below the quote, in an HTML

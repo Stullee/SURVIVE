@@ -232,7 +232,8 @@ def test_a_live_products_weekly_marketing_comes_once_its_first_marketing_is_out_
     agent.clock.advance(days=5)  # day 7, no view: the push makes its weekly marketing urgent (it pushed nothing)
     assert any("its marketing comes first" in s for s in keep(agent))
     found = urgencies(agent, line)
-    assert found[CRITIC] == 0.0 and {found[s["title"]] for s in weekly(agent, line)} == {weights.MISSED_BAR}
+    # 0.39.6: unseen, the critic's suggestions wait for views (0.39.1: a chore of no urgency)
+    assert CRITIC not in found and {found[s["title"]] for s in weekly(agent, line)} == {weights.MISSED_BAR}
     taken = steered(agent)
     assert taken.kind == "marketing" and taken.step is not None
     assert taken.step.id in {s["id"] for s in weekly(agent, line)}

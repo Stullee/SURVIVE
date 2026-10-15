@@ -93,6 +93,10 @@ SPLIT = (
     "a table to fill in runs on to the next page from page {pages}: in a book keep each on its page (fewer rows, a"
     " smaller size or line_height, or a pagebreak before it)"
 )
+GAP = (  # 0.39.6: writing lines that end a page with white space under them
+    "the writing lines on {pages} end with room for 2 or more lines below them: in a book end such a page with"
+    " '::: lines fill', which rules it down to its bottom margin"
+)
 
 
 def book(body: str, extra: str = "") -> str:
@@ -116,7 +120,10 @@ def test_a_page_to_fill_in_is_named_however_many_pages_it_runs_on_to() -> None:
     goals = "# Ziele 2027\n\n" + "".join(f"**Ziel {n}:**\n::: lines 2\n\n" for n in range(1, 21))
     report = rendered(book(f"# Haushaltsbuch\n\n::: pagebreak\n{goals}"))
     assert report.pages == 5  # the title, then the goals on four pages
-    assert report.warnings == [OVERRUN.format(pages=2)]
+    assert report.warnings == [
+        OVERRUN.format(pages=2),
+        GAP.format(pages="page 5"),
+    ]  # 0.39.6: the last page's white space
     notebook = rendered(book("# Haushaltsbuch\n\n::: pagebreak\n# Notizen\n\n::: lines 60\n"))
     assert notebook.pages == 4 and notebook.warnings == []  # more lines than a page holds: a notebook's pages
     prose = "Ein Kapitel erklärt, wie ein Haushaltsbuch hilft, und es braucht dafür Absätze, die viel länger sind. " * 6
@@ -152,13 +159,17 @@ def test_the_haushaltsbuch_v14_month_is_named_and_a_month_that_fits_is_not() -> 
     """Live, v14 (line height 1.9) made each month's overview three pages, the third holding "Notizen" alone, and
     make_document said nothing. Two pages split by a pagebreak, at the normal line height, fit."""
     v14 = rendered(book(MONTH, TALL))
-    assert v14.pages == 3 and v14.warnings == [SPLIT.format(pages=1)]  # its "Ausgaben nach Kategorie" breaks
+    assert v14.pages == 3 and v14.warnings == [SPLIT.format(pages=1), GAP.format(pages="page 3")]  # its "Ausgaben nach
+    # Kategorie" breaks; 0.39.6: and its third page, "Notizen" alone, is mostly white space
     head, rest = MONTH.split("### Ausgaben nach Kategorie")
     spending, goals = rest.split("### Monatsziel & Sparquote")
     goals, notes = goals.split("**Notizen**")
-    fits = rendered(book(f"{head}### Monatsziel & Sparquote{goals}::: pagebreak\n\n### Ausgaben nach Kategorie"
-                         f"{spending}**Notizen**{notes}"))  # fmt: skip
-    assert fits.pages == 2 and fits.warnings == []
+    first = f"{head}### Monatsziel & Sparquote{goals}::: pagebreak\n\n"
+    fits_source = f"{first}### Ausgaben nach Kategorie{spending}**Notizen**{notes}"
+    fits = rendered(book(fits_source))
+    assert fits.pages == 2 and fits.warnings == [GAP.format(pages="pages 1, 2")]  # 0.39.6: white space under notes
+    filled = fits_source.replace("::: lines 4", "::: lines fill").replace("::: lines 2", "::: lines fill")
+    assert rendered(book(filled)).warnings == []  # each page's notes ruled down to its bottom margin
 
 
 def test_the_guides_say_what_a_week_page_holds_and_the_renderer_agrees() -> None:

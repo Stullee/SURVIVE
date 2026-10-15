@@ -9,12 +9,12 @@ planners, logbooks, workbooks) and short practical guides. Research the searches
 removes low-quality and duplicated books and can close your owner's account.
 
 THE TEXT:
-- A paperback's interior: make_document with 'page: 6x9' (the usual size; 5x8, 8.5x11, A4, Letter and KDP's others),
-  margin at least 10 mm (13 mm from 151 pages on), no sidebar and no coloured background (those need bleed, which
-  make_document doesn't make). {BOOK_PAGES} pages at most; KDP prints {KDP_LEAST} pages and more. Start with a title
-  page and a page saying the book was made with the help of AI; number pages in the footer.
+- A paperback's interior: make_document with 'page: 6x9' (the usual size; 5x8, 8.5x11 and KDP's others), margin at
+  least 10 mm (13 mm from 151 pages on), no sidebar and no coloured background (those need bleed, which make_document
+  doesn't make). {BOOK_PAGES} pages at most; KDP prints {KDP_LEAST} and more. Start with a title page and a page
+  saying the book was made with AI help; number pages in the footer.
 - Pages to fill in: a 6x9 page at size 12.5 holds about 20 empty rows, 10 with a heading, a 3-row total and 4
-  writing lines; fewer at a larger line_height. See them (pages: '6, 7').
+  writing lines; fewer at a larger line_height. End notes with '::: lines fill'. See them (pages).
 - An ebook's manuscript: the Word file (.docx) make_document makes next to its PDF. Headings, paragraphs and lists
   read well on a Kindle; boxes, columns and sidebars don't flow.
 - The front: a picture of yours (make_image, layout poster, shape pin), its words 0.25 in from its edges.

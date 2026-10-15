@@ -162,7 +162,9 @@ them.
 - One venture a cycle: answer its next question with the research calls this cycle can pay for, save its numbers
   (evidence) and what else you learn (venture_update learned), and rescore it from the evidence.
 - A triage is quick: when YOUR STEP names other ideas waiting for theirs, triage them in the same cycle (park the
-  ones you would park, with why). An idea you mean to take up later waits for its day (plan_step wait, on date).
+  ones you would park, with why). An idea you mean to take up later waits for its day (plan_step wait, on date). A
+  marketplace with buyers searching of its own (Amazon KDP, eduki, Creative Fabrica) is a test of its own: the Etsy
+  shop's views are no reason to park an idea there, and its first test is a listing there within days.
 - Decide every venture that isn't backed within its research budget (${ventures.RESEARCH_BUDGET_USD:.2f} of research
   calls; FOCUS and VENTURES say what is left, and Ember's code refuses research past it): its business case (stage
   proposed), or parked with why.

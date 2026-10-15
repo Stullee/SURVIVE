@@ -62,7 +62,10 @@ REQUESTED = ("pending", "approved", "approved_with_changes", "done")  # a reques
 FRESH_PINS, FRESH_POSTS = 4, 4  # a channel's results count once this many items are live
 # 0.35.3: and each of them live this long (live, four pins hours old, with no click yet, put Pinterest at its floor)
 RESULT_DAYS = 7
-CLICKS_PER_PIN, REACTIONS_PER_POST = 0.5, 3.0  # results that make a channel worth 1.0
+CLICKS_PER_PIN = 0.5  # clicks a pin that make Pinterest worth 1.0
+# 0.39.6: the views of the listings a Bluesky post or a blog post links, gained in its first RESULT_DAYS, that make its
+# channel worth 1.0; Bluesky was worth its reactions (3 a post), the blog 1.0 whatever it brought
+VIEWS_PER_POST = 1.0
 STALE_DAYS = 14  # a step waiting this long is shown for the daily review's look (Release 2c asks it)
 PICKS_SHOWN = 12
 HISTORY = 12  # cycles read back for the streak
@@ -641,6 +644,7 @@ def keep(
     said += _ventures(conn, scope, now)  # 0.37.0: each venture a node, its next decision a step
     said += _owner_owed(conn, scope, now)  # 0.37.0: and what is owed to the owner of no product
     said += _review_stops(conn, scope, now, today)  # 0.39.1: a line the review says stop is the owner's to close
+    said += _review_changes(conn, scope, now, today)  # 0.39.6: and a change it decides is a step of the line's
     said += _lift_waits(conn, scope, now, today)
     _clocks(conn, scope, now, today, channels, day_start)
     return said
@@ -1768,6 +1772,65 @@ def _review_stops(conn: sqlite3.Connection, scope: AgentScope, now: str, today: 
     return said
 
 
+REVIEW_CHANGE = "review/change"  # 0.39.6: the template of a change today's review decided for a line
+
+
+def _review_changes(conn: sqlite3.Connection, scope: AgentScope, now: str, today: date) -> list[str]:
+    """0.39.6 (analysis-0.39.5, 4.2.4): a line today's review says change gets the change as a step of its own, due
+    today (weights.RECURRING_DUE), which the agent closes with plan_step done; a later review's change takes the place
+    of one still open. Until now a change "waited for its line's cycle", and that cycle took the tree's heaviest step:
+    live, the reviews of 10-13, 10-14 and 10-15 each decided on a small Etsy Ads test the owner would turn on, and no
+    request for it was made; the cycles made new covers instead. Only for a line whose maintain stage is open (live,
+    or launched): before that, its stage's own steps are the change."""
+    where, params = scope.where()
+    row = conn.execute(
+        f"SELECT day, verdicts FROM reviews WHERE {where} AND day = ? AND status = 'ok' ORDER BY id DESC LIMIT 1",
+        (*params, today.isoformat()),
+    ).fetchone()
+    try:
+        verdicts = json.loads(row["verdicts"] or "[]") if row is not None else []
+    except ValueError:
+        return []
+    said: list[str] = []
+    for v in verdicts if isinstance(verdicts, list) else []:
+        if not isinstance(v, dict) or v.get("verdict") != "change" or not isinstance(v.get("project_id"), int):
+            continue
+        why = " ".join(str(v.get("why") or "").split())
+        line = int(v["project_id"])
+        project = store.project(conn, scope, line)
+        product = nodes(conn, scope, "level = 'product' AND status = 'open' AND project_id = ?", (line,))
+        stage = _maintain(conn, scope, product[0]) if product else None
+        current = current_stage(conn, scope, product[0]["id"]) if product else None
+        launched = bool(product) and (product[0]["live_since"] or (current and current["stage"] == "launch"))
+        if project is None or project["status"] not in OPEN_STATUSES or stage is None or not launched or not why:
+            continue
+        title = _cut(f"Review {str(row['day'])[5:]}: {why}", 160)
+        mine = "project_id = ? AND level = 'step' AND template = ?"
+        if nodes(conn, scope, f"{mine} AND title = ?", (line, REVIEW_CHANGE, title)):
+            continue  # made today already (and maybe done)
+        for old in nodes(conn, scope, f"{mine} AND status = 'open'", (line, REVIEW_CHANGE)):
+            _close(conn, int(old["id"]), now, "dropped", f"your review of {str(row['day'])[5:]} decided anew")
+        step = _insert(
+            conn,
+            scope,
+            now,
+            parent_id=stage["id"],
+            level="step",
+            project_id=line,
+            template=REVIEW_CHANGE,
+            stage=stage["stage"],
+            kind="fix",
+            title=title,
+            check_kind="agent",
+            seq=250,
+            source="code",
+            due=today.isoformat(),
+        )
+        change(conn, scope, step, None, "code", "add", f"your review of {row['day']} says change: {why}", now)
+        said.append(f"Plan tree: line #{line}'s change from today's review is a step of its own.")
+    return said
+
+
 def _scale(conn: sqlite3.Connection, scope: AgentScope, product: Mapping[str, Any], now: str) -> list[str]:
     """A first order by day 21: Ember's step to scale the product (5 variants or a bundle), hers to split, in its
     maintain stage."""
@@ -1944,7 +2007,7 @@ class Candidate:
     step: weights.Step
     stage: str
     # why it can't be taken now ('owner', 'channel', 'upgrade', 'step', 'hold'; 0.37.6 'approved', 'tried'; 0.37.9 a
-    # limit of the owner's, ``limits``: 'queue', 'messages'; 0.38.1 'sales'), None: ready
+    # limit of the owner's, ``limits``: 'queue', 'messages'; 0.38.1 'sales'; 0.39.6 'views'), None: ready
     waiting: str | None
     # 0.37.6: a cycle took it, and nothing its check reads moved since (it waits 'tried' while that was today; ready
     # again the next day for a try, it doesn't cut a cycle's sleep: busy)
@@ -1962,8 +2025,11 @@ def _waiting(row: Mapping[str, Any], channels: Mapping[str, bool]) -> str | None
 
 
 def _channel_factors(conn: sqlite3.Connection, scope: AgentScope, now: str) -> dict[str, float]:
-    """How well each channel works, per item (an untested channel: 1.0): clicks per live pin, reactions per post,
-    of those live RESULT_DAYS at least (0.35.3)."""
+    """How well each channel works, per item (an untested channel: 1.0): clicks per live pin, of those live RESULT_DAYS
+    at least (0.35.3); 0.39.6: for Bluesky and the blog, the listing views that followed a post (``_views_after``).
+    Live on 10-15, Bluesky was worth its reactions (2.3 a post, from people following Ember's story, who don't buy:
+    case #25) and the blog 1.0, never measured: its monthly posts ranked second after the daily review had stopped
+    its test for near-zero traffic, while Pinterest, measured at 0 clicks, sat at the floor."""
     where, params = scope.where()
     factors = {c: 1.0 for c in CHANNELS}
     settled = to_iso(from_iso(now) - timedelta(days=RESULT_DAYS))
@@ -1976,17 +2042,55 @@ def _channel_factors(conn: sqlite3.Connection, scope: AgentScope, now: str) -> d
         factors["pinterest"] = round(
             min(weights.CHANNEL_MAX, max(weights.CHANNEL_MIN, pins["clicks"] / pins["n"] / CLICKS_PER_PIN)), 2
         )
-    posts = conn.execute(
-        "SELECT COUNT(*) AS n, COALESCE(SUM(COALESCE(likes, 0) + COALESCE(reposts, 0) + COALESCE(replies, 0)"
-        f" + COALESCE(quotes, 0)), 0) AS reactions FROM bluesky_posts WHERE {where} AND status = 'active'"
-        " AND finished_at <= ?",
-        (*params, settled),
-    ).fetchone()
-    if posts["n"] >= FRESH_POSTS:
-        factors["bluesky"] = round(
-            min(weights.CHANNEL_MAX, max(weights.CHANNEL_MIN, posts["reactions"] / posts["n"] / REACTIONS_PER_POST)), 2
+    posts = [
+        (str(r["finished_at"])[:10], f"{r['link'] or ''} {r['second_link'] or ''}")
+        for r in conn.execute(
+            f"SELECT finished_at, link, second_link FROM bluesky_posts WHERE {where} AND status = 'active'"
+            " AND sent = 1 AND finished_at <= ?",
+            (*params, settled),
         )
+    ]
+    blog = [
+        (str(r["day"]), str(r["payload"] or ""))
+        for r in conn.execute(
+            f"SELECT b.day, a.payload FROM blog_posts b LEFT JOIN approvals a ON a.id = b.approval_id"
+            f" WHERE {scope.where('b')[0]} AND b.day <= ?",
+            (*scope.where("b")[1], settled[:10]),
+        )
+    ]
+    for channel, items in (("bluesky", posts), ("blog", blog)):
+        if len(items) >= FRESH_POSTS:
+            gained = sum(_views_after(conn, scope, day, text) for day, text in items)
+            factors[channel] = round(
+                min(weights.CHANNEL_MAX, max(weights.CHANNEL_MIN, gained / len(items) / VIEWS_PER_POST)), 2
+            )
     return factors
+
+
+def _views_after(conn: sqlite3.Connection, scope: AgentScope, day: str, text: str) -> int:
+    """0.39.6: the views the listings ``text`` links gained from ``day`` to RESULT_DAYS later, by the daily views
+    Ember's code observes (from its first day observed after ``day`` when none was before; 0 for a text that links no
+    listing: what it brought the shop can't be seen)."""
+    where, params = scope.where()
+    until = (date.fromisoformat(day) + timedelta(days=RESULT_DAYS)).isoformat()
+
+    def seen(listing: int, condition: str, bound: str, order: str) -> int | None:
+        row = conn.execute(
+            f"SELECT value FROM observations WHERE {where} AND subject = 'listing' AND subject_id = ?"
+            f" AND metric = 'views' AND {condition} ORDER BY day {order} LIMIT 1",
+            (*params, listing, bound),
+        ).fetchone()
+        return None if row is None else int(row["value"])
+
+    gained = 0
+    for listing in sorted(reach.listing_ids(text)):
+        before = seen(listing, "day <= ?", day, "DESC")
+        if before is None:
+            before = seen(listing, "day >= ?", day, "ASC")
+        after = seen(listing, "day <= ?", until, "DESC")
+        if before is not None and after is not None:
+            gained += max(0, after - before)
+    return gained
 
 
 def _missed(conn: sqlite3.Connection, scope: AgentScope, today: date) -> set[int]:
@@ -2125,8 +2229,15 @@ def candidates(
             quiet = False  # 0.39.1: the critic's suggestions while few see the line, or after checks without a pass
             if step["check_kind"] == "critic" and verdict == "improve":  # 0.35.3: a defect, or suggestions
                 defect = facts.defect(pid)
-                quiet = not defect and ((funnel.views if funnel else 0) < weights.CRITIC_VIEWS or facts.stuck(pid))
+                unseen = (funnel.views if funnel else 0) < weights.CRITIC_VIEWS
+                quiet = not defect and (unseen or facts.stuck(pid))
                 urgency = max(urgency, weights.DEFECT if defect else 0.0 if quiet else weights.IMPROVE)
+                if quiet and unseen and reason is None and not step["pinned"]:  # the owner's pin: they want it now
+                    # 0.39.6 (analysis-0.39.5, 4.2.7): it waits for views. As a chore it was still taken whenever
+                    # nothing heavier was ready: live on 10-15 five cycles ($1.95) made new covers and files for
+                    # listings 1 to 3 people had seen, each one more request for the owner, and the agent's own
+                    # case said a cover can't be judged at 0-4 views. A defect still comes first.
+                    reason = "views"
             if step["due"] and step["source"] == "code" and date.fromisoformat(step["due"]) <= today:
                 urgency = max(urgency, weights.RECURRING_DUE)
             since = max(filter(None, (step["ready_since"], worked.get(pid))), default=None)
@@ -2460,6 +2571,8 @@ class OwnerLimits:
     messages: int = 0
     asked: bool = False
     sell: int = 0
+    # 0.39.6: what each queue channel's approved requests waiting for their slot link (publish_queue.slotted's keys)
+    slotted: Mapping[str, frozenset[str]] = field(default_factory=dict)
 
     def full(self, channel: str | None) -> bool:
         """Whether a request to publish on ``channel`` (a queue channel, else the blog or the link page) would be
@@ -2504,6 +2617,7 @@ def limits(conn: sqlite3.Connection, scope: AgentScope, day_start: str) -> Owner
         store.unasked_since(conn, scope, day_start),
         obligations.messages_waiting(conn, scope) > 0,
         sell=store.pending_of_type(conn, scope, "sell"),  # 0.38.1
+        slotted={c: frozenset(publish_queue.slotted(conn, scope, c)) for c in publish_queue.CHANNELS},  # 0.39.6
     )
 
 
@@ -2522,6 +2636,12 @@ def _limited(facts: Facts, row: Mapping[str, Any], found: OwnerLimits) -> str | 
     decides a request or one goes out, the next day, or when the owner writes."""
     if _markets(row) and found.full(row["channel"]):
         return "queue"
+    if _markets(row) and row["channel"] in found.slotted and row["project_id"] is not None:
+        # 0.39.6: each of its line's live listings has a pin (or post) waiting for its slot: the tool refuses another
+        funnel = facts.funnel(int(row["project_id"]))
+        listings = funnel.listings if funnel else []
+        if listings and all(f"listing {n}" in found.slotted[row["channel"]] for n in listings):
+            return "queue"
     if found.sales_full and _sells(row):
         return "sales"
     if found.told and _reports(row) and not _let_through(facts, row):
@@ -2571,12 +2691,15 @@ def busy(conn: sqlite3.Connection, scope: AgentScope, steered: Steer, now: str, 
     cycle could advance cut every sleep to 30 minutes until the daily cap was spent. 0.37.9: none still open that waits
     on a limit of the owner's as the cycle ends (``limits``): its own request or message may have used it up, and the
     tool would refuse the next cycle's (a step waiting on one when the cycle began was no candidate). One the cycle
-    closed waits on nothing: the steps after it may be ready now."""
+    closed waits on nothing: the steps after it may be ready now. 0.39.6: only work (``_works``): not a chore, a
+    report, nor a step of a channel at its floor, unless something makes it urgent."""
     tried = {c.step.id for c in steered.found if c.tried}
     own = steered.step.id if steered.step is not None else None
     facts = Facts(conn, scope, now)
     found = limits(conn, scope, steered.day_start or _midnight(from_iso(now).date()))
-    for step, _ in steered.pick.ranked:
+    for step, parts in steered.pick.ranked:
+        if not _works(parts):
+            continue
         row = node(conn, scope, step.id)
         if row is not None and row["status"] == "open" and _limited(facts, row, found) is not None:
             continue
@@ -2588,6 +2711,18 @@ def busy(conn: sqlite3.Connection, scope: AgentScope, steered: Steer, now: str, 
         elif step.id not in tried:
             return True
     return False
+
+
+def _works(parts: weights.Parts) -> bool:
+    """0.39.6 (analysis-0.39.5, 4.2.1): whether a ready step is work worth cutting the agent's sleep for (``busy``):
+    urgent (a promise or decision near its day, a defect, a missed views bar, a launch's first marketing, a step due
+    today), or of a kind that makes or ships (not a chore or a report) on a channel above its floor. Live on 2026-10-15
+    every sleep the agent chose (mostly 4 to 6 hours) was cut to 30 minutes: 16 cycles from 00:07 to 07:55 spent $5.59
+    of the $7 cap, five of them on the critic's chores for listings 1 to 3 people had seen and one on a views
+    baseline, and the owner's decision at 07:48 waited for 20:00. A venture's step still cuts it: exploring is work."""
+    if parts.urgency > 0:
+        return True
+    return parts.kind >= weights.KIND["create"] and parts.channel > weights.CHANNEL_MIN
 
 
 def _fields(step: weights.Step) -> dict[str, Any]:
@@ -2682,7 +2817,7 @@ def settings() -> dict[str, Any]:
             "FRESH_POSTS": FRESH_POSTS,
             "RESULT_DAYS": RESULT_DAYS,  # 0.35.3
             "CLICKS_PER_PIN": CLICKS_PER_PIN,
-            "REACTIONS_PER_POST": REACTIONS_PER_POST,
+            "VIEWS_PER_POST": VIEWS_PER_POST,
             "HISTORY": HISTORY,
             "OBLIGATION_HOURS": OBLIGATION_HOURS,
             "PROMISE_TRIES": PROMISE_TRIES,
@@ -2813,6 +2948,7 @@ WAITS = {
     "step": "another step",
     "hold": "a hold",
     "tried": "a change since a cycle took it today",  # 0.37.6: the brake
+    "views": f"its listings' views ({weights.CRITIC_VIEWS} in all): a cover few have seen can't be judged",  # 0.39.6
     # 0.37.9: the owner's limits (``limits``)
     "queue": "room in the publishing queue (your owner decides a request, or one goes out)",
     "sales": "room for a sell request (your owner decides a listing, a change or a product that waits for them)",
@@ -3873,7 +4009,7 @@ def _channels_view(
     now: str,
 ) -> list[dict[str, Any]]:
     """0.35.0: each channel as a mirror of the products' marketing: what it does next and what it did lately, with
-    how well it works (clicks per pin, reactions per post: its factor in the weights)."""
+    how well it works (clicks per pin, 0.39.6: listing views after a post or blog post: its factor in the weights)."""
     factors = _channel_factors(conn, scope, now)
     since = to_iso(from_iso(now) - timedelta(days=14))
     found = []

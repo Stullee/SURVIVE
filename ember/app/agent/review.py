@@ -796,8 +796,10 @@ def planner_text(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
             lines.append(f"{label}: {_one_line(said, 400)}")
     lines.append(  # 0.28.0: one line a cycle; 0.39.1: a stop is the owner's to make (only they close a line)
         "Act on it: a stop is your owner's decision (only they close a line): Ember's code asks them on their Plan tab;"
-        " until they decide, hold the line (plan_step hold) when a cycle is on it. A change, and work on a bottleneck"
-        " (reach: its marketing cycles bring buyers), waits for its line's cycle. Ember's code kept the lesson."
+        " until they decide, hold the line (plan_step hold) when a cycle is on it. A change is a step of its line's,"
+        ' due today ("Review MM-DD: ..."): carry it out, a request to your owner where it needs one, then plan_step'
+        " done. Work on a bottleneck (reach: its marketing cycles bring buyers) waits for its line's cycle. Ember's"
+        " code kept the lesson."
     )
     kept = []
     for v in _verdicts(row):
