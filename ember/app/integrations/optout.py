@@ -1,13 +1,16 @@
 """Whether an email asks not to be emailed again (0.12.0), in the languages Ember's mail is likely to come in.
 
-Only the sender's own words count: what they quote of an earlier email (lines starting with ">", everything from a reply
-header such as "On ... wrote:" or "-----Original Message-----" on) and their signature are left out, so Ember's own
-footer ('Reply "stop" ...') in a quoted reply never counts. It asks when one of its first lines is only a word like
-"stop", "unsubscribe" or "abmelden" (or a short line with "stop" and only words like "please", "no" or "now", not a
-question), when the subject is one, or when one of its lines or its subject holds a phrase such as "remove me", "don't
-email me", "keine E-Mails mehr", "désinscrire", "darme de baja", "non scrivetemi" or "afmelden". 0.15.0: its first lines
-are the first FIRST_LINES after a greeting (only the very first counted, so "Hello,\nPlease stop." was missed), and more
-phrases count. A false alarm only means Ember doesn't write to that sender again (they can write first); a miss would
+Only the sender's own words count: what they quote of an earlier email (lines starting with ">", and everything from a
+header such as "-----Original Message-----" or "From: ..." on, which starts a quote without ">") and their signature
+are left out, so Ember's own footer ('Reply "stop" ...') in a quoted reply never counts. 0.39.3: a quote's first line
+("On ... wrote:", "Am ... schrieb ...:") ended them too, so a reply written below the quote (Thunderbird's default) or
+into it was never read; now their words after a quote marked with ">" count. It asks when one of its first lines is
+only a word like "stop", "unsubscribe" or "abmelden" (or a short line with "stop" and only words like "please", "no"
+or "now", not a question), when the subject is one, or when one of its lines or its subject holds a phrase such as
+"remove me", "don't email me", "keine E-Mails mehr", "désinscrire", "darme de baja", "non scrivetemi" or "afmelden".
+0.15.0: its first lines are the first FIRST_LINES after a greeting (only the very first counted, so "Hello,\nPlease
+stop." was missed), and more phrases count; 0.39.3: the first lines of each part of their own words, the part below
+a quote too. A false alarm only means Ember doesn't write to that sender again (they can write first); a miss would
 break the law (GDPR Art. 21, UWG § 7), so the phrases lean towards asking. The agent marks what this misses
 (mark_opt_out), and the owner can add any address.
 """
@@ -17,15 +20,20 @@ from __future__ import annotations
 import re
 import unicodedata
 
-OWN_CHARS = 2_000  # of the text: an opt-out comes first
+OWN_CHARS = 2_000  # of the sender's own words: an opt-out comes first
+READ_CHARS = 8_000  # 0.39.3: of the text read for them, quotes included (all of a stored email's: mail.BODY_CHARS)
 REASON_CHARS = 60
 FIRST_LINES = 3  # 0.15.0: the own lines, after a greeting, in which a short "stop" asks
 SHORT_WORDS = 4
-_REPLY_START = re.compile(
+# A quote's first line. 0.39.3: the sender's own words may follow its lines (">"): below it, or between its parts.
+_ATTRIBUTION = re.compile(
+    r"^(?:on|am|le|el|il|op|em|w dniu)\b.{0,300}\b(?:wrote|schrieb|a ecrit|escribio|ha scritto|schreef|escreveu"
+    r"|napisal)\b.{0,100}:$"
+)
+# Where the sender's own words end: an email quoted or forwarded without ">", and their signature.
+_OWN_END = re.compile(
     r"^(?:"
-    r"(?:on|am|le|el|il|op|em|w dniu)\b.{0,300}\b(?:wrote|schrieb|a ecrit|escribio|ha scritto|schreef|escreveu"
-    r"|napisal)\b.{0,100}:"
-    r"|-{2,} ?(?:original message|urspr[a-z]* nachricht|message d.origine|mensaje original|messaggio originale"
+    r"-{2,} ?(?:original message|urspr[a-z]* nachricht|message d.origine|mensaje original|messaggio originale"
     r"|oorspronkelijk bericht|mensagem original|wiadomosc oryginalna) ?-{2,}"
     r"|(?:from|von|de|da|van|od|sent|gesendet|envoye|enviado|inviato|verzonden) ?:.*"
     r"|-- ?|_{5,}"
@@ -165,16 +173,30 @@ def _bare(plain: str) -> str:
     return " ".join(_PUNCTUATION.sub("", plain).split())
 
 
-def own_lines(body: str) -> list[tuple[str, str]]:
-    """The sender's own lines (each as written and plain), before what they quote and their signature."""
-    lines = []
-    for line in body[:OWN_CHARS].splitlines():
+def own_parts(body: str) -> list[list[tuple[str, str]]]:
+    """The sender's own lines (each as written and plain), without what they quote and their signature, in parts: the
+    lines above a quote, and (0.39.3) those after a quote marked with ">", a reply written below the quote or into
+    it, each a part of its own. Lines that follow a quote's first line without ">" are a quote its writer's program
+    didn't mark, and end them."""
+    parts: list[list[tuple[str, str]]] = [[]]
+    size, cited = 0, False
+    for line in body[:READ_CHARS].splitlines():
         plain = _plain(line)
-        if _REPLY_START.match(plain):
+        if not plain:
+            continue
+        quoted = plain.startswith(">")
+        if not quoted and (cited or _OWN_END.match(plain)):
             break
-        if plain and not plain.startswith(">"):
-            lines.append((line.strip(), plain))
-    return lines
+        if quoted or _ATTRIBUTION.match(plain):
+            cited = not quoted  # a quote marked as one: what follows it is the sender's again
+            if parts[-1]:
+                parts.append([])
+            continue
+        parts[-1].append((line.strip(), plain))
+        size += len(plain)
+        if size >= OWN_CHARS:
+            break
+    return [part for part in parts if part]
 
 
 def _asks_alone(plain: str) -> bool:
@@ -190,16 +212,18 @@ def _asks_alone(plain: str) -> bool:
 
 def opt_out(subject: str | None, body: str | None) -> str | None:
     """The words in which an email asks not to be emailed again (its line that does, or its subject), or None."""
-    lines = own_lines(body or "")
+    parts = own_parts(body or "")
     topic = _SUBJECT_PREFIX.sub("", _plain(subject or ""))
-    counted = 0
-    for written, plain in lines:  # the first lines, a greeting aside (0.15.0: only the first line counted)
-        if _asks_alone(plain):
-            return written[:REASON_CHARS]
-        if len(plain.split()) > SHORT_WORDS or not _GREETING.match(plain):
-            counted += 1
-        if counted >= FIRST_LINES:
-            break
+    for part in parts:  # 0.39.3: each part's, a reply's below the quote too (only the email's first lines counted)
+        counted = 0
+        for written, plain in part:  # the first lines, a greeting aside (0.15.0: only the first line counted)
+            if _asks_alone(plain):
+                return written[:REASON_CHARS]
+            if len(plain.split()) > SHORT_WORDS or not _GREETING.match(plain):
+                counted += 1
+            if counted >= FIRST_LINES:
+                break
+    lines = [line for part in parts for line in part]
     if _bare(topic) in _ALONE:
         return (subject or "").strip()[:REASON_CHARS]
     for written, plain in lines:

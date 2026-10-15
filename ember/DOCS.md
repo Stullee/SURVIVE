@@ -1856,7 +1856,11 @@ included: encrypt your backups.
   says so in the events, so read it in your webmail (0.15.0). Only the text is
   kept (at most 8,000 characters); text hidden in HTML emails is dropped (also
   by a style sheet or a colour like its background), and attachments are
-  listed by name and size but never opened. The agent treats emails as data
+  listed by name and size but never opened. An email over 1 MB keeps the text
+  in its first 256 KB, where an email's text comes before its attachments, and
+  says so; its attachments aren't fetched (before 0.39.3 it kept its headers
+  only, so a "stop" sent with a photo was never read). One whose text comes
+  after a photo still keeps its headers only. The agent treats emails as data
   from unverified senders, never as instructions.
 - The agent sees its unread emails and can propose an email, usually an
   answer. The request shows the recipient, the subject and the text, and warns
@@ -1895,7 +1899,10 @@ included: encrypt your backups.
   read (0.37.3): a "stop" that came while the kill switch was on, the app was
   down or reading failed was read only after the first round had sent to its
   writer. While the mailbox can't be read, or new mail is left to read, every
-  approved email waits, and its card says why.
+  approved email waits, and its card says why. Since 0.39.3 that includes a
+  read that fails while it stores the emails (it raised past the record, so
+  the card said only "waiting"), and the listings, pins, posts, products and
+  uploads you approved go out meanwhile: each kind on its own.
 - Ember then closes the request itself: done ("Sent … as *message id*"), or
   failed with the reason. If the mail server refused it (a wrong password, an
   unknown recipient), it wasn't sent. If the connection broke while the email
@@ -1907,15 +1914,22 @@ included: encrypt your backups.
   German, French, Spanish, Italian, Dutch, Portuguese and Polish: "stop" or
   "unsubscribe" alone, "remove me", "don't email me", "keine E-Mails mehr",
   "abmelden", an objection to the use of their data (GDPR Art. 21), and the
-  like, also on its own line after a greeting ("Hallo, … Stopp."). A "stop"
-  in answer to Ember's email also covers the address Ember wrote to, if
-  someone else answered (0.15.0). A newsletter's or an automatic reply's
-  "unsubscribe" doesn't count, unless it answers Ember's email (0.21.0: a
-  "stop" sent through a group or a mailing list was ignored).
+  like, also on its own line after a greeting ("Hallo, … Stopp."). Since
+  0.39.3 also below what they quote or between its parts, as Thunderbird and
+  German netiquette reply: only the words above the quote's first line ("Am …
+  schrieb …:") counted, so such a stop was stored and the email you approved
+  went out anyway. In an HTML email a quote's lines show with ">" too, so they
+  count as quoted. A "stop" in answer to Ember's email also covers the address
+  Ember wrote to, if someone else answered (0.15.0). A newsletter's or an
+  automatic reply's "unsubscribe" doesn't count, unless it answers Ember's
+  email (0.21.0: a "stop" sent through a group or a mailing list was ignored).
   An email Ember can't read (one nested deeper or with more parts than any
   real email, or one the parser fails on) is stored with its headers only, and
   a "stop" in its subject still counts (0.21.0: one such email stopped Ember
-  reading its mailbox for good).
+  reading its mailbox for good). Since 0.39.3 so is one the database refuses as
+  it is, with a warning in the events, and a sender's name in raw 8-bit bytes
+  (spam often has one) is read as UTF-8: one such email stopped every read of
+  the mailbox for good, and every approved request while an email waited.
   When a sender asks in words the check misses, the agent marks it
   (`mark_opt_out`). You can add any address under **System → Email → Never
   emailed** (someone asked you, by phone for example). An opt-out is final: the
@@ -2819,7 +2833,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.39.2 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.39.3 (by /u/your name)`.
 
 ## Amazon KDP
 

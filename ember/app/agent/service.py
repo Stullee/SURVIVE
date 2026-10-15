@@ -14,6 +14,7 @@ import math
 import os
 import shutil
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -1008,15 +1009,35 @@ class Agent:
     def execute_approved(self) -> list[tuple[int, str]]:
         """Send the approved emails, create the approved Etsy listings and (0.13.0) pins and Printify products and
         (0.19.0) Bluesky posts that are due (the scheduler calls this before every decision). 0.15.0: while the agent
-        is paused or waits for money, only the owner's Undo."""
+        is paused or waits for money, only the owner's Undo. 0.39.3: each executor on its own, so one that fails holds
+        back none of the others: the emails' read of the mailbox raised, and while an approved email waited no
+        listing, pin, post, Printify product or upload to the website went out."""
+        runs: list[tuple[str, Callable[[], list[tuple[int, str]]]]]
         if self.executor_blocked():
             if self.undo_blocked():
                 return []
-            undone = self.publisher.run(undos=True) + self.pins.run(undos=True) + self._pod_run(undos=True)
-            return undone + self._bluesky_run(undos=True)
-        done = self.executor.run() if self.mailbox is not None else []
-        done += self.publisher.run() + self.pins.run() + self._bluesky_run()
-        return done + self._pod_run() + self._blog_run()
+            runs = [
+                ("Etsy listings' undos", lambda: self.publisher.run(undos=True)),
+                ("pins' undos", lambda: self.pins.run(undos=True)),
+                ("Printify products' undos", lambda: self._pod_run(undos=True)),
+                ("Bluesky posts' undos", lambda: self._bluesky_run(undos=True)),
+            ]
+        else:
+            runs = [
+                ("emails", lambda: self.executor.run() if self.mailbox is not None else []),
+                ("Etsy listings", self.publisher.run),
+                ("pins", self.pins.run),
+                ("Bluesky posts", self._bluesky_run),
+                ("Printify products", self._pod_run),
+                ("uploads to the website", self._blog_run),
+            ]
+        done: list[tuple[int, str]] = []
+        for what, run in runs:
+            try:
+                done += run()
+            except Exception:  # noqa: BLE001 - one executor must never hold back the others
+                log.exception("Carrying out the approved %s failed", what)
+        return done
 
     def _bluesky_run(self, undos: bool = False) -> list[tuple[int, str]]:
         """0.19.0: the approved Bluesky posts (the fake account of a dry run needs no network)."""

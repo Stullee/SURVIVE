@@ -367,6 +367,20 @@ step's kind tells Ember that pins and posts are a marketing cycle's (a step for
 pins went to a cycle that couldn't pin), and a step said done needs a reason of
 more than one word (one was closed with "placeholder").
 
+0.39.3: three fixes of Ember's mailbox from the analysis of 0.39.1 (4.2, 4.3
+and 4.12). A "stop" written below the quote (Thunderbird's way, and German
+netiquette's), between its parts or under an HTML reply's quote is recognised:
+only the words above a quote's first line counted, so 0.37.3's read before
+sending stored such a stop and the approved email went out anyway (§ 7 UWG).
+An email over 1 MB keeps the text in its first 256 KB, so a stop sent with a
+photo is read too. A sender's name in raw 8-bit bytes no longer stops the
+mailbox for good: it is read as UTF-8, and an email the database refuses is
+stored with its headers only, the others in its batch kept. Each kind of
+approved request goes out on its own, so one waiting email holds back no
+listing, pin, post, product or upload, and a read that fails shows on System →
+Email and on the email's card. An HTML email's style sheet is read in linear
+time: one email of 1 MB held the scheduler for 24 minutes.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
@@ -443,8 +457,9 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   email it proposes is sent by Ember's code only after the owner approves it,
   exactly as approved, once, to one recipient, with a footer saying an AI wrote
   it and within a daily limit, and (0.37.3) only after Ember's code read its
-  mailbox since the approval, so a "stop" waiting there is seen first; a send is
-  recorded before it starts and never retried
+  mailbox since the approval, so a "stop" waiting there is seen first (0.39.3:
+  also one written below the quote, or sent with a photo); a send is recorded
+  before it starts and never retried
   (`ember/app/integrations/executor.py`). The kill switch stops whatever
   Ember's code hasn't begun, also in the middle of a round (0.37.3). A Reddit
   post becomes a link the owner opens and posts from their own account; a KDP
