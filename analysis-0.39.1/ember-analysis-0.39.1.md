@@ -2,7 +2,8 @@
 
 *2026-10-14. The whole codebase at `cb64642` (0.39.1, the head of `claude/elegant-faraday-tcl6tq`, which Home
 Assistant installs from). The first full analysis was of 0.11.1 and the second of 0.13.0; 0.37.0's was about the
-plan's weights. Nothing in the app changes with this report.*
+plan's weights. Nothing in the app changes with this report. 0.39.3 to 0.39.5 fix six of its findings: section 9
+says what each fix does, what is left of it, and what is still open.*
 
 **Evidence.**
 - **Ten subsystem reviews.** Each reviewer read one part line by line and ran Ember's own code against what it
@@ -1052,3 +1053,105 @@ Each has a script in `repro/` that shows the defect today and should show the fi
 - **The growth rate** (L32) comes from dry-run cycles, which write less text than live ones.
 - **Dependencies.** `pip-audit` used PyPI's advisory service. OSV was not reachable, and whether each pin is the newest
   version wasn't checked.
+
+---
+
+## 9. What 0.39.2 to 0.39.5 changed, and what is left
+
+*2026-10-15. Read against `938619b` (0.39.5, the head of `claude/elegant-faraday-tcl6tq`). Every reproduction in
+`repro/` ran again on it; [`repro/README.md`](repro/README.md) gives each one's result.*
+
+**In short.**
+- **Six findings are fixed:** the four high ones (4.1 to 4.4), the costliest medium one (4.5), and the HTML email that
+  held the scheduler (4.12). They are the first six items of § 6.1. Their reproductions show the fixed behaviour, and
+  I found no regression.
+- **Two of the fixes leave small gaps:** a stop below a long thread or after a photo (4.2), and a venture cycle's
+  request about a line you hold (4.4). Each is low (9.2).
+- **Everything else in section 4 is open.** Its reproductions still show each defect (9.3).
+
+### 9.1 What is fixed
+
+| Finding | In | What the code does now | Its reproduction on 0.39.5 |
+|---|---|---|---|
+| 4.1 Quoted text runs a tool call | 0.39.4 | It takes a call out of the journal's fields only. A call taken out runs only if it is one of 11 tools that only read, and counts as one of the reply's four calls; any other is refused. In any other field (notes, a message to you) the markup stays text. | Tool calls `workspace_write ok` only, LESSONS unchanged: the script's assertion of the defect fails. `shop/planner.pdf` is kept. |
+| 4.2 A stop the code can't see | 0.39.5 | It reads the sender's words after a quote marked with ">", and between its parts. An HTML blockquote's lines start with ">". An email over 1 MB keeps the text in its first 256 KB. | Caught below the quote, in German and English. End to end: the approved email "failed", "sent to: []", Ann suppressed; the same for the 1.2 MB stop with a photo. |
+| 4.3 One email stops the mailbox | 0.39.5 | Raw 8-bit headers are read as UTF-8. Each email is stored in a savepoint of its own, with its headers only if the database refuses it. Each kind of approved request runs on its own. A failed read is recorded, and shows on System → Email and on the card. | The 8-bit email is stored, the last mail read is 4, Bob's stop is suppressed, the Etsy publisher ran every round, and the card says "sent". |
+| 4.4 Your holds leak | 0.39.3 | Your hold holds the line's promises and your decisions on it. No cycle is aimed at it, and the tools refuse its work (a note on its record is allowed). **Hold it** names what waits with it. "Hold new things" refuses `venture_create` and every `project_create`. | `steer: none`, and every step of both held lines waits `hold`. `project_create` with an idea's venture is refused. |
+| 4.5 No weekly marketing | 0.39.3 | A product is launched once its launch marketing is out. The critic's step, owed steps and a step on a channel that is off don't hold it back. Once launched, it stays launched. | Weekly pin, post and blog steps from day 3, urgent from day 8. With Bluesky off, the pin and blog steps come. |
+| 4.12 One HTML email holds the scheduler | 0.39.5 | A style sheet's comments are stripped in one linear scan, under the 100,000-character cap. | A 1 MB HTML email parses in 0.04 s. On 0.39.1 the same parse took 0.13, 0.60 and 2.34 s at 10, 20 and 41 KB, growing with the square (`repro/mail/css_comment_timing_whole_email.py`). |
+
+**Also:**
+- **0.39.2** made the five code fixes of ember-diagnostics-0.39.1 (§ 7's last row). That rests on its changelog and
+  its tests; I didn't re-check them.
+- **0.37.0's § 6.7** ("Hold new things" passes a line that names a venture) is closed with 4.4.
+- **The new tests** cover the mail shapes § 6.3.2 named: bottom-posted and HTML replies, 8-bit headers, a large email
+  with a photo, a huge style. The Office packages of § 6.3.2 and the scenario test of § 6.3.1 are still to come.
+- **The checks:**
+  - CI is green on `938619b` (run #427).
+  - In this container, the 233 tests of `tests/test_fixes_0393.py`, `test_fixes_0394.py`, `test_fixes_0395.py`, `test_mail.py`
+    and `test_opt_outs.py` pass.
+  - Of the 43 scripts in `repro/`, 41 exit with code 0. The other two stop because their defect is gone: one asserts
+    the defect, the other times a pattern 0.39.5 removed.
+
+### 9.2 What is left of the fixes
+
+- **A stop below a long thread** (4.2; low, reproduced).
+  - The check reads the first 8,000 characters of an email's text (`optout.READ_CHARS`), and Ember keeps no more
+    (`mail.BODY_CHARS`).
+  - A stop written below a thread quoted three rounds deep, 10,259 characters in, is missed by the check and never
+    reaches the agent (`repro/mail/stop_after_long_thread.py`). That thread has Ember's longest emails (2,500
+    characters and the footer); with shorter ones it takes more rounds.
+  - **Fix (S):** run the check on the whole text before it is cut, or cut it after the quoted lines are taken out.
+- **A stop after a photo, in an email over 1 MB** (4.2; low, code).
+  - Ember reads the first 256 KB of such an email's body. Text that a mail program put after the photo lies past it,
+    as DOCS say.
+  - **Fix (S/M):** read the email's structure first, then fetch its first text part wherever it sits.
+- **A stop in the spam folder** (4.2, L36): only INBOX is read, as before.
+- **A venture cycle can still file a request about a line you hold** (4.4; low, reproduced).
+  - `tools._line` returns early in a cycle that isn't bound to one product line, before it checks your hold. A venture
+    cycle isn't bound to one (`agent/loop.py:935`).
+  - An ordinary cycle is refused; a venture cycle files the request (`repro/tools/held_line_venture_cycle.py`).
+  - Nothing goes out without your approval, but the request is work on a line you hold, and it waits for your answer.
+  - **Fix (S):** check the hold before that return.
+
+I found nothing left of 4.1's, 4.3's and 4.12's fixes. 4.5's launch stage stays open until the critic passes a
+product, but nothing waits on it any more.
+
+### 9.3 What is still open
+
+Each of these still shows its defect on 0.39.5. Its reproduction's output differs from 0.39.1's in timings, a price
+and generated names at most.
+- **The rest of § 6.1:**
+  - 4.13, the will (M);
+  - 4.11.1 and 4.11.2, wakes and tries;
+  - 4.9, the website's contact link and the SFTP fallback;
+  - 4.7, veto windows during downtime;
+  - 4.14, Sonnet 5.5.
+- **§ 6.2:**
+  - 4.8, the Office check;
+  - 4.15, the records (all six);
+  - 4.6, pins and waits;
+  - 4.16, website steps and the sleep cut for nothing;
+  - 4.11.3, 4.11.4 and the agenda line;
+  - 4.10, overwrites and duplicate listings;
+  - 4.17, tall rows and dates in pictures.
+- **The lows, L1 to L43.** None of their code changed.
+  - L42 is smaller: DOCS' mail section now states the 1 MB rule, though not that only INBOX is read.
+  - L43 is a GitHub setting I can't see from here. The merges of 0.39.2 to 0.39.5 were all green.
+
+**What I would fix next:** the rest of § 6.1, in its order. 4.13 and the wakes (4.11.1, 4.11.2) protect your money;
+4.9 and 4.7 protect what goes out under your name; 4.14 makes a model in the settings usable. Then the gaps of 9.2,
+the two S fixes first.
+
+### 9.4 Your actions from § 6.4, now
+
+| § 6.4 | Now |
+|---|---|
+| 1. Read what a recipient last wrote before you approve an email | Needed only for a long thread, an email with a photo, or mail your provider filed as spam (9.2). |
+| 2. Check that Ember's mailbox still reads | Once, after the update: 0.39.5 reads an email with 8-bit headers that was stuck in INBOX. A failing read now shows on System → Email and on the approved email's card. |
+| 3. Grant no automatic or veto unlock | Still applies: 4.7 and 4.10 are open. |
+| 4. Read an upgrade request's script before you give it to Claude Code | Still applies: L29 is open (4.1's part is fixed). |
+| 5. Keep every model setting on `claude-sonnet-5` or `claude-opus-5-5` | Still applies: 4.14 is open. |
+| 6. Tell Ember to leave a product you hold | No longer needed: your hold holds its promises and decisions. |
+| 7. The password in the repository's history | Still applies: no release changes the history. |
+| 8. ember-diagnostics-0.39.1, its section 4 | 0.39.2 made the code fixes its first action could wait for. Its second, deleting lesson #c281, is still yours. |
