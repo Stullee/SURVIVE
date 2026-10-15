@@ -406,6 +406,15 @@ listing, pin, post, product or upload, and a read that fails shows on System →
 Email and on the email's card. An HTML email's style sheet is read in linear
 time: one email of 1 MB held the scheduler for 24 minutes.
 
+0.39.6: two gaps the fixes of 0.39.3 and 0.39.5 left (the analysis of 0.39.1,
+its 9.2). A "stop" written below a long thread is recognised: Ember kept the
+first 8,000 characters of an email's text and its check read as many, so a stop
+below a thread quoted three rounds deep was missed and the approved email went
+out anyway (§ 7 UWG). Now a longer email loses what it quotes first, the oldest
+emails of the thread first, and only then its end, and an HTML email is read
+past a long quote. And **Hold it** holds a product in a venture cycle too: one
+could still file a request about a product you held.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
@@ -483,8 +492,8 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   exactly as approved, once, to one recipient, with a footer saying an AI wrote
   it and within a daily limit, and (0.37.3) only after Ember's code read its
   mailbox since the approval, so a "stop" waiting there is seen first (0.39.5:
-  also one written below the quote, or sent with a photo); a send is recorded
-  before it starts and never retried
+  also one written below the quote, or sent with a photo; 0.39.6: below a long
+  thread too); a send is recorded before it starts and never retried
   (`ember/app/integrations/executor.py`). The kill switch stops whatever
   Ember's code hasn't begun, also in the middle of a round (0.37.3). A Reddit
   post becomes a link the owner opens and posts from their own account; a KDP

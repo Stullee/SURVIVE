@@ -3034,20 +3034,24 @@ def _line(ctx: ToolContext, conn: Any, project_id: int | None, what: str) -> Non
     until it has one, on the line of its first call that works on one (it takes it once the call succeeds, _lock).
     Refuses ``what`` for another line. 0.39.3 (analysis-0.39.1, 4.4): and for a line the owner holds (plan.line_held),
     which no cycle takes: a cycle without a line took the first one it worked on, a held one too, and no tool read
-    the owner's hold."""
-    if not ctx.state.one_line or project_id is None:
+    the owner's hold. 0.39.6 (analysis-0.39.1, 9.2): in every cycle, and before another line's refusal: a venture
+    cycle, which isn't one line's, filed a request about a held line, and a cycle on another line heard that the held
+    line's work waits for a cycle of its own."""
+    if project_id is None:
+        return
+    held = plan.line_held(conn, ctx.scope, int(project_id))
+    if held is not None:
+        raise ToolError(
+            f"your owner holds product line #{project_id} ({_cut(held, 80)}): no {what} for it until they resume it, "
+            "not even for a promise about it; work on what doesn't need it"
+        )
+    if not ctx.state.one_line:
         return
     line = ctx.state.focus_project_id
     if line is not None and int(project_id) != line:
         raise ToolError(
             f"this cycle works on product line #{line}: no {what} for project #{project_id}, whose work waits for a "
             "cycle of its own (say so in your journal's next)"
-        )
-    held = plan.line_held(conn, ctx.scope, int(project_id))
-    if held is not None:
-        raise ToolError(
-            f"your owner holds product line #{project_id} ({_cut(held, 80)}): no {what} for it until they resume it, "
-            "not even for a promise about it; work on what doesn't need it"
         )
     if line is None:
         ctx.state.touched = int(project_id)
@@ -4153,8 +4157,8 @@ def _email_read(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     end = offset + len(part)
     text = f"{head}\n\n{part}"
     more = f"\nMore from offset {end}." if end < len(body) else ""
-    if not more and row["body_cut"]:
-        more = "\nThe email was longer: only its first 8,000 characters were kept."
+    if not more and row["body_cut"]:  # 0.39.6: "only its first 8,000 characters were kept"
+        more = '\nThe email was longer than 8,000 characters: its quotes were left out first ("> [...]"), then its end.'
     if row["direction"] == "out":
         lead = f"Email #{row['id']}, sent by Ember after your owner approved request #{row['approval_id']}."
     else:
