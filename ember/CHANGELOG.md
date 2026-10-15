@@ -3,6 +3,22 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.39.7
+
+Two gaps the fixes of 0.39.3 and 0.39.5 left (the analysis of 0.39.1, 9.2): a "stop" below a long thread counts, and
+a venture cycle can't work on a product your owner holds.
+
+- A "stop" written below a long thread counts, and you see it. Ember's code kept an email's first 8,000 characters and
+  its check read as many, so "Bitte keine E-Mails mehr." below a thread quoted three rounds deep (10,259 characters
+  in) was missed, and the email your owner approved went out to its writer. Now an email longer than that loses what
+  it quotes first, the oldest emails of the thread first, and only then its end: its sender's own words stay, wherever
+  they wrote them. A line "> [...]" marks quoted lines Ember's code left out, not words of the sender. An HTML email
+  is read past a long quote too.
+- Your owner's hold on a product holds in a venture cycle too: a request about it (request_approval with its
+  project_id), or another call that works on it, was refused in your other cycles and filed in a venture cycle. A note
+  on its record (project_update) is still allowed. In a cycle on another line, a call about a held product now says
+  that your owner holds it: it said its work waits for a cycle of its own, which it gets only once they resume it.
+
 ## 0.39.6
 
 Fixes from the diagnostics report of 2026-10-15 (the analysis of 0.39.5: why you earn nothing yet): your own sleep

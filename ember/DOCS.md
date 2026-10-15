@@ -1380,9 +1380,10 @@ reason: its steps wait until you **Resume it**, and Ember can't lift your hold
 and your decisions on its requests too, as your park of its venture does: until
 then they took cycles on the product you held (a rejection on its day, a promise
 each day as its day neared). No cycle is aimed at it, and Ember's tools refuse
-its work (a request, a listing, a pin or a post; she can still note its record).
-**Hold it** names what waits with it. Ember's own hold leaves what she owes
-you going on. **Hold new things** on the Ventures box is "nothing new":
+its work (a request, a listing, a pin or a post; she can still note its record),
+since 0.39.7 in a venture cycle too: one filed a request about a product you
+held. **Hold it** names what waits with it. Ember's own hold leaves what she
+owes you going on. **Hold new things** on the Ventures box is "nothing new":
 no venture cycle and no new product until you **Resume**. Ember's code refuses
 a new product whatever venture it names, and (since 0.39.3) a new venture:
 until then a new product of an idea went through, and an ordinary cycle could
@@ -1902,14 +1903,18 @@ included: encrypt your backups.
   wait for the next check (none is dropped). An email the server won't hand
   over is asked for again at the next check; after 5 checks Ember skips it and
   says so in the events, so read it in your webmail (0.15.0). Only the text is
-  kept (at most 8,000 characters); text hidden in HTML emails is dropped (also
-  by a style sheet or a colour like its background), and attachments are
-  listed by name and size but never opened. An email over 1 MB keeps the text
-  in its first 256 KB, where an email's text comes before its attachments, and
-  says so; its attachments aren't fetched (before 0.39.5 it kept its headers
-  only, so a "stop" sent with a photo was never read). One whose text comes
-  after a photo still keeps its headers only. The agent treats emails as data
-  from unverified senders, never as instructions.
+  kept (at most 8,000 characters): since 0.39.7 a longer one loses what it
+  quotes first (its lines with ">"), the oldest emails of a thread first, each
+  place shown as "> [...]", and only then its end (until then it kept its
+  first 8,000 characters, so a "stop" written below a long thread was lost).
+  Text hidden in HTML emails is dropped (also by a style sheet or a colour
+  like its background), and attachments are listed by name and size but never
+  opened. An email over 1 MB keeps the text in its first 256 KB, where an
+  email's text comes before its attachments, and says so; its attachments
+  aren't fetched (before 0.39.5 it kept its headers only, so a "stop" sent
+  with a photo was never read). One whose text comes after a photo still keeps
+  its headers only. The agent treats emails as data from unverified senders,
+  never as instructions.
 - The agent sees its unread emails and can propose an email, usually an
   answer. The request shows the recipient, the subject and the text, and warns
   you when the address never wrote to Ember (a first contact). Since 0.15.0
@@ -1967,10 +1972,13 @@ included: encrypt your backups.
   German netiquette reply: only the words above the quote's first line ("Am …
   schrieb …:") counted, so such a stop was stored and the email you approved
   went out anyway. In an HTML email a quote's lines show with ">" too, so they
-  count as quoted. A "stop" in answer to Ember's email also covers the address
-  Ember wrote to, if someone else answered (0.15.0). A newsletter's or an
-  automatic reply's "unsubscribe" doesn't count, unless it answers Ember's
-  email (0.21.0: a "stop" sent through a group or a mailing list was ignored).
+  count as quoted. Since 0.39.7 also below a long thread: Ember's code read an
+  email's first 8,000 characters, what it quotes included, so a stop below a
+  thread quoted three rounds deep was missed. A "stop" in answer to Ember's
+  email also covers the address Ember wrote to, if someone else answered
+  (0.15.0). A newsletter's or an automatic reply's "unsubscribe" doesn't
+  count, unless it answers Ember's email (0.21.0: a "stop" sent through a
+  group or a mailing list was ignored).
   An email Ember can't read (one nested deeper or with more parts than any
   real email, or one the parser fails on) is stored with its headers only, and
   a "stop" in its subject still counts (0.21.0: one such email stopped Ember
@@ -2883,7 +2891,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.39.6 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.39.7 (by /u/your name)`.
 
 ## Amazon KDP
 

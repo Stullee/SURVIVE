@@ -943,7 +943,7 @@ def test_the_largest_email_is_read_in_parts_and_never_cut_mid_data(data_dir: Pat
     for result in (first, second, *tool_results(agent, "email_inbox")):
         assert result["status"] == "ok" and "[… result cut]" not in result["result"]
         assert len(result["result"]) <= tools.MAX_RESULT_CHARS and '</data id="' in result["result"]
-    assert "More from offset" in first["result"] and "only its first 8,000 characters" in second["result"]
+    assert "More from offset" in first["result"] and "longer than 8,000 characters" in second["result"]
 
 
 def test_proposing_an_email(data_dir: Path) -> None:
