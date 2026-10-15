@@ -367,6 +367,18 @@ step's kind tells Ember that pins and posts are a marketing cycle's (a step for
 pins went to a cycle that couldn't pin), and a step said done needs a reason of
 more than one word (one was closed with "placeholder").
 
+0.39.3: two plan fixes from the third codebase analysis (the analysis of 0.39.1,
+its 4.4 and 4.5). **Hold it** now holds a product's promises and your decisions
+on its requests too: a product you held after rejecting its listing got the next
+cycle for the rejection, and a promise about it one a day. No cycle is aimed at
+a product you hold, Ember's tools refuse its work, and holding it names what
+waits with it. **Hold new things** refuses a new venture too, and a new product
+whatever venture it names (a product of an idea Ember had just made got
+through). And a live product's weekly pin, post and blog post come once its
+first marketing is out, without waiting for the critic to pass it: the critic
+passed no listing in 13 checks, so after their first pins and posts the live
+products got no marketing at all, and the day-7 and day-14 pushes pushed nothing.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

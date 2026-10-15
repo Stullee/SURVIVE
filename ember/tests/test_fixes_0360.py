@@ -168,7 +168,8 @@ def test_the_owners_hold_waits_until_they_resume_it_and_ember_cant_lift_it(data_
     keep(agent)
     [product] = rows(agent, f"SELECT id FROM plan_nodes WHERE level = 'product' AND project_id = {tracker}")
     with agent.db.transaction() as conn:
-        assert plan.owner_hold(conn, agent.scope(), product["id"], "Not this week", "Owner", now(agent)) == tracker
+        held = plan.owner_hold(conn, agent.scope(), product["id"], "Not this week", "Owner", now(agent))
+        assert held == (tracker, [])  # 0.39.3: with what is owed on it, which waits too (none here)
     found = [c for c in steered(agent).found if c.step.product == tracker]
     assert found and all(c.waiting == "hold" for c in found)
     refused = plan_step(agent, book, action="resume", project_id=tracker, why="I have time now")
@@ -218,7 +219,7 @@ def test_the_plan_tab_holds_a_product_and_freezes_titles_and_tags(ingress_client
     keep(agent)
     [product] = ingress_client.get("api/plan").json()["projects"][0]["products"]
     held = post(ingress_client, f"api/plan/products/{product['id']}/hold", {"why": "Not this week"})
-    assert held.json() == {"id": product["id"], "line": tracker, "hold": "owner"}
+    assert held.json() == {"id": product["id"], "line": tracker, "hold": "owner", "waits": []}
     again = post(ingress_client, f"api/plan/products/{product['id']}/hold", {})
     assert again.status_code == 409
     [shown] = ingress_client.get("api/plan").json()["projects"][0]["products"]
@@ -310,7 +311,8 @@ def test_the_owners_hold_stops_exploring_and_new_products(data_dir: Path) -> Non
     with agent.db.connection() as conn:
         top = plan.ventures_node(conn, agent.scope())
     with agent.db.transaction() as conn:  # "nothing new": the owner's word the plan reads
-        assert plan.owner_hold(conn, agent.scope(), top["id"], "nothing new this week", "Owner", now(agent)) is None
+        given = plan.owner_hold(conn, agent.scope(), top["id"], "nothing new this week", "Owner", now(agent))
+        assert given == (None, [])  # 0.39.3: (its line, what waits with it): the ventures have neither
     held = explored(agent)
     assert held.kind == "ordinary" and explore_waits(held) == {"hold"}
     with agent.db.connection() as conn:

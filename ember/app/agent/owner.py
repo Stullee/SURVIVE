@@ -758,20 +758,23 @@ class Owner:
         return _reply(run)
 
     def hold_product(self, node_id: int, body: Any, who: str | None) -> Reply:
-        """0.36.0: the owner holds a product, with their reason: its steps wait until they resume it (Ember can't). Or
-        new things on the Ventures ("nothing new"): no venture cycle and no new product until they resume them."""
+        """0.36.0: the owner holds a product, with their reason: its steps wait until they resume it (Ember can't);
+        0.39.3: the promises about it and their decisions on it too, which the reply names (``waits``). Or new things
+        on the Ventures ("nothing new"): no venture cycle, no new venture and no new product until they resume them."""
 
         def run() -> Reply:
             data = _body(body, {"why"})
             why = _text(data, "why", 200) or ""
             with self.db.transaction() as conn:
                 try:
-                    line = plan.owner_hold(conn, self.scope, node_id, why, _signed(who), self._now())
+                    line, waits = plan.owner_hold(conn, self.scope, node_id, why, _signed(who), self._now())
                 except plan.PlanError as exc:
                     raise OwnerError(exc.field, str(exc), exc.status) from exc
             what = f"product line #{line}" if line is not None else "new things (ventures and new products)"
-            events.record(self.db, "info", "owner", f"{who or 'The owner'} held {what} in the plan")
-            return Reply(200, {"id": node_id, "line": line, "hold": "owner"})
+            # 0.39.3: and what is owed on the line, which waits with it (the promises about it, their decisions on it)
+            also = f"; waiting with it: {'; '.join(waits)}" if waits else ""
+            events.record(self.db, "info", "owner", f"{who or 'The owner'} held {what} in the plan{also}")
+            return Reply(200, {"id": node_id, "line": line, "hold": "owner", "waits": waits})
 
         return _reply(run)
 

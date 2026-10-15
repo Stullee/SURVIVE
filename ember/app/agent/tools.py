@@ -2209,7 +2209,9 @@ def _project_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         )
     venture_id = args.get("venture_id")
     held = plan.new_things_held(conn, ctx.scope)
-    if held and venture_id is None:  # 0.36.0: the owner's "nothing new", kept by Ember's code
+    # 0.36.0: the owner's "nothing new", kept by Ember's code; 0.39.3 (analysis-0.39.1, 4.4): whatever venture the new
+    # line names. One that named a venture went through, and an ordinary cycle can make an idea (venture_create).
+    if held:
         raise ToolError(f"your owner holds new things ({held}): no new product until they resume them")
     open_ = store.open_projects(conn, ctx.scope)  # 0.19.1: as many as the agent needs (it was at most 8)
     if any(p["title"].strip().lower() == args["title"].strip().lower() for p in open_):
@@ -2283,8 +2285,10 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     # "never set up". Reopening it, a bet on it or moving it to a venture is its own cycle's work, and a cycle without a
     # line yet takes the one it touches first. 0.35.0: only the owner closes a project (its next step is the plan's).
     work = status in ("idea", "active") or bool(args.get("bet")) or args.get("venture_id") is not None
-    if work or ctx.state.focus_project_id is None:
-        _line(ctx, int(row["id"]), "update")
+    # 0.39.3: the record of a line the owner holds is kept like another line's: no cycle takes the line for it
+    keeps = not work and plan.line_held(conn, ctx.scope, int(row["id"])) is not None
+    if work or (ctx.state.focus_project_id is None and not keeps):
+        _line(ctx, conn, int(row["id"]), "update")
     if status in ("idea", "active") and status != row["status"]:
         held = ventures.owner_stopped(conn, ctx.scope, row["venture_id"])
         if held is not None:
@@ -2635,6 +2639,12 @@ def _venture_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     title = " ".join(args["title"].split())
     if not title:
         raise ToolError("the title is empty")
+    held = plan.new_things_held(conn, ctx.scope)
+    if held:  # 0.39.3 (analysis-0.39.1, 4.4): the owner's "nothing new" holds new ideas too
+        raise ToolError(
+            f"your owner holds new things ({held}): no new venture until they resume them. Tell them the idea in your "
+            "answer if it can't wait: they can add it themselves"
+        )
     if ventures.count(conn, ctx.scope) >= ventures.MAX_VENTURES:
         raise ToolError(f"your tree holds {ventures.MAX_VENTURES} ventures, as many as it can")
     stage = args["stage"]
@@ -2971,26 +2981,33 @@ def _listing_stopped(conn: Any, scope: AgentScope, listing_id: int, what: str) -
         )
 
 
-def _line(ctx: ToolContext, project_id: int | None, what: str) -> None:
+def _line(ctx: ToolContext, conn: Any, project_id: int | None, what: str) -> None:
     """0.28.0: one product line a cycle (lines.py). An ordinary, marketing or reactive cycle works on its line only;
     until it has one, on the line of its first call that works on one (it takes it once the call succeeds, _lock).
-    Refuses ``what`` for another line."""
+    Refuses ``what`` for another line. 0.39.3 (analysis-0.39.1, 4.4): and for a line the owner holds (plan.line_held),
+    which no cycle takes: a cycle without a line took the first one it worked on, a held one too, and no tool read
+    the owner's hold."""
     if not ctx.state.one_line or project_id is None:
         return
     line = ctx.state.focus_project_id
-    if line is None:
-        ctx.state.touched = int(project_id)
-        return
-    if int(project_id) != line:
+    if line is not None and int(project_id) != line:
         raise ToolError(
             f"this cycle works on product line #{line}: no {what} for project #{project_id}, whose work waits for a "
             "cycle of its own (say so in your journal's next)"
         )
+    held = plan.line_held(conn, ctx.scope, int(project_id))
+    if held is not None:
+        raise ToolError(
+            f"your owner holds product line #{project_id} ({_cut(held, 80)}): no {what} for it until they resume it, "
+            "not even for a promise about it; work on what doesn't need it"
+        )
+    if line is None:
+        ctx.state.touched = int(project_id)
 
 
 def _listing_line(ctx: ToolContext, conn: Any, listing_id: int, what: str) -> None:
     """0.28.0: ``_line`` for a call about one of Ember's listings (an edit, a pin, a post, a blog post): its line."""
-    _line(ctx, ventures.listing_project(conn, ctx.scope, listing_id), what)
+    _line(ctx, conn, ventures.listing_project(conn, ctx.scope, listing_id), what)
 
 
 def _line_venture(ctx: ToolContext, conn: Any, venture_id: int | None, what: str) -> None:
@@ -3371,7 +3388,7 @@ def _request_approval(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
     project_id = args.get("project_id")
     if project_id is not None and store.project(conn, ctx.scope, project_id) is None:
         raise ToolError(f"there is no project #{project_id}")
-    _line(ctx, project_id, "request")  # 0.28.0
+    _line(ctx, conn, project_id, "request")  # 0.28.0
     approval_id = store.insert_approval(conn, ctx.scope, ctx.cycle_id, ctx.now(), **args)
     return Outcome(
         True,
@@ -4340,7 +4357,7 @@ def _product_line(ctx: ToolContext, conn: Any, args: dict[str, Any], what: str) 
     refused = _stopped(conn, ctx.scope, int(project_id), {"listing": "etsy", "product": "printify"}.get(what))
     if refused:
         raise ToolError(refused)
-    _line(ctx, int(project_id), f"new {what}")  # 0.28.0
+    _line(ctx, conn, int(project_id), f"new {what}")  # 0.28.0
     return int(project_id)
 
 
@@ -4360,7 +4377,7 @@ def _demand_note(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     with ctx.db.connection() as conn:
         if store.project(conn, ctx.scope, project_id) is None:
             raise ToolError(f"there is no project #{project_id}")
-        _line(ctx, project_id, "demand note")  # 0.28.0: before the market probe
+        _line(ctx, conn, project_id, "demand note")  # 0.28.0: before the market probe
         problem = demand.source_problem(conn, ctx.scope, source, project_id, said) if source is not None else ""
     if problem:
         raise ToolError(problem)

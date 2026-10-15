@@ -672,11 +672,23 @@ def ventures_node(conn: sqlite3.Connection, scope: AgentScope) -> sqlite3.Row | 
 
 def new_things_held(conn: sqlite3.Connection, scope: AgentScope) -> str | None:
     """0.36.0: the owner's hold on the Ventures ("nothing new"): why, while it lasts. Ember's code keeps it: no venture
-    cycle, and no new product (project_create refuses one; YOUR STEP offers none)."""
+    cycle, and no new product (project_create refuses one; YOUR STEP offers none). 0.39.3: and no new venture
+    (venture_create refuses one), and no new product of a venture either (analysis-0.39.1, 4.4)."""
     top = ventures_node(conn, scope)
     if top is None or not top["hold_reason"] or top["hold_by"] != "owner":
         return None
     return str(top["hold_reason"])
+
+
+def line_held(conn: sqlite3.Connection, scope: AgentScope, line: int) -> str | None:
+    """0.39.3 (analysis-0.39.1, 4.4): the owner's hold on product line ``line`` ("its steps wait until you resume
+    it"): why, while it lasts. Ember's code keeps it as it keeps their park: no step of the line is taken, its promises
+    and the owner's decisions on it included (``candidates``), no cycle is aimed at it (loop.py), and no tool takes it
+    as a cycle's line (tools._line). Ember's own hold isn't the owner's: what is owed on a line she holds goes on."""
+    found = nodes(conn, scope, "level = 'product' AND status = 'open' AND project_id = ?", (line,))
+    if not found or found[0]["hold_by"] != "owner" or not found[0]["hold_reason"]:
+        return None
+    return str(found[0]["hold_reason"])
 
 
 def venture_decision(conn: sqlite3.Connection, v: Mapping[str, Any]) -> str | None:
@@ -1816,12 +1828,43 @@ def _audience_channels(product: Mapping[str, Any]) -> list[str]:
     return [c for c in CHANNELS if audience in CHANNEL_AUDIENCES[c]]
 
 
+def _launched(
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    stages: list[Any],
+    maintain_id: int,
+    channels: Mapping[str, bool],
+) -> bool:
+    """Whether a product's recurring marketing is due: every stage before its maintain stage done (its launch, or a
+    template's last before it). 0.39.3 (analysis-0.39.1, 4.5): a launch counts once its first marketing is out, its
+    own marketing steps closed: the critic's pass (maintain has a fix of its own whenever the critic says improve),
+    what is owed and a step whose channel is off don't hold it up. Live, the critic passed no listing in 13 checks, so
+    after their first pins and posts the live products had no marketing step at all, and the day-7 and day-14 pushes
+    pushed nothing; and a launch step waiting on a channel that is off kept the weekly steps from the channels that
+    are on. Once launched, a product stays launched, as when only its stages said so (they never reopen): a channel
+    set up later, or a step added to its launch, doesn't stop its weekly marketing."""
+    duties = "parent_id = ? AND level = 'step' AND template LIKE 'recurring/%' AND template <> 'recurring/critic'"
+    if nodes(conn, scope, duties, (maintain_id,)):
+        return True  # laid out only once it was launched
+    for stage in stages:
+        if stage["stage"] == "maintain" or stage["status"] != "open":
+            continue
+        if stage["stage"] != "launch":
+            return False
+        for step in _steps(conn, scope, stage["id"]):
+            if step["status"] != "open" or step["kind"] != "market" or step["obligation_id"] is not None:
+                continue
+            if not step["channel"] or channels.get(step["channel"], False):
+                return False  # its first marketing isn't out yet
+    return True
+
+
 def _recurring(
     facts: Facts, product: Mapping[str, Any], now: str, today: date, channels: Mapping[str, bool]
 ) -> list[str]:
-    """A live product's recurring steps: once every stage before its maintain stage is done (its launch, or a
-    template's last before it), one open step per channel's duty (a missed one stays open and ages); and a fix
-    whenever the critic says improve (it judges live listings only)."""
+    """A live product's recurring steps: once it is launched (``_launched``: every stage before its maintain stage is
+    done, 0.39.3 its launch once its first marketing is out), one open step per channel's duty (a missed one stays
+    open and ages); and a fix whenever the critic says improve (it judges live listings only)."""
     conn, scope = facts.conn, facts.scope
     stages = _stages(conn, scope, product["id"])
     maintain = next((s for s in stages if s["stage"] == "maintain" and not _replaced(s, product)), None)
@@ -1829,7 +1872,7 @@ def _recurring(
         return []
     said: list[str] = []
     title = str(product["title"])
-    launched = not any(s["status"] == "open" for s in stages if s["stage"] != "maintain")
+    launched = _launched(conn, scope, stages, int(maintain["id"]), channels)
     kind = templates.by_key(product["template"]).name
     if kind == CHANNEL_TEMPLATE:  # 0.39.1: a channel's line has no listing for a pin or a post of its own
         return _channel_duties(conn, scope, product, int(maintain["id"]), now)
@@ -1990,11 +2033,15 @@ def candidates(
     0.37.0: both are weighed like any step, worth at least weights.PROMISE_WORTH and urgent as their day nears, until
     cycles took them PROMISE_TRIES times (a decision once) in OBLIGATION_HOURS (until 0.36.0 they came first that
     often; 0.37.1: urgent only from weights.PROMISE_NEAR_DAYS before their day); those of no product are the Owner
-    project's (``_owner_candidates``). The owner's word comes before Ember's hold: only their park or kill, or a
-    closed line, stops these two. 0.36.0: and the ventures' steps (0.37.0: each venture's; ``exploring``: whether this
-    cycle may explore; ``before``: the cycle it is for, None the next), which take turns with a new product while no
-    product step is ready (a new install's first cycles: live until 0.35.3 the day's first cycle was an ordinary one,
-    which started a product).
+    project's (``_owner_candidates``). The owner's word comes before Ember's hold: only their park or kill, a closed
+    line or (0.39.3) their own hold stops these two. 0.36.0: and the ventures' steps (0.37.0: each venture's;
+    ``exploring``: whether this cycle may explore; ``before``: the cycle it is for, None the next), which take turns
+    with a new product while no product step is ready (a new install's first cycles: live until 0.35.3 the day's first
+    cycle was an ordinary one, which started a product).
+
+    0.39.3 (analysis-0.39.1, 4.4): the owner's hold ("its steps wait until you resume it") holds its promises and their
+    decisions too, as their park does. Only a stopped venture held them: a product the owner held after rejecting its
+    listing ("I look at it next week") got the next cycle for the rejection, on its day, and one a day for a promise.
 
     0.37.6, the brake, one rule for every step: one a cycle took without what its check reads moving (``mark``) waits
     until that moves or the owner's next day ('tried'); a step of Ember's whose own requests are on their way, and all
@@ -2024,6 +2071,7 @@ def candidates(
         project = conn.execute("SELECT * FROM projects WHERE id = ?", (pid,)).fetchone()
         stopped = project is None or ventures.project_stopped(conn, scope, pid) is not None
         held = bool(product["hold_reason"])
+        owners_hold = held and product["hold_by"] == "owner"  # 0.39.3: it holds what is owed too
         current = current_stage(conn, scope, product["id"])
         if current is None:
             continue
@@ -2109,7 +2157,7 @@ def candidates(
             )
         for stage, step in owed:
             promise = step["kind"] == "promise"
-            reason = "hold" if stopped else _waiting(step, channels)
+            reason = "hold" if stopped or owners_hold else _waiting(step, channels)
             made = promised_at.get(int(step["obligation_id"]))
             if reason is None and promise and made and any(line == pid and at > made for line, at in asked):
                 reason = "owner"  # a request for it waits on the owner's decision
@@ -3614,17 +3662,42 @@ def owner_resume(conn: sqlite3.Connection, scope: AgentScope, node_id: int, who:
 
 def owner_hold(
     conn: sqlite3.Connection, scope: AgentScope, node_id: int, why: str, who: str | None, now: str
-) -> int | None:
+) -> tuple[int | None, list[str]]:
     """0.36.0: the owner holds a product (its steps wait until they resume it; Ember can't), theirs in place of a hold
     of Ember's, or new things on the Ventures ("nothing new": no venture cycle and no new product until they resume
-    them). Returns its line (None: the ventures)."""
+    them). Returns its line (None: the ventures) and (0.39.3) what is owed on the line that waits with it, named: the
+    promises Ember made the owner about it and the owner's decisions on its requests (``owed_on``), which until then
+    went on under their hold (analysis-0.39.1, 4.4)."""
     held = _owner_held(conn, scope, node_id)
     if held["hold_by"] == "owner":
         raise PlanError("id", "you hold it already", 409)
     words = " ".join(why.split())[:200] or "your owner holds it"
     _update(conn, held["id"], now, hold_reason=words, hold_by="owner")
     change(conn, scope, held["id"], None, "owner", "hold", f"{(who or 'your owner')[:60]}: {words}", now)
-    return None if _is_ventures(held) else int(held["project_id"])
+    if _is_ventures(held):
+        return None, []
+    line = int(held["project_id"])
+    return line, owed_on(conn, scope, line)
+
+
+def owed_on(conn: sqlite3.Connection, scope: AgentScope, line: int) -> list[str]:
+    """0.39.3: the open promises to the owner and the owner's decisions of product line ``line`` (obligations.owed),
+    in words for the owner: what their hold of the line holds besides its steps. A decision is recorded at Ember's
+    next wake: one made just now isn't named yet, and waits with the rest."""
+    where, params = scope.where()
+    said: list[str] = []
+    for row in conn.execute(
+        f"SELECT * FROM obligations WHERE {where} AND kind IN ('promise', 'decision') AND status = 'open' ORDER BY id",
+        params,
+    ).fetchall():
+        if obligations.owed(conn, scope, row).line != line:
+            continue
+        if row["kind"] == "promise":
+            due = f" (due {row['due']})" if row["due"] else ""
+            said.append(f"promise #{row['id']} {_quoted(row['what'])}{due}")
+        elif row["approval_id"] is not None:
+            said.append(f"your decision on request #{row['approval_id']}")
+    return said
 
 
 # --- the owner's freezes (0.36.0) ---
