@@ -217,7 +217,7 @@ BUILDING_TOOLS = (
 # Model calls of their own (and, 0.12.0, the Etsy market probe of a demand note): they need the network, and no
 # database transaction is held meanwhile.
 CALLING_TOOLS = frozenset({"research", "workshop", "brainstorm", "draft", "demand_note", "printify_catalog"})
-# 0.39.3: the tools that only read: they change no record, file, request or message, and cost nothing. A call the
+# 0.39.4: the tools that only read: they change no record, file, request or message, and cost nothing. A call the
 # model wrote inside its journal runs only when it is one of these (run): a journal can quote someone else's words
 # too. memory_read (a replace needs it), email_read (it marks the email read) and look (a picture) are left out.
 READ_ONLY_TOOLS = frozenset(
@@ -1491,7 +1491,7 @@ class Outcome:
     # 0.12.0: answered from an earlier call without a new one (a repeated research question): free, and it doesn't
     # count toward the tool's per-cycle limit.
     reused: bool = False
-    # 0.39.3: the calls Ember's code took out of this one's journal and ran (run): they count toward the reply's
+    # 0.39.4: the calls Ember's code took out of this one's journal and ran (run): they count toward the reply's
     # MAX_TOOL_CALLS_PER_TURN, which the journal itself doesn't (one reply of 8 journals ran 16 calls).
     taken: int = 0
 
@@ -1636,7 +1636,7 @@ def run(
 ) -> Outcome:
     """Validate and run one tool call; always returns an Outcome (never raises). 0.24.0: a call of another tool the
     model wrote inside its journal (``unleaked``) is taken out of it, and what became of it is added to the answer.
-    0.39.3: it runs only when it reads (READ_ONLY_TOOLS), as one of the ``room`` calls its reply may still run (the
+    0.39.4: it runs only when it reads (READ_ONLY_TOOLS), as one of the ``room`` calls its reply may still run (the
     answer's ``taken``); any other is refused (TAKEN_OUT). It used to run whatever a text held: a buyer's email saved
     to notes wrote an "Owner rule" into LESSONS, a quote in a message deleted a product file (analysis-0.39.1, 4.1)."""
     leaked: list[tuple[str, dict[str, Any]]] = []
@@ -1843,7 +1843,7 @@ _CLOSING = re.compile(r"(?:\s*</[a-z_:]{1,40}>)+\s*$", re.IGNORECASE)
 # name="file">lessons', with "content" and "mode" given as if they were this call's. Live, two reflections lost their
 # journal to it ("unknown field 'content'", "unknown field 'next_step'"), with the lessons or the project update in it.
 _INVOKE = re.compile(r'</invoke>\s*<invoke name="([a-z_]{1,40})">', re.IGNORECASE)
-# 0.39.3: why a call taken out of a journal that doesn't only read isn't run (run). The model can tell its own call from
+# 0.39.4: why a call taken out of a journal that doesn't only read isn't run (run). The model can tell its own call from
 # words it quoted; Ember's code can't.
 TAKEN_OUT = (
     "only a call that reads runs from inside a journal, as a journal can quote what someone else wrote (an email, a "
@@ -1855,7 +1855,7 @@ def unleaked(spec: Spec, raw: Any, notes: list[str], leaked: list[tuple[str, dic
     """The journal's input with each text field another one's markup holds moved to its own field (unless that field
     is given), when every such mark names another text field of the journal; what was moved is noted. 0.24.0: with
     ``leaked`` (a list), a call of another tool written inside a text is taken out of it, with the fields it was
-    given beside this call's, and added to ``leaked`` (run says whether it runs). 0.39.3: in the journal only, whose
+    given beside this call's, and added to ``leaked`` (run says whether it runs). 0.39.4: in the journal only, whose
     texts are the model's own words: any other tool's text can quote someone else word for word (a buyer's email saved
     to notes, a passage quoted to the owner), and markup in it is part of the quote, left as it is."""
     if not isinstance(raw, dict) or spec.name != "write_journal":
@@ -1898,7 +1898,7 @@ def _take_out(
         call: dict[str, Any] = {}
         tail = value[found.end() :]
         marks = list(_LEAKED.finditer(tail))
-        # 0.39.3: a call with no field written after it (all beside the journal's, or none) failed the journal
+        # 0.39.4: a call with no field written after it (all beside the journal's, or none) failed the journal
         for mark, after in zip(marks, [*marks[1:], None] if marks else [], strict=True):
             if mark[1] in other.fields:
                 call[mark[1]] = _CLOSING.sub("", tail[mark.end() : after.start() if after else len(tail)]).strip()
@@ -2257,7 +2257,9 @@ def _project_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         )
     venture_id = args.get("venture_id")
     held = plan.new_things_held(conn, ctx.scope)
-    if held and venture_id is None:  # 0.36.0: the owner's "nothing new", kept by Ember's code
+    # 0.36.0: the owner's "nothing new", kept by Ember's code; 0.39.3 (analysis-0.39.1, 4.4): whatever venture the new
+    # line names. One that named a venture went through, and an ordinary cycle can make an idea (venture_create).
+    if held:
         raise ToolError(f"your owner holds new things ({held}): no new product until they resume them")
     open_ = store.open_projects(conn, ctx.scope)  # 0.19.1: as many as the agent needs (it was at most 8)
     if any(p["title"].strip().lower() == args["title"].strip().lower() for p in open_):
@@ -2331,8 +2333,10 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     # "never set up". Reopening it, a bet on it or moving it to a venture is its own cycle's work, and a cycle without a
     # line yet takes the one it touches first. 0.35.0: only the owner closes a project (its next step is the plan's).
     work = status in ("idea", "active") or bool(args.get("bet")) or args.get("venture_id") is not None
-    if work or ctx.state.focus_project_id is None:
-        _line(ctx, int(row["id"]), "update")
+    # 0.39.3: the record of a line the owner holds is kept like another line's: no cycle takes the line for it
+    keeps = not work and plan.line_held(conn, ctx.scope, int(row["id"])) is not None
+    if work or (ctx.state.focus_project_id is None and not keeps):
+        _line(ctx, conn, int(row["id"]), "update")
     if status in ("idea", "active") and status != row["status"]:
         held = ventures.owner_stopped(conn, ctx.scope, row["venture_id"])
         if held is not None:
@@ -2683,6 +2687,12 @@ def _venture_create(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     title = " ".join(args["title"].split())
     if not title:
         raise ToolError("the title is empty")
+    held = plan.new_things_held(conn, ctx.scope)
+    if held:  # 0.39.3 (analysis-0.39.1, 4.4): the owner's "nothing new" holds new ideas too
+        raise ToolError(
+            f"your owner holds new things ({held}): no new venture until they resume them. Tell them the idea in your "
+            "answer if it can't wait: they can add it themselves"
+        )
     if ventures.count(conn, ctx.scope) >= ventures.MAX_VENTURES:
         raise ToolError(f"your tree holds {ventures.MAX_VENTURES} ventures, as many as it can")
     stage = args["stage"]
@@ -3019,26 +3029,33 @@ def _listing_stopped(conn: Any, scope: AgentScope, listing_id: int, what: str) -
         )
 
 
-def _line(ctx: ToolContext, project_id: int | None, what: str) -> None:
+def _line(ctx: ToolContext, conn: Any, project_id: int | None, what: str) -> None:
     """0.28.0: one product line a cycle (lines.py). An ordinary, marketing or reactive cycle works on its line only;
     until it has one, on the line of its first call that works on one (it takes it once the call succeeds, _lock).
-    Refuses ``what`` for another line."""
+    Refuses ``what`` for another line. 0.39.3 (analysis-0.39.1, 4.4): and for a line the owner holds (plan.line_held),
+    which no cycle takes: a cycle without a line took the first one it worked on, a held one too, and no tool read
+    the owner's hold."""
     if not ctx.state.one_line or project_id is None:
         return
     line = ctx.state.focus_project_id
-    if line is None:
-        ctx.state.touched = int(project_id)
-        return
-    if int(project_id) != line:
+    if line is not None and int(project_id) != line:
         raise ToolError(
             f"this cycle works on product line #{line}: no {what} for project #{project_id}, whose work waits for a "
             "cycle of its own (say so in your journal's next)"
         )
+    held = plan.line_held(conn, ctx.scope, int(project_id))
+    if held is not None:
+        raise ToolError(
+            f"your owner holds product line #{project_id} ({_cut(held, 80)}): no {what} for it until they resume it, "
+            "not even for a promise about it; work on what doesn't need it"
+        )
+    if line is None:
+        ctx.state.touched = int(project_id)
 
 
 def _listing_line(ctx: ToolContext, conn: Any, listing_id: int, what: str) -> None:
     """0.28.0: ``_line`` for a call about one of Ember's listings (an edit, a pin, a post, a blog post): its line."""
-    _line(ctx, ventures.listing_project(conn, ctx.scope, listing_id), what)
+    _line(ctx, conn, ventures.listing_project(conn, ctx.scope, listing_id), what)
 
 
 def _line_venture(ctx: ToolContext, conn: Any, venture_id: int | None, what: str) -> None:
@@ -3419,7 +3436,7 @@ def _request_approval(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
     project_id = args.get("project_id")
     if project_id is not None and store.project(conn, ctx.scope, project_id) is None:
         raise ToolError(f"there is no project #{project_id}")
-    _line(ctx, project_id, "request")  # 0.28.0
+    _line(ctx, conn, project_id, "request")  # 0.28.0
     approval_id = store.insert_approval(conn, ctx.scope, ctx.cycle_id, ctx.now(), **args)
     return Outcome(
         True,
@@ -4388,7 +4405,7 @@ def _product_line(ctx: ToolContext, conn: Any, args: dict[str, Any], what: str) 
     refused = _stopped(conn, ctx.scope, int(project_id), {"listing": "etsy", "product": "printify"}.get(what))
     if refused:
         raise ToolError(refused)
-    _line(ctx, int(project_id), f"new {what}")  # 0.28.0
+    _line(ctx, conn, int(project_id), f"new {what}")  # 0.28.0
     return int(project_id)
 
 
@@ -4408,7 +4425,7 @@ def _demand_note(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     with ctx.db.connection() as conn:
         if store.project(conn, ctx.scope, project_id) is None:
             raise ToolError(f"there is no project #{project_id}")
-        _line(ctx, project_id, "demand note")  # 0.28.0: before the market probe
+        _line(ctx, conn, project_id, "demand note")  # 0.28.0: before the market probe
         problem = demand.source_problem(conn, ctx.scope, source, project_id, said) if source is not None else ""
     if problem:
         raise ToolError(problem)

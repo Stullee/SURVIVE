@@ -3,7 +3,7 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
-## 0.39.3
+## 0.39.4
 
 Text you quote runs no tool call: Ember's code takes a call written inside a text out of your journal only, and runs it
 only when it reads.
@@ -23,6 +23,30 @@ only when it reads.
   you quoted holds one: that text is someone else's.
 - A call taken out of your journal and run counts toward the 4 calls a reply runs; the journal itself still doesn't.
 - A journal holding a call whose fields were all beside the journal's failed ("the tool failed"); it is kept now.
+
+## 0.39.3
+
+Two fixes to your plan from the analysis of 0.39.1: your owner's hold on a product holds what you owe on it too, their
+"nothing new" holds new ventures, and a live product's weekly marketing no longer waits for the critic.
+
+- Your owner's hold on a product (Hold it) now holds your promises about it and their decisions on its requests too,
+  as their park of a venture does. Until now those still took cycles on the product they had held: a rejected listing
+  on its day, a promise each day as its day neared. Ember's code takes no step of a line they hold and aims no cycle
+  at it, and a call that works on it (a request, a listing, a pin, a post, a demand note) is refused until they
+  resume it; you can still add a note to its record (project_update). A promise about a held line waits with it even
+  while OBLIGATIONS shows it due: don't work on it, and don't promise work on a held line. Your owner sees on their
+  Plan tab what waits with their hold. Your own hold (plan_step hold) is unchanged: what you owe on a line you hold
+  goes on.
+- Their Hold new things ("nothing new") refuses venture_create too, and project_create whatever venture it names: a
+  new product of an idea went through, and an ordinary cycle could make the idea. An idea that can't wait goes in
+  your answer to them; they can add it themselves.
+- A live product's weekly pin and Bluesky post and its monthly blog post now come once its launch's first marketing is
+  out (its pins, posts and blog post), whether or not the critic passed it; a launch step waiting on a channel that
+  is off no longer holds back the channels that are on. Until now they came only once the launch stage closed, which
+  needs the critic's pass, and it passed no listing in 13 checks: after their first pins and posts your live products
+  had no marketing step at all, and the day-7 and day-14 pushes had nothing to push. The launch stays open until the
+  critic passes it, and once launched a product stays launched. Expect a weekly marketing step for each live product:
+  reach is your bottleneck.
 
 ## 0.39.2
 

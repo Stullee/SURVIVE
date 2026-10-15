@@ -8324,7 +8324,7 @@
     var parts = [];
     if (explore && explore.hold) {
       parts.push((explore.hold_by === "owner" ? "You hold new things" : "Your ventures are on hold") + " (" + explore.hold +
-        "): no venture cycle" + (explore.hold_by === "owner" ? " and no new product" : "") +
+        "): no venture cycle" + (explore.hold_by === "owner" ? ", no new venture and no new product" : "") +
         " until you resume them in the plan's Ventures box above. Your ideas still go into the tree.");
     } else {
       parts.push("Each venture's next decision is a step of your plan (below), weighed like any other: a venture cycle comes when one weighs most." +
@@ -10172,7 +10172,7 @@
       .sort(function (a, b) { return num(b.step.weight) - num(a.step.weight); });
     var state = v.hold
       ? v.hold_by === "owner"
-        ? "You hold new things: " + v.hold + ". No venture cycle and no new product until you resume them."
+        ? "You hold new things: " + v.hold + ". No venture cycle, no new venture and no new product until you resume them."
         : agentName() + " holds them: " + v.hold
       : plural(list.length, "venture") + " explored, each next decision a step of your plan" +
         (ready.length ? "; the heaviest: #" + ready[0].venture + " " + ready[0].title + " (weight " + ready[0].step.weight + ")." : ".");
@@ -10194,7 +10194,7 @@
       h("div", { class: "form-actions" },
         v.hold
           ? planButton("Resume", "btn btn-small", function (button) { planProductAction(target, "resume", null, button, "Resumed: the ventures' steps are weighed again, and new products may start."); })
-          : planButton("Hold new things", "btn btn-small", function (button) { planProductAction(target, "hold", { why: "nothing new for now" }, button, "Held: no venture cycle and no new product until you resume them."); }),
+          : planButton("Hold new things", "btn btn-small", function (button) { planProductAction(target, "hold", { why: "nothing new for now" }, button, "Held: no venture cycle, no new venture and no new product until you resume them."); }),
         planButton("Their steps", "btn btn-small", function () {
           selectVentureView("pipeline", false);
           revealEl($("vt-steps"), $("vt-steps-head"));
@@ -10537,10 +10537,11 @@
       buttons.hidden = true;
       why.focus();
     }
-    // 0.36.0: the owner holds it: its steps wait until they resume it (Ember can't), with an optional reason
+    // 0.36.0: the owner holds it: its steps wait until they resume it (Ember can't), with an optional reason. 0.39.3:
+    // its promises and the owner's decisions on it too (they went on under the hold); the answer names them
     function askHold() {
       replace(confirm, [
-        h("p", { text: "Hold “" + q.title + "”? Its steps wait until you resume it; " + agentName() + " can't resume it." }),
+        h("p", { text: "Hold “" + q.title + "”? Its steps wait until you resume it, its promises to you and your decisions on it too; " + agentName() + " can't resume it." }),
         why,
         h("div", { class: "form-actions" },
           planButton("Hold it", "btn btn-primary", function (button) {
@@ -10577,7 +10578,8 @@
         button.disabled = false;
         return;
       }
-      setStatusText("pl-status", said + " " + agentName() + " sees it on its next wake.", "ok");
+      var waits = isObject(res.data) ? arr(res.data.waits) : [];  // 0.39.3: a hold names what is owed on the line
+      setStatusText("pl-status", said + (waits.length ? " Waiting with it: " + waits.join("; ") + "." : "") + " " + agentName() + " sees it on its next wake.", "ok");
       loadPlan();
       refresh();
     }).catch(function (err) {
@@ -10597,7 +10599,7 @@
   // A promise to the owner is no step Ember takes: the steps in front of it carry it until it is kept.
   function planStepState(st) {
     if (st.status !== "open") return st.status;
-    if (st.kind === "promise") return "promised";
+    if (st.kind === "promise") return st.waiting === "hold" ? "promised · on hold" : "promised";  // 0.39.3: the owner's hold holds it
     return st.waiting ? PLAN_WAIT[st.waiting] || st.waiting : "ready";
   }
 

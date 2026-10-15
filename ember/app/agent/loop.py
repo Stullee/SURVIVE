@@ -996,6 +996,13 @@ class CycleRunner:
                         + (", until they take the venture up again." if held["stage"] == "parked" else ".")
                     )
                     plan.focus_project_id, focus = None, None
+                elif (why := plan_tree.line_held(conn, self.scope, int(focus["id"]))) is not None:
+                    # 0.39.3 (analysis-0.39.1, 4.4): and so does their hold of a product; a focus on one carried it on
+                    stopped = (
+                        f"No focus project: your plan's #{focus['id']} waits, because your owner holds it"
+                        f" ({why}). Work on what doesn't need it, until they resume it."
+                    )
+                    plan.focus_project_id, focus = None, None
             if plan.focus_venture_id is not None:
                 venture = ventures.get(conn, self.scope, plan.focus_venture_id)
                 if venture is None or venture["stage"] not in ventures.OPEN_STAGES:
@@ -1987,7 +1994,7 @@ class CycleRunner:
             else:
                 with self.db.transaction() as conn:
                     store.update_cycle(conn, ctx.cycle_id, current_action=f"Using {name}"[:300])
-                # 0.39.3: a call Ember's code takes out of the journal and runs counts (8 journals in one reply ran 16)
+                # 0.39.4: a call Ember's code takes out of the journal and runs counts (8 journals in one reply ran 16)
                 outcome = tools.run(ctx, name, raw, use_id, call_id, phase, MAX_TOOL_CALLS_PER_TURN - counted)
                 counted += outcome.taken
             results.append(self._result_block(use, outcome))

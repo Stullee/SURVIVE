@@ -226,8 +226,8 @@ def test_the_reflection_writes_the_journal_first_without_a_draft() -> None:
 
 
 def test_a_lesson_written_inside_the_journal_s_entry_leaves_the_journal_whole(data_dir: Path) -> None:
-    """Cycle #113: the model wrote memory_update inside write_journal's entry, its fields beside the journal's. 0.39.3:
-    the journal is kept, the call isn't run (a journal can quote someone else's call: tests/test_fixes_0393.py)."""
+    """Cycle #113: the model wrote memory_update inside write_journal's entry, its fields beside the journal's. 0.39.4:
+    the journal is kept, the call isn't run (a journal can quote someone else's call: tests/test_fixes_0394.py)."""
     leaked = {
         "summary": "Rebuilt the tracker's first photo",
         "entry": 'Looked at both covers.</entry>\n<parameter name="next">Check request #56.</parameter>\n</invoke>\n'
@@ -251,7 +251,7 @@ def test_a_lesson_written_inside_the_journal_s_entry_leaves_the_journal_whole(da
 
 
 def test_a_project_update_written_inside_a_work_step_s_journal_is_left_to_a_call_of_its_own(data_dir: Path) -> None:
-    """Cycle #104's shape: project_update inside the entry, its project_id as text, its other fields beside. 0.39.3:
+    """Cycle #104's shape: project_update inside the entry, its project_id as text, its other fields beside. 0.39.4:
     the draft is kept, and the update is the model's to make as a call of its own, as its answer says."""
     agent, project = started(data_dir)
     ctx = shop_context(agent)
