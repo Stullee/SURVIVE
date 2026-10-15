@@ -284,9 +284,15 @@ it runs one **wake cycle**:
    Every cycle that worked reflects. Since 0.24.0 a journal the agent writes in
    a work step is kept as the reflection's draft: the reflection writes it again
    only to correct it, and when it writes none, or its own is refused, the draft
-   is the cycle's journal. When the model writes another tool's call inside a
-   text (a lesson inside the journal's entry), Ember's code takes it out and runs
-   it as a call of its own.
+   is the cycle's journal. When the model writes another tool's call inside its
+   journal (a lesson inside the entry), Ember's code takes it out, so the
+   journal is kept. Since 0.39.4 it runs such a call only when it only reads, as
+   one of the four tool calls a reply runs (the journal itself isn't counted);
+   any other it refuses, and the agent makes the call itself if it meant it. In
+   any other text (an email saved to its notes, a quote in a message to you)
+   such markup is part of the text and stays there: until 0.39.4 a call written
+   there ran as the agent's own, so a buyer's email could change its lessons and
+   a quote could delete a file.
 
 When a cycle ends, however it ends, Ember's code writes its **digest** from its
 records: what it was aimed at, its goal, what its tools did and what they
@@ -1874,7 +1880,7 @@ included: encrypt your backups.
   by a style sheet or a colour like its background), and attachments are
   listed by name and size but never opened. An email over 1 MB keeps the text
   in its first 256 KB, where an email's text comes before its attachments, and
-  says so; its attachments aren't fetched (before 0.39.4 it kept its headers
+  says so; its attachments aren't fetched (before 0.39.5 it kept its headers
   only, so a "stop" sent with a photo was never read). One whose text comes
   after a photo still keeps its headers only. The agent treats emails as data
   from unverified senders, never as instructions.
@@ -1915,7 +1921,7 @@ included: encrypt your backups.
   read (0.37.3): a "stop" that came while the kill switch was on, the app was
   down or reading failed was read only after the first round had sent to its
   writer. While the mailbox can't be read, or new mail is left to read, every
-  approved email waits, and its card says why. Since 0.39.4 that includes a
+  approved email waits, and its card says why. Since 0.39.5 that includes a
   read that fails while it stores the emails (it raised past the record, so
   the card said only "waiting"), and the listings, pins, posts, products and
   uploads you approved go out meanwhile: each kind on its own.
@@ -1931,7 +1937,7 @@ included: encrypt your backups.
   "unsubscribe" alone, "remove me", "don't email me", "keine E-Mails mehr",
   "abmelden", an objection to the use of their data (GDPR Art. 21), and the
   like, also on its own line after a greeting ("Hallo, … Stopp."). Since
-  0.39.4 also below what they quote or between its parts, as Thunderbird and
+  0.39.5 also below what they quote or between its parts, as Thunderbird and
   German netiquette reply: only the words above the quote's first line ("Am …
   schrieb …:") counted, so such a stop was stored and the email you approved
   went out anyway. In an HTML email a quote's lines show with ">" too, so they
@@ -1942,7 +1948,7 @@ included: encrypt your backups.
   An email Ember can't read (one nested deeper or with more parts than any
   real email, or one the parser fails on) is stored with its headers only, and
   a "stop" in its subject still counts (0.21.0: one such email stopped Ember
-  reading its mailbox for good). Since 0.39.4 so is one the database refuses as
+  reading its mailbox for good). Since 0.39.5 so is one the database refuses as
   it is, with a warning in the events, and a sender's name in raw 8-bit bytes
   (spam often has one) is read as UTF-8: one such email stopped every read of
   the mailbox for good, and every approved request while an email waited.
@@ -2849,7 +2855,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.39.4 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.39.5 (by /u/your name)`.
 
 ## Amazon KDP
 

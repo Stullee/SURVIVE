@@ -52,7 +52,7 @@ class Fetched:
 def fetch(db: Database, clock: Clock, scope: Scope, mailbox: Mailbox, budget: float = FETCH_BUDGET_SECONDS) -> Fetched:
     """Fetch new mail, the oldest first, store it, apply the replies that ask to stop and record how it went. Up to
     FETCH_ROUNDS fetches while more waits and time is left; what is left waits for the next check. Never raises.
-    0.39.4: storing is part of the read, so a read that fails while storing is recorded and shown like any other
+    0.39.5: storing is part of the read, so a read that fails while storing is recorded and shown like any other
     (the mailbox's last error, on the dashboard and on an approved email's card); it raised past the record, and
     every read after it failed the same way, unseen."""
     result = Fetched()
@@ -103,7 +103,7 @@ def fetch(db: Database, clock: Clock, scope: Scope, mailbox: Mailbox, budget: fl
 
 
 def _store(db: Database, scope: Scope, mailbox: Mailbox, fetched: FetchResult, now: str, result: Fetched) -> None:
-    """One fetch's emails, each stored once; a sender whose email asks to stop is never written to again. 0.39.4:
+    """One fetch's emails, each stored once; a sender whose email asks to stop is never written to again. 0.39.5:
     each email in a savepoint of its own: one the database refuses as it is is stored with its headers only
     (IncomingMail.headers_only), and the others are kept. One such email rolled back all of its fetch, a "stop"
     before it included, and the read failed on it again every time."""
