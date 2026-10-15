@@ -51,7 +51,10 @@ class Fetched:
 
 def fetch(db: Database, clock: Clock, scope: Scope, mailbox: Mailbox, budget: float = FETCH_BUDGET_SECONDS) -> Fetched:
     """Fetch new mail, the oldest first, store it, apply the replies that ask to stop and record how it went. Up to
-    FETCH_ROUNDS fetches while more waits and time is left; what is left waits for the next check. Never raises."""
+    FETCH_ROUNDS fetches while more waits and time is left; what is left waits for the next check. Never raises.
+    0.39.5: storing is part of the read, so a read that fails while storing is recorded and shown like any other
+    (the mailbox's last error, on the dashboard and on an approved email's card); it raised past the record, and
+    every read after it failed the same way, unseen."""
     result = Fetched()
     now = to_iso(clock.now())
     deadline = time.monotonic() + budget
@@ -60,14 +63,14 @@ def fetch(db: Database, clock: Clock, scope: Scope, mailbox: Mailbox, budget: fl
     for _ in range(FETCH_ROUNDS):
         try:
             fetched = mailbox.fetch_new(last, MAX_FETCH, validity, deadline)
+            _store(db, scope, mailbox, fetched, now, result)
         except MailError as exc:
             result.error = redact(str(exc))[:ERROR_CHARS]
         except Exception as exc:  # noqa: BLE001 - reading mail must never end the cycle
-            log.exception("Fetching mail failed")
+            log.exception("Reading the mailbox failed")
             result.error = redact(f"{type(exc).__name__}: {exc}")[:ERROR_CHARS]
         if result.error is not None:
             break
-        _store(db, scope, mailbox, fetched, now, result)
         last, validity = _refused(db, scope.mode, fetched), fetched.uidvalidity or None
         db.set_meta(meta_key(scope.mode, "last_uid"), str(last))
         db.set_meta(meta_key(scope.mode, "uidvalidity"), str(fetched.uidvalidity or ""))
@@ -100,34 +103,69 @@ def fetch(db: Database, clock: Clock, scope: Scope, mailbox: Mailbox, budget: fl
 
 
 def _store(db: Database, scope: Scope, mailbox: Mailbox, fetched: FetchResult, now: str, result: Fetched) -> None:
-    """One fetch's emails, each stored once; a sender whose email asks to stop is never written to again."""
+    """One fetch's emails, each stored once; a sender whose email asks to stop is never written to again. 0.39.5:
+    each email in a savepoint of its own: one the database refuses as it is is stored with its headers only
+    (IncomingMail.headers_only), and the others are kept. One such email rolled back all of its fetch, a "stop"
+    before it included, and the read failed on it again every time."""
+    stored: list[int] = []
+    suppressed: list[str] = []
+    cut: list[int] = []
     with db.transaction() as conn:
         for mail in fetched.mails:
-            email_id = store_incoming(conn, scope, mail, fetched.uidvalidity or 0, now, mailbox.address)
-            if email_id is None:
-                continue
-            result.stored.append(email_id)
-            own = mail.from_addr.lower() == mailbox.address.lower()  # Ember's own address is never suppressed
-            if not mail.from_addr or own:
-                continue
-            # 0.15.0: "replied" only to an email Ember sent (live: a provider's own mail was said to reply)
-            answered = _answered(conn, scope, mail)
-            # A newsletter's "unsubscribe" is about Ember leaving it (0.12.0). 0.21.0: unless it answers Ember's own
-            # email: a "stop" sent through a group or a list (with its List-Id) was ignored.
-            words = opt_out(mail.subject, mail.body) if answered or not mail.bulk else None
-            if words is None:
-                continue
-            how = "replied" if answered else "wrote"
-            if suppress(conn, scope, mail.from_addr, now, f'{how} "{words}"', email_id):
-                result.suppressed.append(mail.from_addr)
-            # 0.15.0: a stop in answer to Ember's email covers the address Ember wrote to as well (a colleague may
-            # answer for info@); it was only the sender's.
-            reason = f"an answer to Ember's email to this address asked to stop (email #{email_id})"
-            for to in answered:
-                if to not in (mail.from_addr.lower(), mailbox.address.lower()) and suppress(
-                    conn, scope, to, now, reason, email_id
-                ):
-                    result.suppressed.append(to)
+            conn.execute("SAVEPOINT incoming")
+            try:
+                email_id, asked = _store_one(conn, scope, mailbox, mail, fetched.uidvalidity or 0, now)
+            except Exception:  # noqa: BLE001 - one email Ember can't store must never stop the mailbox being read
+                log.exception("Storing email number %d failed: its headers only are stored", mail.uid)
+                conn.execute("ROLLBACK TO incoming")
+                email_id, asked = _store_one(conn, scope, mailbox, mail.headers_only(), fetched.uidvalidity or 0, now)
+                cut.append(mail.uid)
+            conn.execute("RELEASE incoming")
+            stored += [email_id] if email_id is not None else []
+            suppressed += asked
+    result.stored += stored
+    result.suppressed += suppressed
+    for uid in cut:
+        events.record(
+            db,
+            "warning",
+            "email",
+            f"Ember couldn't store email number {uid} as it was, so only its headers were stored: read it in the"
+            " mailbox's webmail",
+        )
+
+
+def _store_one(
+    conn: sqlite3.Connection, scope: Scope, mailbox: Mailbox, mail: IncomingMail, uidvalidity: int, now: str
+) -> tuple[int | None, list[str]]:
+    """One email, stored once, and the addresses it asks Ember never to write to again: (its id, or None if it was
+    stored before; the addresses newly suppressed)."""
+    email_id = store_incoming(conn, scope, mail, uidvalidity, now, mailbox.address)
+    if email_id is None:
+        return None, []
+    own = mail.from_addr.lower() == mailbox.address.lower()  # Ember's own address is never suppressed
+    if not mail.from_addr or own:
+        return email_id, []
+    # 0.15.0: "replied" only to an email Ember sent (live: a provider's own mail was said to reply)
+    answered = _answered(conn, scope, mail)
+    # A newsletter's "unsubscribe" is about Ember leaving it (0.12.0). 0.21.0: unless it answers Ember's own
+    # email: a "stop" sent through a group or a list (with its List-Id) was ignored.
+    words = opt_out(mail.subject, mail.body) if answered or not mail.bulk else None
+    if words is None:
+        return email_id, []
+    asked = []
+    how = "replied" if answered else "wrote"
+    if suppress(conn, scope, mail.from_addr, now, f'{how} "{words}"', email_id):
+        asked.append(mail.from_addr)
+    # 0.15.0: a stop in answer to Ember's email covers the address Ember wrote to as well (a colleague may
+    # answer for info@); it was only the sender's.
+    reason = f"an answer to Ember's email to this address asked to stop (email #{email_id})"
+    for to in answered:
+        if to not in (mail.from_addr.lower(), mailbox.address.lower()) and suppress(
+            conn, scope, to, now, reason, email_id
+        ):
+            asked.append(to)
+    return email_id, asked
 
 
 def _answered(conn: sqlite3.Connection, scope: Scope, mail: IncomingMail) -> list[str]:

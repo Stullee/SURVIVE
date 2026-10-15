@@ -106,6 +106,11 @@ class FakeIMAP:
         if what == "(BODY.PEEK[HEADER])":
             header = raw.split(b"\n\n", 1)[0] + b"\n\n"
             return "OK", [(f"1 (UID {uid} BODY[HEADER] {{{len(header)}}}".encode(), header), b")"]
+        if what.startswith("(BODY.PEEK[TEXT]<0."):  # 0.39.5: the start of a larger email's body
+            length = int(what.removeprefix("(BODY.PEEK[TEXT]<0.").removesuffix(">)"))
+            ends = [raw.find(blank) + len(blank) for blank in (b"\r\n\r\n", b"\n\n") if blank in raw]
+            text = raw[min(ends, default=len(raw)) :][:length]
+            return "OK", [(f"1 (UID {uid} BODY[TEXT]<0> {{{len(text)}}}".encode(), text), b")"]
         assert what == "(BODY.PEEK[])"
         return "OK", [(f"1 (UID {uid} BODY[] {{{len(raw)}}}".encode(), raw), b")"]
 

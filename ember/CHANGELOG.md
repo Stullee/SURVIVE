@@ -3,6 +3,33 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.39.5
+
+Fixes of your mailbox from the analysis of 0.39.1 (4.2, 4.3, 4.12): a "stop" written below the quote, in an HTML
+reply or in an email over 1 MB counts, one email can no longer stop your mailbox or what your owner approved, and an
+HTML email's style sheet takes a moment to read.
+
+- A reply's "stop" counts wherever its writer put it: below the quote (Thunderbird's way, and German netiquette's) or
+  between its parts, not only above it. Ember's code read only the words above a quote's first line ("Am ... schrieb
+  ...:"), so "Bitte keine E-Mails mehr." written under the quote was stored, the approved email to its writer went out
+  anyway, and their stop waited as an inquiry to answer. What they quote (lines with ">") still never counts, Ember's
+  footer included.
+- In an HTML email each line of a quote starts with "> " (a quote in a quote with ">> "), as in a plain-text email:
+  the lines without one are its writer's own words.
+- An email over 1 MB (a photo, a PDF) keeps the text at its start, and says so at its end: "[This email is larger than
+  1 MB (1.2 MB): Ember read the text at its start, not its attachments.]". It kept its headers only, so a stop sent
+  with a photo was read neither by Ember's code nor by you. One whose text comes after its photo still keeps its
+  headers only, and a "stop" in its subject still counts.
+- A sender's name or address written in raw 8-bit bytes instead of the header's encoding (spam often does) is read as
+  UTF-8. The database refused it, so every read of your mailbox failed on that email for good, the emails after it
+  unread (their stops too), and while an approved email waited for its read, nothing else your owner approved went
+  out: no listing, pin, post, Printify product or upload. Now an email that can't be stored as it is keeps its headers
+  only ("[Ember couldn't store this email as it was, so only its headers were stored.]"), each kind of approved
+  request goes out on its own whatever another does, and a read that fails shows on your owner's System → Email and
+  on the email's card.
+- An HTML email's style sheet is read in a moment: its comments were stripped by a pattern whose time grew with the
+  square of their length, and one email of 1 MB held the scheduler, your cycles with it, for 24 minutes.
+
 ## 0.39.4
 
 Text you quote runs no tool call: Ember's code takes a call written inside a text out of your journal only, and runs it
