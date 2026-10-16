@@ -30,6 +30,7 @@ from . import (
     learning,
     library,
     obligations,
+    paid,
     policy,
     reach,
     review,
@@ -264,6 +265,7 @@ class Snapshot:
     pins: list[str] = field(default_factory=list)  # 0.12.0: the lessons the owner pinned
     workspace: list[str] = field(default_factory=list)
     workspace_usage: str = ""  # 0.12.0: what the workspace holds of its limits, for STATUS
+    paid: str = ""  # 0.39.8: the owner's paid tests of Ember's listings, running or lately ended (paid.status_text)
     journal: list[sqlite3.Row] = field(default_factory=list)
     news: News = field(default_factory=News)
     research: list[sqlite3.Row] = field(default_factory=list)
@@ -403,6 +405,7 @@ def snapshot(
         pins=[str(p["text"]) for p in pins(conn, scope)],
         workspace=files,
         workspace_usage=_usage_line(workspace),
+        paid=paid.status_text(conn, scope, today) if today is not None else "",
         journal=journal,
         news=news or News(),
         research=store.recent_research(conn, scope, RESEARCH_CALLS),
@@ -540,6 +543,8 @@ def status_text(s: Snapshot, dry_run: bool) -> str:
         lines.append(s.messages)
     if s.workspace_usage:
         lines.append(s.workspace_usage)
+    if s.paid:  # 0.39.8: the owner's paid tests (analysis-0.39.6, 3.5)
+        lines.append(s.paid)
     kind = _kind_line(s)
     if kind:
         lines.append(kind)

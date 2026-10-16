@@ -90,8 +90,15 @@ _KNOWN_USAGE_KEYS = frozenset(
         "inference_geo",
         "iterations",
         "output_tokens_details",  # e.g. thinking_tokens: already part of output_tokens
+        "speed",  # 0.39.8: "standard", or "fast" (fast mode, which Ember never asks for and can't price)
     }
 )
+# 0.39.8 (analysis-0.39.6, 3.1): the speed an answer says it was served at that its price is the standard one. Since
+# the night to 2026-10-16 every answer carried usage.speed "standard", a field Ember's code didn't know: each call was
+# charged at its worst case, about four times its price ($15.94 booked for $3.87 on 10-16), and the booked runway would
+# have made Ember critical on money that was still there.
+STANDARD_SPEEDS = frozenset({"standard"})
+SPEED_NOTE = "unknown usage field speed"  # what such a call's error says (the calls settle_speed settles)
 _KNOWN_SERVER_TOOLS = frozenset({"web_search_requests", "web_fetch_requests", "code_execution_requests"})
 # Workshop calls (code execution, 0.7.0) have their own cap per run and count toward the daily cap and the balance,
 # but not toward the cycle cap: one run can cost more than a whole wake cycle may. The daily review (0.7.1), once a
@@ -451,6 +458,85 @@ def recover_interrupted(db: Database, clock: Clock, boot_id: str) -> int:
                 f" (${micros_to_usd(total):.4f}), {cycles} cycle(s) marked interrupted",
             )
     return len(rows)
+
+
+SPEED_SETTLED_KEY = "economy.speed_settled"  # 0.39.8: the newest call settle_speed settled
+SPEED_NETTED_KEY = "economy.speed_netted"  # 0.39.8: the owner's own refunds (micros) it counted against them
+
+
+def settle_speed(db: Database, clock: Clock) -> int:
+    """0.39.8 (analysis-0.39.6, 3.1): at startup, the live calls charged at their worst case only for usage.speed
+    "standard" (SPEED_NOTE), settled at what they cost: their known cost is their price, since "standard" is the price
+    the table holds. One refund (a negative API cost correction, Ember's code's) for each day they were made on, so the
+    runway counts each day at what it cost. A refund the owner recorded since the first such call (the System warning
+    asked for one) counts first, from the newest day back, so nothing is refunded twice. Returns the micros refunded.
+    The calls stay as they were answered (a finalized call never changes); the refunds settle the excess the balance
+    held for them, as the owner's refunds do."""
+    now = to_iso(clock.now())
+    with db.transaction() as conn:
+        done = conn.execute("SELECT value FROM meta WHERE key = ?", (SPEED_SETTLED_KEY,)).fetchone()
+        rows = conn.execute(
+            "SELECT c.id, c.local_day, c.cost_micros - c.floor_micros AS excess FROM llm_calls c"
+            " JOIN ledger l ON l.llm_call_id = c.id AND l.type = 'api_cost'"
+            " WHERE c.id > ? AND c.simulated = 0 AND c.status = 'ok' AND c.billing_uncertain = 1 AND c.error = ?"
+            " AND json_extract(c.usage_raw, '$.speed') = 'standard' AND c.cost_micros > c.floor_micros"
+            " AND NOT EXISTS (SELECT 1 FROM ledger k WHERE k.type = 'api_cost_correction' AND k.llm_call_id = c.id)"
+            " ORDER BY c.id",
+            (int(done["value"]) if done else 0, SPEED_NOTE),
+        ).fetchall()
+        if not rows:
+            return 0
+        since = conn.execute(
+            "SELECT MIN(finished_at) FROM llm_calls WHERE simulated = 0 AND error = ?", (SPEED_NOTE,)
+        ).fetchone()[0]
+        owners = conn.execute(
+            "SELECT COALESCE(-SUM(amount_micros), 0) FROM ledger WHERE type = 'api_cost_correction' AND simulated = 0"
+            " AND amount_micros < 0 AND llm_call_id IS NULL AND created_by = 'owner' AND ts >= ?",
+            (since,),
+        ).fetchone()[0]
+        netted = conn.execute("SELECT value FROM meta WHERE key = ?", (SPEED_NETTED_KEY,)).fetchone()
+        before = int(netted["value"]) if netted else 0
+        days: dict[str, list[int]] = {}
+        for row in rows:
+            days.setdefault(str(row["local_day"]), []).append(int(row["excess"]))
+        total = sum(sum(v) for v in days.values())
+        offset = min(max(int(owners) - before, 0), total)
+        left, refunded = offset, 0
+        for day in sorted(days, reverse=True):  # the owner's refund counts against the newest days first
+            excess = sum(days[day])
+            counted = min(left, excess)
+            left -= counted
+            if excess - counted <= 0:
+                continue
+            refunded += excess - counted
+            conn.execute(
+                "INSERT INTO ledger (ts, occurred_on, type, amount_micros, simulated, source, note, created_by)"
+                " VALUES (?, ?, 'api_cost_correction', ?, 0, 'usage.speed', ?, 'system')",
+                (
+                    now,
+                    day,
+                    -(excess - counted),
+                    f'{len(days[day])} call(s) of this day charged at their worst case for usage.speed "standard",'
+                    " the standard price: settled at what they cost (0.39.8)",
+                ),
+            )
+        for key, value in ((SPEED_SETTLED_KEY, max(int(r["id"]) for r in rows)), (SPEED_NETTED_KEY, before + offset)):
+            conn.execute(
+                "INSERT INTO meta (key, value, updated_at) VALUES (?, ?, ?)"
+                " ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                (key, str(value), now),
+            )
+        counted_text = f", ${micros_to_usd(offset):.2f} of it refunded by your own correction" if offset else ""
+        events.record(
+            db,
+            "info",
+            "economy",
+            f'{len(rows)} call(s) charged at their worst case for usage.speed "standard" (the standard price) were'
+            f" settled at what they cost: ${micros_to_usd(total):.2f} too much{counted_text},"
+            f" ${micros_to_usd(refunded):.2f} refunded now",
+            {"calls": len(rows), "refunded_micros": refunded, "owner_micros": offset},
+        )
+    return refunded
 
 
 def event_reserve(settings: Settings, clock: Clock, trigger: str, working: int = 0) -> int:
@@ -1434,6 +1520,9 @@ class MeteredModel:
         tier = raw.get("service_tier")
         if tier not in (None, "standard"):
             notes.append(f"service tier {tier}")
+        speed = raw.get("speed")
+        if speed not in (None, "", *STANDARD_SPEEDS):  # 0.39.8: fast mode costs more than the price table says
+            notes.append(f"speed {speed}")
         geo_value = raw.get("inference_geo")
         multiplier = res.geo
         us_inference = False

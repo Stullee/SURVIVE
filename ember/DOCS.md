@@ -510,7 +510,9 @@ work, like a manager's calendar (the design is in `vision/learning.md`):
   first marketing, a step due today) or one that makes or ships on a channel
   above its floor, a venture's step too; a chore or a report leaves the sleep
   Ember chose (on 10-15 she chose 4 to 6 hours 16 times, and each was cut to 30
-  minutes, $5.59 by 07:55). Since 0.37.9 not a step whose work one of your limits would
+  minutes, $5.59 by 07:55). Since 0.39.8 a channel counts only when it is worth
+  at least twice its floor: Bluesky at 0.21, a listing view for every five posts,
+  cut 7 of 12 sleeps on 10-16. Since 0.37.9 not a step whose work one of your limits would
   refuse either (a pin while the publishing queue is full, a report once the
   day's messages are sent: [Plan](#plan), **Your limits**).
 
@@ -544,7 +546,11 @@ agent's workspace:
   rules a page down to its bottom margin (at least 2 lines, on the next page with
   its label if fewer fit; in the main text only, and the Word copy draws as many),
   and a book names writing lines that end a page with room for 2 or more below
-  them: you rejected the Haushaltsbuch a sixth time for that white space.
+  them: you rejected the Haushaltsbuch a sixth time for that white space. Since
+  0.39.8 the result says what each `fill` drew ("2 lines on pages 6, 7, 8 …; 14
+  lines on pages 5, 12: each is ruled down to the bottom margin"): the agent read
+  2 lines under a full week's table as `fill` stopping short, and went back to
+  fixed counts that put 5 lines a week on a page of their own.
 - **Spreadsheets** (`make_spreadsheet`): a JSON description becomes an Excel
   file with formats, dropdowns, formulas, totals, a chart and a *How to use*
   sheet, plus a picture of each sheet, drawn since 0.37.5 from the file itself:
@@ -1229,6 +1235,23 @@ product starts (they are her plan's work still). Live on 2026-10-09 a product's
 until the daily cap stopped it: $5.88 of $7 by 12:35, and the other products got
 none. The Plan tab says why a step waits ("taken today, and nothing it is
 checked by moved"); pin it to have the next cycle try it again today.
+
+Since 0.39.8 a request you **rejected** and Ember proposes again ("Propose the
+book again: request #120 rejected") is urgent for 3 days after your decision,
+and two cycles a day may take it before the brake holds it. Your decision
+weighed a lot as something owed; once a cycle had taken it in, the step proposing
+the book again weighed 2.6, below a promise about a Bluesky post, and the book
+you called "finally looking good" got no cycle for a day.
+
+Since 0.39.8 a product's weekly pin, Bluesky post or monthly blog post waits
+(*its channel brings next to nothing*) while that channel is worth less than
+twice its floor, unless you pin the step; and Ember may **skip** one for its
+period (`plan_step` skip, with why, which you see), outside its two waits a day:
+the channel's next step for the line comes when the period ends. On 10-16 nine of
+twelve cycles went to Bluesky posts and blog posts its own strategy had stopped,
+as Ember could neither replace the code's steps nor put off more than two a day.
+A product with no listing of its own gets no weekly pin or post, and one already
+open waits (*it has no listing of its own*).
 
 **Your limits** (0.37.9). Two of your protections were enforced by Ember's tools
 alone: at most 3 publish requests (pins, Bluesky posts, blog posts, the link
@@ -2249,6 +2272,26 @@ content may be kept (its listings for 6 hours, other content for a day, as
 Ember read them in 0.8.1): whether a history of your own listings' numbers is
 allowed is yours to confirm with Etsy's terms before you turn it on.
 
+**Which line a listing belongs to.** A listing counts for the product line of
+the request that made it (its views, the pins and posts that link it, its
+orders' revenue). Since 0.39.8 Ember can move one of its listings to another of
+its lines with `project_update` (listing_id, with why), as when a request of one
+line made the listing another line sells: the coach licence bundle was made by
+a request of line #4, so line #12, whose only listing it is, had none, and every
+Bluesky post for it in a line-#12 cycle was refused. The System log names each
+move. Not out of or into a line you hold or whose venture you stopped.
+
+**Paid tests** (0.39.8). When you approve a spend request that names Ember's
+listings (Etsy Ads on three listings, say), Ember's code keeps it as a test:
+the listings, their views on the day you decided it and the day it ends (the
+request's "for 7 days", else 7 days later). STATUS shows it while it runs, so
+the agent leaves those listings alone and doesn't judge them by a keep-or-drop
+date within it, and for 3 days after it ended, with what the listings gained,
+so the agent asks you for the ads' numbers (what it cost, how often they were
+shown and clicked) and says whether it goes on. Record what the ads cost as an
+expense when Etsy bills it. Live, you turned Etsy Ads on at 01:03 on 10-16 and
+nothing in Ember's plan knew.
+
 The agent can search Etsy through web search to see what sells, but its
 research never reads Etsy's pages: Etsy's API terms forbid programs reading its
 site.
@@ -2891,7 +2934,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.39.7 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.39.8 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3168,7 +3211,16 @@ until you correct it, and counts toward the caps at that charge too: it most
 likely cost money. An answer whose bill is uncertain (an unknown usage field,
 say) is charged the same way but counts toward the caps only with what it is
 known to cost. A 500, 502, 503, 504 or 529 error before the answer began costs
-nothing.
+nothing. Since 0.39.8 Ember's code knows the usage field `speed`: an answer
+served at the standard speed costs the table's price, and fast mode (which Ember
+never asks for) stays uncertain. From the night to 2026-10-16 every answer
+carried `speed: "standard"`, and each call was charged at its worst case, about
+four times its price ($15.94 booked for $3.87 on 10-16): the booked runway would
+have made Ember critical, with its last will due, on money that was still
+there. At its first start 0.39.8 settles those calls at what they cost, with one
+refund of Ember's code for each day they were made on; a refund you recorded
+yourself since then (the System warning asked for one) counts first, so nothing
+is refunded twice. The System log says what was settled.
 As an outside safety net, give Ember its own
 [Anthropic workspace](https://console.anthropic.com/settings/workspaces) and
 API key and set a monthly spend limit there.

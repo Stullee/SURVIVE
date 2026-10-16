@@ -81,6 +81,22 @@ def request(agent: Agent, line: int, executor: str) -> int:
         )
 
 
+def listed(agent: Agent, line: int, approval: int | None = None) -> int:
+    """0.39.8: product line ``line`` has a live listing of its own (a launched product's weekly marketing links it):
+    its listing request (``approval``, else a new one) carried out, the listing active."""
+    approval = approval or request(agent, line, "etsy_listing")
+    stamp = now(agent)
+    with agent.db.transaction() as conn:
+        conn.execute("UPDATE approvals SET status = 'approved', decided_at = ? WHERE id = ?", (stamp, approval))
+        conn.execute("UPDATE approvals SET status = 'done', closed_at = ? WHERE id = ?", (stamp, approval))
+        conn.execute(
+            "INSERT INTO etsy_listings (mode, session, approval_id, started_at, finished_at, status, listing_id, title,"
+            " state, views, favorites, synced_at) VALUES (?, ?, ?, ?, ?, 'active', ?, 'A listing', 'active', 0, 0, ?)",
+            (agent.scope().mode, agent.scope().session, approval, stamp, stamp, 900_000_200 + line, stamp),
+        )
+    return approval
+
+
 # --- the tree is laid out ---
 
 
@@ -183,6 +199,7 @@ def test_a_live_products_recurring_marketing_comes_once_its_launch_is_done(data_
                 for step in plan.nodes(conn, agent.scope(), "parent_id = ?", (stage["id"],)):
                     plan._close(conn, step["id"], now(agent), "done", "test", by="owner")
                 plan._close(conn, stage["id"], now(agent), "done", "test", by="owner")
+    listed(agent, poster)  # 0.39.8: its weekly marketing links its listing
     no_bluesky = {"pinterest": True, "bluesky": False, "blog": True}
     said = keep(agent, no_bluesky)
     recurring = [n for n in tree(agent) if n["project_id"] == poster and (n["template"] or "").startswith("recurring/")]

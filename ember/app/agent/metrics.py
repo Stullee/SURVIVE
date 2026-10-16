@@ -336,7 +336,7 @@ def listings(
     where, params = scope.where("l")
     joins = (
         " JOIN approvals a ON a.id = l.approval_id LEFT JOIN cycles y ON y.id = a.cycle_id"
-        f" LEFT JOIN projects p ON p.id = COALESCE(a.project_id, y.project_id) WHERE {where}"
+        f" LEFT JOIN projects p ON p.id = {ventures.line_sql()} WHERE {where}"  # 0.39.8: or the line it was moved to
         " AND l.listing_id IS NOT NULL ORDER BY l.id"
     )
     # 0.15.0: a listing of a product line with no venture (a closed one the upgrade couldn't link) counts for its

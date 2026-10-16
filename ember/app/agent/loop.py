@@ -84,6 +84,7 @@ from . import (
     netguard,
     news,
     obligations,
+    paid,
     policy,
     predictions,
     prompts,
@@ -732,6 +733,7 @@ class CycleRunner:
         self._keep_stages(cycle_id)
         metrics.grade_all(self.db, self.scope, scope, self.clock, self.settings.etsy_stats_history)  # 0.12.0
         self._keep_bets()  # 0.18.0: after the grading, from the same Etsy numbers
+        self._guarded(self._keep_paid, cycle_id or 0, "the paid tests' keeper")  # 0.39.8: the owner's paid tests
         self._guarded(self._keep_playbook, cycle_id or 0, "the playbook's keeper")  # 0.30.0: the cases' lessons
         predictions.settle_all(self.db, self.scope, scope, self.clock)  # 0.13.0: after the milestones are graded
         self._keep_obligations()  # 0.12.0: after the grading, so a miss it closed is owed a decision now
@@ -1177,6 +1179,15 @@ class CycleRunner:
         with self.db.transaction() as conn:
             happened = bets.settle(conn, self.scope, self.clock.today(), to_iso(self.clock.now()))
             happened += learning.fade(conn, self.scope, to_iso(self.clock.now()))  # the playbook's old guesses
+        for line in happened:
+            events.record(self.db, "info", "agent", line[:300])
+
+    def _keep_paid(self, cycle_id: int) -> None:
+        """0.39.8 (analysis-0.39.6, 3.5): an approved spend request naming Ember's listings becomes a paid test, and a
+        test past its end ends with its listings' numbers (paid.keep), before every plan; guarded like a learning
+        step."""
+        with self.db.transaction() as conn:
+            happened = paid.keep(conn, self.scope, self.clock)
         for line in happened:
             events.record(self.db, "info", "agent", line[:300])
 

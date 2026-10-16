@@ -1061,6 +1061,18 @@ def _channel_row(conn: sqlite3.Connection, scope: AgentScope, channel: str) -> s
 
 
 CHANNEL_TABLES = (("etsy", "etsy_listings"), ("printify", "printify_products"))  # where a channel's listings are kept
+# 0.39.8 (analysis-0.39.6, 3.3): the line a listing ``alias`` (a row of etsy_listings or printify_products, joined with
+# its request ``a`` and that request's cycle ``y``) belongs to: the line it was moved to (listing_lines' newest row for
+# it, project_update's listing_id), else its request's project or its cycle's.
+_MOVED = (
+    "(SELECT m.project_id FROM listing_lines m WHERE m.mode = {alias}.mode AND m.session = {alias}.session"
+    " AND m.listing_id = {alias}.listing_id ORDER BY m.id DESC LIMIT 1)"
+)
+
+
+def line_sql(alias: str = "l") -> str:
+    """0.39.8: the SQL for the product line of the listing ``alias`` (see _MOVED)."""
+    return f"COALESCE({_MOVED.format(alias=alias)}, a.project_id, y.project_id)"
 
 
 def is_channel(venture: Mapping[str, Any]) -> bool:
@@ -1099,11 +1111,11 @@ def channel_stopped(conn: sqlite3.Connection, scope: AgentScope, channel: str) -
 
 def _lists_in(conn: sqlite3.Connection, table: str, project_id: int) -> bool:
     """Whether a product line has listings in ``table`` (etsy_listings, printify_products), as metrics.listings
-    counts them: made (a listing number), by its request's project or its cycle's."""
+    counts them: made (a listing number), by its request's project or its cycle's (0.39.8: or moved to it)."""
     return (
         conn.execute(
             f"SELECT 1 FROM {table} l JOIN approvals a ON a.id = l.approval_id LEFT JOIN cycles y ON y.id = a.cycle_id"
-            " WHERE l.listing_id IS NOT NULL AND COALESCE(a.project_id, y.project_id) = ? LIMIT 1",
+            f" WHERE l.listing_id IS NOT NULL AND {line_sql()} = ? LIMIT 1",
             (project_id,),
         ).fetchone()
         is not None
@@ -1112,12 +1124,12 @@ def _lists_in(conn: sqlite3.Connection, table: str, project_id: int) -> bool:
 
 def listing_line(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> tuple[str, int | None] | None:
     """0.28.0: the channel and the product line (its project) of one of Ember's listings, as metrics.listings counts
-    them: by its request's project or its cycle's. None when it isn't Ember's; the line is None for a listing of no
-    project."""
+    them: by its request's project or its cycle's (0.39.8: or the line it was moved to). None when it isn't Ember's;
+    the line is None for a listing of no project."""
     where, params = scope.where("l")
     for name, table in CHANNEL_TABLES:
         row = conn.execute(
-            f"SELECT COALESCE(a.project_id, y.project_id) AS project_id FROM {table} l JOIN approvals a"
+            f"SELECT {line_sql()} AS project_id FROM {table} l JOIN approvals a"
             f" ON a.id = l.approval_id LEFT JOIN cycles y ON y.id = a.cycle_id WHERE {where} AND l.listing_id = ?"
             " ORDER BY l.id DESC LIMIT 1",
             (*params, listing_id),

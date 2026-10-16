@@ -151,6 +151,8 @@ def document(
     made.report.append(f"Layout: the main text ends on page {ends_page}, {used:.0%} of the way down its text area.")
     if layout.sidebar_pages:
         made.report.append(f"The sidebar fills {layout.sidebar_pages} page{'s' if layout.sidebar_pages != 1 else ''}.")
+    if pdf.fills_text(layout):  # 0.39.8: what each '::: lines fill' drew (analysis-0.39.6, 3.2)
+        made.report.append(pdf.fills_text(layout))
     if parsed.warnings or layout.warnings:
         made.report.append("Check: " + " ".join(_sentence(w) for w in [*parsed.warnings, *layout.warnings]))
     if made.removed:

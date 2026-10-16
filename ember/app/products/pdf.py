@@ -82,6 +82,10 @@ class Report:
     main_end: tuple[int, float] = (1, 0.0)  # page, share of its text area used
     sidebar_pages: int = 0
     warnings: list[str] = field(default_factory=list)
+    # 0.39.8 (analysis-0.39.6, 3.2): each '::: lines fill' drawn, as (its page, how many lines it drew). Live, the agent
+    # read 2 lines under a week's table, ruled down to the bottom margin, as "fill stops short", and went back to fixed
+    # counts that put 5 lines a week on a page of their own: the result didn't say what fill had done.
+    fills: list[tuple[int, int]] = field(default_factory=list)
 
     def warn(self, text: str) -> None:
         if text not in self.warnings and len(self.warnings) < 12:
@@ -559,6 +563,8 @@ class Renderer:
             flow.need(count * WRITING_LINE)
             count = max(count, int((flow.bottom + 0.01 - flow.y) // WRITING_LINE))
             block.drawn = count  # the Word copy draws as many
+            if flow.bottom != math.inf:  # 0.39.8: the main text's, which make_document's result names
+                self.report.fills.append((flow.page, count))
         for _ in range(count):
             flow.need(WRITING_LINE)
             if not flow.dry:
@@ -908,4 +914,21 @@ def describe(report: Report) -> dict[str, Any]:
         "main_ends": {"page": report.main_end[0], "used": round(report.main_end[1], 2)},
         "sidebar_pages": report.sidebar_pages,
         "warnings": list(report.warnings),
+        "fills": [list(f) for f in report.fills],  # 0.39.8
     }
+
+
+def fills_text(report: Report) -> str:
+    """0.39.8 (analysis-0.39.6, 3.2): what each '::: lines fill' drew, by how many lines, in words: "'::: lines fill'
+    drew 2 lines on pages 6, 7, 8 and 30 more; 14 lines on pages 5, 12: each is ruled down to the bottom margin, ...".
+    Empty when the document has none."""
+    if not report.fills:
+        return ""
+    counts: dict[int, list[int]] = {}
+    for page, count in report.fills:
+        counts.setdefault(count, []).append(page)
+    said = "; ".join(f"{n} line{'s' if n != 1 else ''} on {_pages(pages)}" for n, pages in sorted(counts.items()))
+    return (
+        f"'::: lines fill' drew {said}: each is ruled down to the bottom margin, as many lines as fit below what is"
+        " above it on its page (fewer rows above leave room for more)."
+    )

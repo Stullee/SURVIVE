@@ -42,6 +42,7 @@ from .metering import (
     ProcessLock,
     Transport,
     recover_interrupted,
+    settle_speed,
     usd_cap_to_micros,
     workshop_reservation,
     workshop_tail_ends,
@@ -123,6 +124,7 @@ class Economy:
             )
         else:
             recover_interrupted(self.db, self.clock, self.boot_id)
+            settle_speed(self.db, self.clock)  # 0.39.8: the calls charged at their worst case for usage.speed alone
         if self.loaded.safe_mode:
             log.info("Safe mode: the starting balance is not recorded until the options are valid")
         else:

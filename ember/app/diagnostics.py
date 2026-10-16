@@ -131,6 +131,8 @@ TABLES = (
     "site_uploads",
     "blog_posts",
     "listing_gates",
+    "listing_lines",  # 0.39.8
+    "paid_tests",  # 0.39.8
     "bets",
     "cases",
     "principles",
@@ -975,6 +977,14 @@ def _agent(state: AppState, full: bool = True) -> str:
             ),
             ("etsy_edits", ["id", "approval_id", "listing_id", "status", "result", "error"], 10),
             ("etsy_orders", ["receipt_id", "ordered_at", "status", "total", "items"], 10),
+            # 0.39.8: the listings Ember moved to another line (the newest row says a listing's line)
+            ("listing_lines", ["id", "listing_id", "project_id", "moved_from", "cycle_id", "created_at", "why"], 10),
+            # 0.39.8: the owner's paid tests of Ember's listings (their numbers at the start and at the end)
+            (
+                "paid_tests",
+                ["id", "approval_id", "started_on", "ends_on", "listings", "baseline", "status", "final"],
+                10,
+            ),
             # 0.13.0 (Phase E2): Ember's boards and pins on the owner's Pinterest account
             ("pinterest_boards", ["id", "approval_id", "status", "board_id", "name", "error"], 10),
             (
@@ -1101,8 +1111,10 @@ def _agent(state: AppState, full: bool = True) -> str:
                 " today with nothing moved, and 'approved', its approved requests being carried out; 0.37.9: 'queue',"
                 " a pin, post or blog post the publishing queue would refuse, and 'messages', a report to the owner the"
                 " day's message limit would refuse; 0.38.1: 'sales', a listing, a change of one, a Printify product or"
-                f" a KDP book the sell requests waiting for the owner would refuse. Now: {limits.text()})\n"
-                + _rows(waiting[:15], ["step", "line", "waiting", "title"])
+                " a KDP book the sell requests waiting for the owner would refuse; 0.39.8: 'listing', a weekly pin or"
+                " post of a line with no listing of its own, and 'floor', one of a channel at its floor; every one,"
+                f" 0.39.8: the first 15 left the KDP book's 'tried' out. Now: {limits.text()})\n"
+                + _rows(waiting, ["step", "line", "waiting", "title"])
             )
         except Exception as exc:  # noqa: BLE001 - the report goes on without it
             out.append(f"-- plan tree: unavailable ({type(exc).__name__})")

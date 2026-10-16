@@ -270,7 +270,8 @@ def test_a_steps_kind_says_what_market_is() -> None:
     request = prompts.work_request(SETTINGS, "brief", [], **every_channel())
     [spec] = [t for t in request["tools"] if t["name"] == "plan_step"]
     kind = spec["input_schema"]["properties"]["steps"]["items"]["properties"]["kind"]
-    assert kind["description"] == "market: a pin, a post or a blog post (only a marketing cycle has their tools)."
+    # 0.39.8: shorter, for the fixed prompt's budget
+    assert kind["description"] == "market: a pin, a post or a blog post (a marketing cycle's tools)."
     assert "market" in kind["enum"]
 
 
