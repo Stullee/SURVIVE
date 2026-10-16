@@ -41,7 +41,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from .. import events
-from ..agent import econ, netguard, store
+from ..agent import econ, netguard, store, ventures
 from ..agent.sandbox import Jail, SandboxError
 from ..agent.store import AgentScope
 from ..config import Settings
@@ -1533,14 +1533,15 @@ def correction_due(order: sqlite3.Row, entry: sqlite3.Row) -> bool:
 
 def order_project(conn: sqlite3.Connection, scope: AgentScope, items: list[Any]) -> tuple[int | None, int | None]:
     """The project an order's revenue belongs to, and its venture (0.12.0): the first of its listings Ember made, the
-    request the owner approved for it, and that request's project (or its cycle's)."""
+    request the owner approved for it, and that request's project (or its cycle's; 0.39.8: or the line Ember moved
+    it to)."""
     for item in items:
         listing_id = item.get("listing_id") if isinstance(item, dict) else None
         if not isinstance(listing_id, int):
             continue
         row = conn.execute(
             "SELECT p.id AS project_id, p.venture_id FROM etsy_listings l JOIN approvals a ON a.id = l.approval_id"
-            " LEFT JOIN cycles y ON y.id = a.cycle_id JOIN projects p ON p.id = COALESCE(a.project_id, y.project_id)"
+            f" LEFT JOIN cycles y ON y.id = a.cycle_id JOIN projects p ON p.id = {ventures.line_sql('l')}"
             " WHERE l.listing_id = ? AND l.mode = ? AND l.session = ? ORDER BY l.id DESC LIMIT 1",
             (listing_id, scope.mode, scope.session),
         ).fetchone()
@@ -1548,7 +1549,7 @@ def order_project(conn: sqlite3.Connection, scope: AgentScope, items: list[Any])
             row = conn.execute(
                 "SELECT p.id AS project_id, p.venture_id FROM printify_products x JOIN approvals a"
                 " ON a.id = x.approval_id LEFT JOIN cycles y ON y.id = a.cycle_id JOIN projects p"
-                " ON p.id = COALESCE(a.project_id, y.project_id) WHERE x.listing_id = ? AND x.mode = ?"
+                f" ON p.id = {ventures.line_sql('x')} WHERE x.listing_id = ? AND x.mode = ?"
                 " AND x.session = ? ORDER BY x.id DESC LIMIT 1",
                 (listing_id, scope.mode, scope.session),
             ).fetchone()

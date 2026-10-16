@@ -370,3 +370,25 @@ favorites by 10-23 means ads off.
 | "Could you or Ember's code check the listing→project link for #4587912058?" | **You can't change it**: no tool and nothing on the Plan tab moves a listing to another line. It needs 0.39.8 (4.2.2). Until then, hold line #12 (4.1.3) |
 | "Once fixed I'll resubmit the post next marketing cycle." (promise #60, due 10-20) | That promise is now the heaviest step (6.0). The next cycle at 20:48 is a marketing cycle on line #12, and the post will be refused again. That repeats each day until the promise misses on 10-20. Your hold stops it. The bundle is also in your ads test, and Ember's own strategy allows one Bluesky post a week (#135 went out today), so nothing is lost by waiting |
 | "As planned, the KDP Haushaltsbuch note-line fix stays the next ordinary cycle's priority." | **Not as things stand.** No cycle can take the book's step before midnight (the brake). After midnight it weighs 2.6, below this promise and below any "Review 10-17" step. And Ember's plan for it, rendering v17, brings back the white space you rejected (3.2). Your message and your pin on step #195 fix both (4.1.2) |
+
+---
+
+## 8. What 0.39.8 does
+
+| | Change | Where |
+|---|---|---|
+| 4.2.1 | `usage.speed` is a known field: "standard" is the table's price, any other value (fast mode) stays uncertain. At its first start 0.39.8 settles the calls charged at their worst case for `speed` alone, one refund of Ember's code for each day they were made on, net of any refund you recorded since then | `economy/metering.py` (`_KNOWN_USAGE_KEYS`, `settle_speed`), `economy/service.py` |
+| 4.2.2 | A listing moves to the line it is: `project_update` with `listing_id` (and why). Every count that reads a listing's line reads the move: views, pins and posts, orders' revenue. The refusal for another line's listing says how to move it. A line with no listing of its own gets no weekly pin or post, and its open ones wait ("listing") | `migrations/0095_listing_lines.sql`, `agent/ventures.py` (`line_sql`), `agent/metrics.py`, `agent/tools.py`, `agent/plan.py`, the publishers |
+| 4.2.3 | make_document says what each `::: lines fill` drew, by count and page, and that each reaches the bottom margin. A request you rejected, proposed again, is urgent for 3 days after your decision (`weights.REWORK`), and two cycles a day may take it before the brake holds it | `products/pdf.py` (`fills_text`), `products/make.py`, `agent/plan.py` (`_rework`), `agent/weights.py` |
+| 4.2.4 | A channel counts as work only at twice its floor (`weights.CHANNEL_WORKS`, 0.4). A recurring step of a channel below that waits ("floor") unless you pin it. `plan_step` skip drops a recurring pin, post or blog post for its period, outside the 2 waits a day | `agent/plan.py` (`_works`, `_at_floor`, `skip_step`), `agent/tools.py` |
+| 4.2.5 | An approved spend request that names Ember's listings is a paid test: its listings, their views on the day you decided it, its end ("for N days", else 7). STATUS shows it while it runs and for 3 days after it ended | `migrations/0096_paid_tests.sql`, `agent/paid.py`, `agent/loop.py`, `agent/context.py` |
+| 4.2.6 | The report lists every waiting step, with the new reasons | `diagnostics.py` |
+
+Where 0.39.8 differs from 4.2:
+- 4.2.1: the settlement doesn't change the calls themselves: a finalized call never changes. Each day's refund
+  settles the excess the balance held for its calls, as your own refunds do.
+- 4.2.2: only Ember moves a listing, with `project_update`, and you see each move in the System log. Your Plan tab has no
+  button for it. To have one moved, tell Ember.
+- 4.2.3: the brake isn't lifted by a new file. The step proposing a rejected request again gets a second try a day
+  instead: a file written is no proof that anything moved.
+- The KDP guide stays as it was: it is at its 4,000 characters, and make_document's result now says what `fill` drew.

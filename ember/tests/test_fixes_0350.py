@@ -25,7 +25,7 @@ from app.agent.service import Agent  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
 from tests.test_etsy import call  # noqa: E402
 from tests.test_fixes_0280 import lined, now, texts, working  # noqa: E402
-from tests.test_fixes_0340 import ALL, BOOK, TRACKER, keep, project, request, steps_of, tree  # noqa: E402
+from tests.test_fixes_0340 import ALL, BOOK, TRACKER, keep, listed, project, request, steps_of, tree  # noqa: E402
 from tests.test_loop_shapes import run  # noqa: E402
 from tests.test_owner_loop import owner  # noqa: E402
 from tests.test_ventures import JOURNAL, VENTURING  # noqa: E402
@@ -104,6 +104,7 @@ def test_a_marketing_step_makes_a_marketing_cycle(data_dir: Path) -> None:
                 for step in plan.nodes(conn, agent.scope(), "parent_id = ? AND status = 'open'", (stage["id"],)):
                     plan._close(conn, step["id"], now(agent), "done", "test", by="owner")
                 plan._close(conn, stage["id"], now(agent), "done", "test", by="owner")
+    listed(agent, poster)  # 0.39.8: its weekly marketing links its listing
     keep(agent)
     marketing = steered(agent)
     assert marketing.kind == "marketing" and marketing.step is not None
@@ -470,7 +471,7 @@ def test_a_plain_product_takes_its_type_once_its_records_name_it(data_dir: Path)
 def test_a_retyped_product_shows_and_works_only_its_types_stages(data_dir: Path) -> None:
     agent, _ = lined(data_dir, titles=("Hiking trail guides",))
     keep(agent)
-    request(agent, 1, "etsy_listing")
+    first = request(agent, 1, "etsy_listing")
     keep(agent)
     [product] = [q for p in agent.plan()["projects"] for q in p["products"]]
     assert [s["stage"] for s in product["stages"]] == ["research", "create", "release", "launch", "maintain"]
@@ -483,6 +484,7 @@ def test_a_retyped_product_shows_and_works_only_its_types_stages(data_dir: Path)
                 for step in plan.nodes(conn, agent.scope(), "parent_id = ? AND status = 'open'", (stage["id"],)):
                     plan._close(conn, step["id"], now(agent), "done", "test", by="owner")
                 plan._close(conn, stage["id"], now(agent), "done", "test", by="owner")
+    listed(agent, 1, first)  # 0.39.8: live, its weekly marketing links its listing
     keep(agent)
     maintain = [n for n in tree(agent) if n["project_id"] == 1 and n["stage"] == "maintain" and n["level"] == "stage"]
     assert [m["status"] for m in maintain] == ["dropped", "open"]

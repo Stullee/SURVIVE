@@ -10059,6 +10059,9 @@
     messages: "today's messages to you are sent: it waits for tomorrow, or your next message",
     // 0.38.1: listings, changes, Printify products and KDP books
     sales: "as many sell requests as may wait for you wait: it waits until you decide one",
+    // 0.39.8: a weekly pin or post of a product with no listing of its own, and a channel that brings next to nothing
+    listing: "it has no listing of its own: it waits until Ember moves one to it (project_update)",
+    floor: "its channel brings next to nothing (at its floor): it waits unless you pin it",
   };
   var PLAN_DECIDED = {
     pin: "you pinned it", promise: "a promise to you or your decision (first, until 0.36.0)",

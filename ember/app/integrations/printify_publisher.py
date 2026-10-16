@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any
 from PIL import Image
 
 from .. import events
+from ..agent import ventures
 from ..agent.sandbox import Jail, SandboxError
 from ..agent.store import AgentScope
 from ..config import Settings
@@ -537,7 +538,7 @@ def orders_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) ->
         " FROM printify_orders o LEFT JOIN printify_products p"
         " ON p.product_id = o.product_id AND p.mode = o.mode AND p.session = o.session"
         " LEFT JOIN approvals a ON a.id = p.approval_id LEFT JOIN cycles y ON y.id = a.cycle_id"
-        f" LEFT JOIN projects j ON j.id = COALESCE(a.project_id, y.project_id) WHERE {where}"
+        f" LEFT JOIN projects j ON j.id = {ventures.line_sql('p')} WHERE {where}"  # 0.39.8: or its moved line
         " GROUP BY o.order_id ORDER BY created_at DESC LIMIT ?",
         (*params, limit),
     ).fetchall()

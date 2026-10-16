@@ -3,6 +3,43 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.39.8
+
+Fixes from the diagnostics report of 2026-10-16 (the analysis of 0.39.6): your bills are right again, the book your
+owner rejected comes first, a listing can move to the line it is, and channels that bring next to nothing stop taking
+your cycles.
+
+- Your calls cost what they cost again. Since the night to 10-16 every answer said which speed served it
+  (usage.speed "standard"), a field Ember's code didn't know, so each call was charged at its worst case, about four
+  times its price: $15.94 booked for $3.87 on 10-16, a cycle shown at $1.21 that cost $0.27. Your balance and runway
+  were the booked ones; your caps weren't. Ember's code knows the field now, and has settled those calls at what they
+  cost (a refund your owner recorded first counts first): your balance and runway are the real ones again. Plan on
+  what a cycle really costs, about $0.20 to $0.30.
+- make_document says what each `::: lines fill` drew: "'::: lines fill' drew 2 lines on pages 6, 7, 8 ...; 14 lines
+  on pages 5, 12: each is ruled down to the bottom margin". Two lines under a 14-row week and its Bilanz is fill
+  working: there is room for two, and they reach the bottom margin. On 10-15 you read that as fill stopping short and
+  wrote v17 with fixed counts (7 lines a week): each week then puts 5 lines on a page of their own, the white space
+  your owner rejected in #120. The Haushaltsbuch's v15 with `::: lines fill` is the layout your owner asked for: render
+  it, move the AI note so it isn't alone on the last page, check the pages, and propose it. Fewer rows (11) leave room
+  for 5 lines.
+- A request your owner rejected, proposed again ("Propose the book again: request #120 rejected"), is urgent for 3
+  days after their decision, and two cycles a day may take it before the brake holds it. Once a cycle had taken their
+  decision in, the step weighed 2.6, below a promise about a Bluesky post, and the book got no cycle for a day.
+- A listing belongs to the line of the request that made it. One that is another line's moves with project_update
+  (project_id of its line, listing_id, and why in note): its views, its pins and posts and its orders count for that
+  line from then on. The coach licence bundle #4587912058 was made by a request of line #4, so line #12 had no listing
+  and each Bluesky post for it in a line-#12 cycle was refused; the refusal now says how to move it. A line with no
+  listing of its own gets no weekly pin or post (its open ones wait "listing").
+- A channel worth less than twice its floor (Bluesky 0.21: a listing view for every five posts; the blog 0.20) no
+  longer cuts your sleep, and the weekly steps of such a channel wait ("floor") unless your owner pins one. And
+  plan_step skip drops a recurring pin, post or blog post of Ember's code's for its period, with why, outside your two
+  waits a day: the channel's next step for the line comes when the period ends. On 10-16 nine of twelve cycles went to
+  Bluesky and blog posts your own strategy had stopped.
+- Your owner's yes to a spend on your listings is a paid test: STATUS shows it while it runs ("Paid test (your
+  owner's spend, request #128): ... from 10-16 to 10-23") and for 3 days after it ended. Leave those listings as they
+  are while it runs, don't judge them by a keep-or-drop date within it, and when it ends ask your owner for its numbers
+  (what it cost, how often the listings were shown and clicked) and say whether it goes on.
+
 ## 0.39.7
 
 Two gaps the fixes of 0.39.3 and 0.39.5 left (the analysis of 0.39.1, 9.2): a "stop" below a long thread counts, and

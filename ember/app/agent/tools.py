@@ -44,7 +44,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
 
-from .. import paths
+from .. import events, paths
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
 from ..economy.costs import micros_to_usd
@@ -432,16 +432,17 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "project_update",
-            "Update one of your projects (its steps are your plan's: plan_step). Only your owner closes or drops one.",
+            "Update one of your projects (its steps: plan_step). Only your owner closes or drops one.",
             {
                 "project_id": _i(""),
                 "status": _s("", 10, required=False, enum=PROJECT_STATUSES),
                 "hypothesis": _s("A sharper hypothesis.", 400, required=False, cut=True),
-                "note": _s("A short note: what happened, what you learned.", 300, required=False, cut=True),
+                "note": _s("What happened, what you learned.", 300, required=False, cut=True),
                 "venture_id": _i("Link it to this venture (its leg).", required=False),
-                "bet": _s(
-                    "What you expect of your change, e.g. '+15 views in 7 days: why'.", 200, required=False, cut=True
-                ),
+                "bet": _s("What you expect, e.g. '+15 views in 7 days: why'.", 200, required=False, cut=True),
+                # 0.39.8 (analysis-0.39.6, 3.3): a listing made by another line's request, moved to the line it is (the
+                # refusal of a call about another line's listing says how; the fixed prompt has no room for more)
+                "listing_id": _i("Move your listing here (why in note).", required=False),
             },
             per_cycle=8,
             reflect=True,
@@ -455,14 +456,14 @@ SPECS: dict[str, Spec] = {
         Spec(
             "plan_step",
             "Change your plan for this cycle's product line, with why (your owner sees each change): add steps (to a "
-            "stage, or before a step), split or replace a step, say a step you added is done, say a step waits on a "
-            "block Ember's code checks (a request to your owner, an upgrade request, another step, or a day at most "
-            f"{plan.WAIT_DAYS} days ahead; {plan.WAITS_A_DAY} a day), or hold the product to work elsewhere (resume it "
-            "later). What your owner, a promise or Ember's code put there stays, and a step with a check closes when "
-            "it passes. Free.",
+            "stage or before one), split or replace a step, say a step you added is done, say a step waits on a "
+            f"request to your owner, an upgrade request, another step or a day (at most {plan.WAIT_DAYS} days ahead; "
+            f"{plan.WAITS_A_DAY} waits a day), skip a recurring pin or post for its period, or hold the product. "
+            "What your owner, a promise or Ember's code put there stays; a step with a check closes when it passes. "
+            "Free.",
             {
                 "action": _s("", 8, enum=plan.ACTIONS),
-                "step_id": _i("The step (else YOUR STEP; add: the one the new steps go before).", required=False),
+                "step_id": _i("The step (else YOUR STEP; add: the one they go before).", required=False),
                 "steps": _a(
                     "add, split, replace: the new steps, in order.",
                     plan.MAX_NEW_STEPS,
@@ -471,7 +472,7 @@ SPECS: dict[str, Spec] = {
                         # 0.39.2: live, a step to send pins was added as "ship": an ordinary cycle took it, and that
                         # has no propose_pin (analysis-0.39.1, 3.4)
                         "kind": _s(
-                            "market: a pin, a post or a blog post (only a marketing cycle has their tools).",
+                            "market: a pin, a post or a blog post (a marketing cycle's tools).",
                             8,
                             enum=plan.STEP_KINDS,
                         ),
@@ -480,7 +481,7 @@ SPECS: dict[str, Spec] = {
                 ),
                 "stage": _s("add: its stage, if not the current one.", 10, required=False, enum=templates.STAGES),
                 "on": _s("wait: what blocks it.", 8, required=False, enum=plan.WAIT_ON),
-                "ref": _i("wait: the request's, upgrade request's or step's number.", required=False),
+                "ref": _i("wait: its request's, upgrade's or step's number.", required=False),
                 "until": _s("wait on a day: YYYY-MM-DD.", 10, required=False),
                 "project_id": _i("resume: the product line on hold.", required=False),
                 "why": _s("Your reason (done: what was done).", 200, cut=True),
@@ -2333,6 +2334,7 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     # "never set up". Reopening it, a bet on it or moving it to a venture is its own cycle's work, and a cycle without a
     # line yet takes the one it touches first. 0.35.0: only the owner closes a project (its next step is the plan's).
     work = status in ("idea", "active") or bool(args.get("bet")) or args.get("venture_id") is not None
+    work = work or args.get("listing_id") is not None  # 0.39.8: a listing moved to it is the line's work
     # 0.39.3: the record of a line the owner holds is kept like another line's: no cycle takes the line for it
     keeps = not work and plan.line_held(conn, ctx.scope, int(row["id"])) is not None
     if work or (ctx.state.focus_project_id is None and not keeps):
@@ -2381,6 +2383,9 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
                     "moves into or out of it while that stands"
                 )
         changes["venture_id"] = venture_id
+    moved = ""
+    if args.get("listing_id") is not None:  # 0.39.8: before the bet, which then counts the listing's views
+        moved = _move_listing(ctx, conn, row, int(args["listing_id"]), str(args.get("note") or ""))
     placed = ""
     if args.get("bet"):  # 0.18.0: settled by Ember's code (bets.py)
         try:
@@ -2394,15 +2399,60 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
             if not changes:
                 raise ToolError(f"bet: {exc}") from None
             placed = f"Your bet was not placed: {exc}."
-    if not changes and not placed:
+    if not changes and not placed and not moved:
         raise ToolError("nothing to change")
     if changes:
         store.update_project(conn, row["id"], ctx.now(), **changes)
     transition = f"{row['status']} → {changes['status']}" if "status" in changes else "updated"
     if "venture_id" in changes:
         transition += f", part of venture #{venture_id}"
-    text = f"Project #{row['id']}: {transition}." + (f" {placed}" if placed else "") + _left_behind(ctx, conn, row)
+    text = f"Project #{row['id']}: {transition}." + "".join(f" {t}" for t in (moved, placed) if t)
+    text += _left_behind(ctx, conn, row)
     return Outcome(True, text, f"#{row['id']} {transition}", row["id"])
+
+
+def _move_listing(ctx: ToolContext, conn: Any, row: Any, listing_id: int, why: str) -> str:
+    """0.39.8 (analysis-0.39.6, 3.3): one of Ember's listings counted for the line ``row`` from now on: its views, its
+    pins and posts and the steps that count them, its orders' revenue (ventures.listing_line reads listing_lines).
+    A listing belongs to the line of the request that made it, and nothing changed that: live, the coach licence
+    bundle was made by a request of line #4, so line #12 (whose only listing it is) had none, and each Bluesky post
+    for it in a line-#12 cycle was refused. Not out of or into a line the owner holds or whose venture they stopped."""
+    found = ventures.listing_line(conn, ctx.scope, listing_id)
+    if found is None:
+        raise ToolError(f"listing #{listing_id} isn't one of yours (etsy_listing shows them)")
+    channel, line = found
+    if line == row["id"]:
+        raise ToolError(f"listing #{listing_id} counts for line #{row['id']} already")
+    if not why.strip():
+        raise ToolError(f"say in note why listing #{listing_id} is line #{row['id']}'s")
+    for project_id in (line, int(row["id"])):
+        if project_id is None:
+            continue
+        held = plan.line_held(conn, ctx.scope, project_id)
+        if held is not None:
+            raise ToolError(f"your owner holds line #{project_id} ({_cut(held, 80)}): its listings stay as they are")
+        stopped = ventures.project_stopped(conn, ctx.scope, project_id, channel)
+        if stopped is not None:
+            raise ToolError(
+                f"your owner stopped venture #{stopped['id']}: line #{project_id}'s listings stay as they are"
+            )
+    conn.execute(
+        "INSERT INTO listing_lines (mode, session, listing_id, project_id, moved_from, cycle_id, created_at, why)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (ctx.scope.mode, ctx.scope.session, listing_id, row["id"], line, ctx.cycle_id, ctx.now(), why.strip()[:300]),
+    )
+    was = f"line #{line}" if line is not None else "no line"
+    events.record(
+        ctx.db,
+        "info",
+        "agent",
+        f"Ember moved listing #{listing_id} from {was} to line #{row['id']}: {_cut(why.strip(), 200)}",
+        {"listing_id": listing_id, "project_id": row["id"], "moved_from": line},
+    )
+    return (
+        f"Listing #{listing_id} counts for line #{row['id']} from now on (it counted for {was}): its views, and the "
+        "pins and posts that link it."
+    )
 
 
 def _left_behind(ctx: ToolContext, conn: Any, before: Any) -> str:
@@ -2443,7 +2493,7 @@ def _plan_step(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     # 0.39.1 (analysis-0.38.0, 3.6): a step to say done, wait, split or replace is YOUR STEP unless one is named. Live,
     # four calls were refused for naming none (or the step in ref), each meaning the cycle's own.
     step_id = args.get("step_id")
-    if step_id is None and action in ("split", "replace", "done", "wait"):
+    if step_id is None and action in ("split", "replace", "done", "wait", "skip"):
         step_id = ctx.state.step_id
     if action == "resume":
         line = args.get("project_id")
@@ -2496,6 +2546,8 @@ def _plan_step(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
             )
         elif action == "hold":
             text = plan.hold(conn, ctx.scope, line, why, ctx.cycle_id, now)
+        elif action == "skip":  # 0.39.8: a recurring pin, post or blog post, for its period
+            text = plan.skip_step(conn, ctx.scope, line, step_id, why, ctx.cycle_id, now)
         else:
             text = plan.resume(conn, ctx.scope, line, why, ctx.cycle_id, now)
     except plan.PlanError as exc:
@@ -3058,8 +3110,21 @@ def _line(ctx: ToolContext, conn: Any, project_id: int | None, what: str) -> Non
 
 
 def _listing_line(ctx: ToolContext, conn: Any, listing_id: int, what: str) -> None:
-    """0.28.0: ``_line`` for a call about one of Ember's listings (an edit, a pin, a post, a blog post): its line."""
-    _line(ctx, conn, ventures.listing_project(conn, ctx.scope, listing_id), what)
+    """0.28.0: ``_line`` for a call about one of Ember's listings (an edit, a pin, a post, a blog post): its line.
+    0.39.8: a refusal for another line's listing says how a listing that is this line's moves (live, three posts for
+    the coach bundle were refused in cycle #318 with nothing to say why it counted for line #4)."""
+    project_id = ventures.listing_project(conn, ctx.scope, listing_id)
+    try:
+        _line(ctx, conn, project_id, what)
+    except ToolError as exc:
+        line = ctx.state.focus_project_id
+        if line is None or project_id is None or "waits for a cycle of its own" not in str(exc):
+            raise
+        raise ToolError(
+            f"{exc}. Listing #{listing_id} counts for line #{project_id}, the line of the request that made it; if "
+            f"it is line #{line}'s, move it: project_update with project_id {line}, listing_id {listing_id} and why in "
+            "note"
+        ) from None
 
 
 def _line_venture(ctx: ToolContext, conn: Any, venture_id: int | None, what: str) -> None:

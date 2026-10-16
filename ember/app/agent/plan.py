@@ -1393,6 +1393,24 @@ def _again(facts: Facts, product: Mapping[str, Any], now: str) -> list[str]:
     return []
 
 
+def _rework(facts: Facts, step: Mapping[str, Any], line: int, now: str) -> bool:
+    """0.39.8 (analysis-0.39.6, 3.2): whether a step proposing a request again (_again) follows the owner's rejection of
+    the last one, decided within weights.REWORK_DAYS: they asked for a change and wait for it (live, "finally looking
+    good. last small change is to extend the lines for the notes"). An expired, withdrawn or failed request isn't."""
+    template = str(step["template"] or "")
+    if not template.startswith("propose/") or step["kind"] != "ship":
+        return False
+    where, params = facts.scope.where("a")
+    last = facts.conn.execute(
+        "SELECT a.status, a.decided_at FROM approvals a LEFT JOIN cycles y ON y.id = a.cycle_id"
+        f" WHERE {where} AND COALESCE(a.project_id, y.project_id) = ? AND a.executor = ? ORDER BY a.id DESC LIMIT 1",
+        (*params, line, template.removeprefix("propose/")),
+    ).fetchone()
+    if last is None or last["status"] != "rejected" or not last["decided_at"]:
+        return False
+    return from_iso(now) - from_iso(str(last["decided_at"])) <= timedelta(days=weights.REWORK_DAYS)
+
+
 def _asks(kind: str | None, spec: Mapping[str, Any]) -> tuple[str, ...]:
     """0.37.6: the executors whose request a check needs made (a request check, or one of an any)."""
     if kind == "any":
@@ -1886,6 +1904,21 @@ CHANNEL_DUTY = (
 )
 
 
+def _recurring_market(step: Mapping[str, Any]) -> bool:
+    """0.39.8: whether a step is a product's recurring marketing (a weekly pin or post, a monthly blog post)."""
+    return str(step["template"] or "").startswith("recurring/") and step["kind"] == "market"
+
+
+def _at_floor(step: Mapping[str, Any], factors: Mapping[str, float]) -> bool:
+    """0.39.8 (analysis-0.39.6, 3.4): whether a recurring marketing step's channel is worth less than
+    weights.CHANNEL_WORKS (twice its floor) and the owner didn't pin it: it waits ('floor'). Live, the code's weekly
+    Bluesky post of each line and the blog's monthly posts took 9 of 12 cycles on 10-16, while the agent's own strategy
+    allowed one Bluesky post a week and no blog work, and couldn't drop them (no replacing, 2 waits a day)."""
+    if not _recurring_market(step) or step["pinned"] or not step["channel"]:
+        return False
+    return factors.get(str(step["channel"]), 1.0) < weights.CHANNEL_WORKS
+
+
 def _audience_channels(product: Mapping[str, Any]) -> list[str]:
     audience = product["audience"] or "both"
     return [c for c in CHANNELS if audience in CHANNEL_AUDIENCES[c]]
@@ -1939,7 +1972,10 @@ def _recurring(
     kind = templates.by_key(product["template"]).name
     if kind == CHANNEL_TEMPLATE:  # 0.39.1: a channel's line has no listing for a pin or a post of its own
         return _channel_duties(conn, scope, product, int(maintain["id"]), now)
-    if launched and kind != "kdp_book":  # a book can't be linked yet
+    # 0.39.8 (analysis-0.39.6, 3.3): nor can a line with no listing of its own: what its steps count links its listings.
+    # Live, line #12 reached its maintain stage on the agent's words ("Listing #4587912058 already live"), a listing
+    # line #4's request had made, and its weekly pin and post could never pass.
+    if launched and kind != "kdp_book" and facts.live(product["project_id"]) > 0:  # a book can't be linked yet
         funnel = facts.funnel(product["project_id"])
         for channel in _audience_channels(product):
             if not channels.get(channel, False):
@@ -2169,6 +2205,7 @@ def candidates(
     promised_at = _promised_at(conn, scope)
     picks = _last_picks(conn, scope)
     day = today.isoformat()
+    taken_today = _taken_counts(conn, scope, day_start or _midnight(today))  # 0.39.8: a rework's second try
     found: list[Candidate] = []
     for product in nodes(conn, scope, "level = 'product' AND status = 'open'"):
         pid = int(product["project_id"])
@@ -2201,6 +2238,7 @@ def candidates(
         steps: dict[int, weights.Step] = {}
         reasons: dict[int, str | None] = {}
         stale: dict[int, str | None] = {}
+        rework: dict[int, bool] = {}  # 0.39.8: proposing again what the owner rejected lately (_rework)
         first_taken = False
         for stage, step in work:
             sequential = stage["stage"] in SEQUENTIAL
@@ -2208,6 +2246,7 @@ def candidates(
                 stage["stage"] == "maintain" and (current["stage"] == "launch" or live)
             )
             stale[step["id"]] = _stale(facts, step, picks)
+            rework[step["id"]] = _rework(facts, step, pid, now)
             reason: str | None
             if stopped or held:
                 reason = "hold"
@@ -2217,7 +2256,14 @@ def candidates(
                 reason = _owners(facts, step, pid)  # 0.37.6: theirs while something waits for them
             else:
                 reason = _waiting(step, channels) or _requested(facts, step, pid) or _limited(facts, step, capped)
-                if reason is None and stale[step["id"]] == day:
+                if reason is None and _recurring_market(step) and not live:
+                    reason = "listing"  # 0.39.8: its check counts what links the line's own listings, and it has none
+                if reason is None and _at_floor(step, factors):
+                    reason = "floor"  # 0.39.8: its channel brings next to nothing; the owner's pin brings it back
+                # 0.39.8 (analysis-0.39.6, 3.2): what the owner rejected and waits for gets a second cycle a day: live,
+                # the cycle that took the KDP book at 01:09 ran out of room, and the brake held it for the whole day
+                second = rework[step["id"]] and taken_today.get(int(step["id"]), 0) < weights.REWORK_TRIES
+                if reason is None and stale[step["id"]] == day and not second:
                     reason = "tried"
             if sequential and stage["id"] == current["id"] and reason is None:
                 first_taken = True
@@ -2240,6 +2286,8 @@ def candidates(
                     reason = "views"
             if step["due"] and step["source"] == "code" and date.fromisoformat(step["due"]) <= today:
                 urgency = max(urgency, weights.RECURRING_DUE)
+            if rework[step["id"]]:  # 0.39.8: the owner rejected it lately and waits for it again
+                urgency = max(urgency, weights.REWORK)
             since = max(filter(None, (step["ready_since"], worked.get(pid))), default=None)
             steps[step["id"]] = weights.Step(
                 step["id"],
@@ -2722,7 +2770,9 @@ def _works(parts: weights.Parts) -> bool:
     baseline, and the owner's decision at 07:48 waited for 20:00. A venture's step still cuts it: exploring is work."""
     if parts.urgency > 0:
         return True
-    return parts.kind >= weights.KIND["create"] and parts.channel > weights.CHANNEL_MIN
+    # 0.39.8 (analysis-0.39.6, 3.4): a channel clearly above its floor (weights.CHANNEL_WORKS): Bluesky at 0.21 cut
+    # 7 of 12 sleeps on 10-16 with a listing view for every five posts
+    return parts.kind >= weights.KIND["create"] and parts.channel >= weights.CHANNEL_WORKS
 
 
 def _fields(step: weights.Step) -> dict[str, Any]:
@@ -2949,6 +2999,10 @@ WAITS = {
     "hold": "a hold",
     "tried": "a change since a cycle took it today",  # 0.37.6: the brake
     "views": f"its listings' views ({weights.CRITIC_VIEWS} in all): a cover few have seen can't be judged",  # 0.39.6
+    # 0.39.8 (analysis-0.39.6, 3.3): a line's weekly pin, post or blog post links its own listings, and it has none
+    "listing": "a listing of its own (one of your listings counted for another line moves with project_update's "
+    "listing_id)",
+    "floor": "its channel to bring more than next to nothing (it is at its floor), or your owner's pin",  # 0.39.8
     # 0.37.9: the owner's limits (``limits``)
     "queue": "room in the publishing queue (your owner decides a request, or one goes out)",
     "sales": "room for a sell request (your owner decides a listing, a change or a product that waits for them)",
@@ -3378,7 +3432,7 @@ def _word(
 
 # --- Ember's changes (0.35.0) ---
 
-ACTIONS = ("add", "split", "replace", "done", "wait", "hold", "resume")
+ACTIONS = ("add", "split", "replace", "done", "wait", "hold", "resume", "skip")  # 0.39.8: skip
 STEP_KINDS = ("create", "ship", "fix", "market", "chore", "report")  # the kinds of step Ember adds
 WAIT_ON = ("owner", "upgrade", "step", "date")
 MAX_NEW_STEPS = 4  # steps one change adds
@@ -3592,6 +3646,34 @@ def step_done(
     _close(conn, row["id"], now, "done", why, by="agent")
     change(conn, scope, row["id"], cycle_id, "agent", "done", why, now)
     return f"Step #{row['id']} is done."
+
+
+def skip_step(
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    line: int,
+    step_id: int | None,
+    why: str,
+    cycle_id: int | None,
+    now: str,
+) -> str:
+    """0.39.8 (analysis-0.39.6, 3.4): a recurring pin, post or blog post of Ember's code's that Ember skips for its
+    period, with why (the owner sees it): it closes dropped, and the channel's next step for the line comes when the
+    period ends. Outside the WAITS_A_DAY waits. Live, the code's weekly steps couldn't be replaced and the waits were
+    used up, so cycles wrote a blog post the agent's own strategy had stopped, or spent themselves putting one off."""
+    row = _line_step(conn, scope, step_id, line)
+    if not _recurring_market(row) or row["source"] != "code":
+        raise PlanError(
+            "step_id",
+            f"skip is for a recurring pin, post or blog post of Ember's code's; step #{row['id']} isn't one (wait, "
+            "replace or say done instead)",
+        )
+    if row["pinned"]:
+        raise PlanError("step_id", f"your owner pinned step #{row['id']}: they want it done")
+    _close(conn, row["id"], now, "dropped", f"skipped for this period: {why}", by="agent")
+    change(conn, scope, row["id"], cycle_id, "agent", "drop", f"skipped for this period: {why}"[:300], now)
+    ends = f" (it ends {row['due']})" if row["due"] else ""
+    return f"Step #{row['id']} is skipped for this period{ends}: its channel's next step for this line comes after it."
 
 
 def wait_step(

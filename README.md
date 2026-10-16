@@ -434,6 +434,27 @@ emails of the thread first, and only then its end, and an HTML email is read
 past a long quote. And **Hold it** holds a product in a venture cycle too: one
 could still file a request about a product you held.
 
+0.39.8: the fixes from the diagnostics report of 2026-10-16 (the analysis of
+0.39.6). The API began to report the speed each answer was served at, a usage
+field Ember's code didn't know, so every call was charged at its worst case,
+about four times its price ($15.94 booked for $3.87 on 10-16): within days the
+booked runway would have made Ember critical, with its last will due, on money
+that was still there. Ember's code knows the field now and, at its first start,
+settles those calls at what they cost (a refund you recorded yourself counts
+first). make_document says what each `::: lines fill` drew (Ember read 2 lines
+under a full week's table as fill stopping short and went back to fixed counts),
+and a request you rejected and Ember proposes again is urgent for 3 days and gets
+two cycles a day: the book you called "finally looking good" got none for a
+day. Ember can move one of its listings to the line it belongs to (the coach
+bundle counted for the cover letters, so every Bluesky post for it was refused),
+and a product with no listing of its own gets no weekly pin or post. A channel
+worth less than twice its floor no longer cuts Ember's sleep and its weekly steps
+wait unless you pin one, and Ember may skip a weekly pin, post or blog post for
+its period: nine of twelve cycles on 10-16 went to Bluesky and blog posts its own
+strategy had stopped. Your yes to a spend on Ember's listings (the Etsy Ads test)
+is a paid test Ember sees in STATUS while it runs and when it ends. The
+diagnostics list every waiting step.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

@@ -61,6 +61,11 @@ EVIDENCE_VIEWS = 30
 EVIDENCE_MIN, EVIDENCE_MAX = 0.3, 3.0
 KIND = {"ship": 1.0, "launch": 1.0, "fix": 1.0, "market": 1.0, "create": 0.8, "chore": 0.5, "report": 0.3}
 CHANNEL_MIN, CHANNEL_MAX = 0.2, 1.5
+# 0.39.8 (analysis-0.39.6, 3.4): a channel worth less than this (twice its floor) brings next to nothing: its recurring
+# steps wait ('floor') unless the owner pins one, and none cuts the agent's sleep. Live on 10-16 Bluesky was worth 0.21
+# (a listing view for every five posts), 0.01 above the floor: its steps cut 7 of 12 sleeps, and 9 of 12 cycles went to
+# Bluesky and the blog (0.20), which the agent's own strategy had stopped.
+CHANNEL_WORKS = 2 * CHANNEL_MIN
 URGENCY_CAP = 12.0
 PROMISE_FLOOR, PROMISE_SCALE, PROMISE_SLIP = 2.0, 4.5, 2.0
 PROMISE_NEAR_DAYS = 2  # 0.37.1: a promise is urgent from this many days before its day (before them: its worth alone)
@@ -77,6 +82,13 @@ IMPROVE = 1.0  # the critic's suggestions (an improve verdict above DEFECT_SCORE
 CRITIC_VIEWS = 10
 ASKED = 2.0  # the owner asked for it
 RECURRING_DUE = 1.0  # a recurring step on its due day
+# 0.39.8 (analysis-0.39.6, 3.2): a request the owner rejected, proposed again, is urgent for REWORK_DAYS after their
+# decision. Live, their decision on the KDP book ("finally looking good. last small change...") weighed 30 as an
+# obligation; once a cycle had taken it in, the step proposing the book again weighed 2.6, below a promise about a
+# Bluesky post and the review's steps, and the book got no cycle for a day.
+REWORK = 4.0
+REWORK_DAYS = 3
+REWORK_TRIES = 2  # cycles a day may take such a step before the brake holds it (one took it and ran out of room)
 # 0.36.0: the ventures (plan.py; 0.37.0: each venture's step): their worth unless the owner sets one or a business case
 # expects more (that of a product that could earn $5 a month), and a venture Ember's code parks within a week by its
 # stage's rule

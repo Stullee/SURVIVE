@@ -205,8 +205,11 @@ def test_the_report_and_the_plan_tab_say_a_step_waits_on_the_sell_requests(ingre
     text = section(report(ingress_client), "AGENT RECORDS")
     assert (
         "0.38.1: 'sales', a listing, a change of one, a Printify product or a KDP book the sell requests waiting for"
-        " the owner would refuse. Now: publish requests waiting for the owner 0 of 3; waiting for the owner or their"
-        " slot: pins 0 of 3, posts 0 of 3; sell requests waiting for the owner 6 of 6;"
+        " the owner would refuse;"
+    ) in text
+    assert (  # 0.39.8: the reasons it added, and every waiting step
+        "Now: publish requests waiting for the owner 0 of 3; waiting for the owner or their slot: pins 0 of 3, posts"
+        " 0 of 3; sell requests waiting for the owner 6 of 6;"
     ) in text
     script = (Path(__file__).parent.parent / "app" / "web" / "static" / "js" / "app.js").read_text()
     assert 'sales: "as many sell requests as may wait for you wait: it waits until you decide one",' in script
