@@ -23,7 +23,8 @@ the agent's text into PDF, Word, Excel and PNG files with Ember's own code
 (app.products; 0.38.0: ``make_image`` also a cover with a small table),
 ``resize_image`` (0.17.0) makes print files of its pictures and
 ``make_cost_statement`` (0.20.0) a Nebenkostenabrechnung with its cover picture;
-``look`` shows the model one of its pictures. ``workshop`` (like
+``look`` shows the model one of its pictures, and (0.40.0) ``propose_kdp_book``'s check
+a paperback's pages, drawn fresh (pagecheck.py), which its proposal needs. ``workshop`` (like
 ``research``, a metered model call) has code written and run in Anthropic's
 sandbox; Ember's code checks every file it made before it is kept.
 """
@@ -32,6 +33,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import hashlib
 import html
 import json
 import logging
@@ -68,7 +70,7 @@ from ..integrations import (
 )
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
-from ..products import blog, checks, images, make, pdf, sheets, site
+from ..products import blog, checks, images, make, pagecheck, pdf, sheets, site
 from ..products.site import Owner as SiteOwner
 from ..version import app_version
 from . import (
@@ -124,6 +126,11 @@ MAX_ACTION_CHARS = 12_000  # the approvals table's limit for an action
 ELSEWHERE_SHOWN = 3  # 0.39.2: the files of a missing file's name a refusal names
 DONE_WORDS = 2  # 0.39.2: a step said done says what was done in at least as many words
 LOOK_PIXELS = 1_000  # the longer side of a picture the agent looks at: about 1,000-1,300 input tokens
+# 0.40.0 (upgrade request #12): what the agent saw on a paperback's fresh pages (qa), for the owner's request card
+QA_CHARS = 900
+QA_WORDS = 20
+DESCRIPTION_MAX = 2_000  # the approvals table's limit for a request's description
+DRAWN_ROOM = 1_200  # a KDP check's own words and its cover's, before the pages it drew
 CATEGORIES_SHOWN = 10  # etsy_categories' answer, shortest paths first
 DEPARTMENT = " (a whole department: too broad for a listing)"
 # Making files takes a moment: these run sealed, but outside the database transaction the other tools share.
@@ -740,8 +747,9 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "set_sleep",
-            "Choose how long to sleep after this cycle (clamped to the allowed range). While your plan has a step "
-            "ready, Ember's code wakes you after your owner's shortest sleep, whatever you choose.",
+            # 0.40.0: only real work cuts it (0.39.6), and shorter, for the fixed prompt's budget
+            "Choose how long to sleep after this cycle (clamped to the allowed range). While your plan has real work "
+            "ready, Ember's code wakes you after your owner's shortest sleep.",
             {"minutes": _i("Minutes until the next wake-up.", minimum=1), "reason": _s("Why.", 200, cut=True)},
             per_cycle=5,
             reflect=True,
@@ -979,9 +987,17 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "propose_kdp_book",
-            "Propose the KDP book of your .json spec (guide 'kdp'); check: only make its cover and check it.",
-            {"spec": _s("", 200), "check": _b("")},
-            per_cycle=4,
+            # 0.40.0: pages and qa are the guide's and the check's to explain, and their lengths the code's
+            # (pagecheck.named, _page_check): the fixed prompt has no room
+            "Propose the KDP book of your .json spec (guide 'kdp'); check: only make its cover, check it and draw "
+            "its pages.",
+            {
+                "spec": _s("", 200),
+                "check": _b(""),
+                "pages": Field("string", "", required=False),
+                "qa": Field("string", "", required=False),
+            },
+            per_cycle=6,  # 0.40.0: a paperback's checks (of other pages too, again after a fix) before its proposal
         ),
         Spec(
             "etsy_categories",
@@ -1284,8 +1300,10 @@ ORDINARY_VENTURE_FIELDS = ("venture_id", "learned", "stage", "next_question", "n
 ORDINARY_VARIANTS: dict[str, Spec] = {
     "venture_update": replace(
         SPECS["venture_update"],
-        description="Update a venture: learned goes to its knowledge file; park one with a note. Its "
-        "scores and business case are set in a venture cycle. Only your owner backs or kills one. Free.",
+        # 0.40.0: its scores and business case, a venture cycle's, are not its fields here (a call with them is
+        # refused with why): the sentence that said so made room in the fixed prompt
+        description="Update a venture: learned goes to its knowledge file; park one with a note. Only your owner "
+        "backs or kills one. Free.",
         fields={name: SPECS["venture_update"].fields[name] for name in ORDINARY_VENTURE_FIELDS},
     ),
 }
@@ -1477,6 +1495,19 @@ class CycleTools:
     policy_note: str = ""  # 0.13.0: what the owner's unlock did with the request just made (policy.apply)
     # 0.33.0: the messages to the owner sent back once for a promise in their words only (_unrecorded_promise)
     bounced: set[str] = field(default_factory=set)
+    # 0.40.0: the paperback interiors whose pages a KDP check drew this cycle, by path (_page_check)
+    drawn: dict[str, Drawn] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Drawn:
+    """0.40.0: a paperback interior's pages a KDP check drew: of the file with this SHA-256, in this model reply."""
+
+    sha256: str
+    reply: int
+    pages: tuple[int, ...]  # the pages drawn
+    count: int  # its pages in all
+    findings: tuple[str, ...]  # what Ember's code is sure is wrong (pagecheck.Check.findings)
 
 
 @dataclass(frozen=True)
@@ -1486,6 +1517,7 @@ class Outcome:
     summary: str
     project_id: int | None = None
     image: bytes | None = None  # a PNG the model sees with the text (the look tool)
+    pictures: tuple[bytes, ...] = ()  # 0.40.0: more PNGs it sees after it (a KDP check's pages)
     # 0.12.0: a paid call (research, brainstorm, workshop) was sent: it counts toward the tool's per-cycle limit even
     # when it failed, or retries of failing calls went on spending past the limit.
     paid: bool = False
@@ -5692,15 +5724,19 @@ def _propose_kdp_book(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     cover = f"{made.text()} " if made is not None else ""
     noted = "".join(f" Note: {note}." for note in notes)
     if args.get("check"):
-        return Outcome(
-            True,
+        checked = (
             f"{cover}Checked {path}: KDP would take this {book.format} as it is. Price {book.price} {kdp.CURRENCY}: "
-            f"{kdp.royalty(book)}.{noted} Nothing went to your owner: propose it with check false.",
-            f"checked KDP {book.format}: {_cut(book.title, 60)}",
+            f"{kdp.royalty(book)}.{noted}"
         )
+        summary = f"checked KDP {book.format}: {_cut(book.title, 60)}"
+        if book.format != "paperback":
+            return Outcome(True, f"{checked} Nothing went to your owner: propose it with check false.", summary)
+        drawn, pictures = _draw_pages(ctx, spec, book, args.get("pages") or "")
+        return Outcome(True, f"{checked}\n{drawn}", summary, pictures=pictures)
     reason = " ".join(str(spec.get("reason") or "").split())
     if not reason:
         raise ToolError(f"{path} needs reason: why this book, for your owner")
+    page_check = _page_check(ctx, book, args.get("qa")) if book.format == "paperback" else ""
     with ctx.db.transaction() as conn:
         project_id = _product_line(ctx, conn, spec, "book")
         proposed = _weekly_titles(ctx, conn, book.format)
@@ -5717,7 +5753,7 @@ def _propose_kdp_book(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
             project_id=project_id,
             type="sell",
             title=_cut(f"KDP {book.format}: {book.title}", 120),
-            description=f"{reason}\n\n{KDP_NOTE}",
+            description=_with_page_check(reason, page_check),
             expected_cost="none: publishing at KDP is free (Amazon keeps its share of each sale)",
             expected_benefit=reason,
             executor=kdp.EXECUTOR,
@@ -5731,6 +5767,85 @@ def _propose_kdp_book(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     )
     text += _unlocked(ctx)
     return Outcome(True, text, f"#{made_request} KDP {book.format}: {_cut(book.title, 60)}", project_id)
+
+
+def _draw_pages(ctx: ToolContext, spec: dict[str, Any], book: kdp.Book, pages: str) -> tuple[str, tuple[bytes, ...]]:
+    """0.40.0 (upgrade request #12): a paperback's check draws its interior's pages fresh, free, as the workshop's
+    render-page-3-of-71.py did for a run of about $0.19 (one page with pypdfium2, 600 pixels wide): one page of each
+    kind (or the pages named), with what Ember's code measured on all of them, the checklist and the owner's last words
+    on the book. A proposal of the same file in a later reply of the cycle passes (_page_check). Live, two
+    resubmissions trusted pictures of an earlier version or a checklist passed days before (analysis-0.39.6, 3.2)."""
+    path = book.manuscript.path
+    data = _read_file(ctx, path)
+    try:
+        checked = pagecheck.check(data, pagecheck.named(pages), book.language)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from None
+    sha256 = hashlib.sha256(data).hexdigest()
+    before = ctx.state.drawn.get(path)
+    seen = [*before.pages, *checked.shown] if before is not None and before.sha256 == sha256 else checked.shown
+    ctx.state.drawn[path] = Drawn(
+        sha256, ctx.state.reply, tuple(sorted(set(seen))), len(checked.pages), tuple(checked.findings())
+    )
+    with ctx.db.connection() as conn:
+        words = kdp.last_words(conn, ctx.scope, book.title, spec.get("project_id") or ctx.state.focus_project_id)
+    owner = (
+        f"Your owner's last words on it, {words}: each point done?"
+        if words
+        else "What your owner asked of it in their messages: each point done?"
+    )
+    listed = " ".join(f"{n}. {item}" for n, item in enumerate([*pagecheck.CHECKLIST, owner], 1))
+    shown = ", ".join(map(str, checked.shown))
+    head = f"Its pages, drawn now from {path} as it is ({len(checked.pages)} pages): {shown}, shown below."
+    tail = (
+        f"Check on these pictures (pages: '45, 47' draws others): {listed}\n"
+        "Nothing went to your owner. Propose it with check false in a later reply of this cycle, with qa: what you "
+        "saw, point by point (your owner reads it). Once the file changes, check it again."
+    )
+    # what is measured gives way first: the check's own text and the cover's come before it in the result
+    room = MAX_RESULT_CHARS - DRAWN_ROOM - len(head) - len(tail)
+    return "\n".join([head, _cut("\n".join(checked.measures()), room), tail]), tuple(checked.pictures)
+
+
+def _page_check(ctx: ToolContext, book: kdp.Book, qa: Any) -> str:
+    """0.40.0 (upgrade request #12): a paperback goes to the owner only after a check drew its interior's pages, of
+    the same file, in an earlier reply of this cycle (one in the same reply hadn't reached the model when it wrote the
+    proposal), with qa: what the agent saw on them. The owner reads qa on the request, with what Ember's code found."""
+    path = book.manuscript.path
+    drawn = ctx.state.drawn.get(path)
+    if drawn is None:
+        raise ToolError(
+            f"check its pages first: propose_kdp_book with check true draws {path}'s pages fresh, as the file is now, "
+            "with the checklist; then propose it in a later reply with qa, what you saw on them. Pictures, notes or a "
+            "check from before are not this file's pages"
+        )
+    if drawn.sha256 != book.manuscript.sha256:
+        raise ToolError(f"{path} changed since this cycle's check drew its pages: check it again, then propose it")
+    if drawn.reply == ctx.state.reply:
+        raise ToolError(
+            f"you checked {path} in this same reply, before its pages reached you: look at them, then propose it in "
+            "your next reply with qa"
+        )
+    said = " ".join(str(qa or "").split())
+    if len(said) > QA_CHARS:
+        raise ToolError(f"qa has {len(said):,} characters: say what you saw in at most {QA_CHARS:,}")
+    if len(said.split()) < QA_WORDS:
+        raise ToolError(
+            f"qa says what you saw on its fresh pages, point by point of the check's list (at least {QA_WORDS} "
+            "words): your owner reads it on the request"
+        )
+    found = f" Ember's code found: {'; '.join(drawn.findings)}." if drawn.findings else ""
+    pages = ", ".join(map(str, drawn.pages))
+    return f"Page check (pages {pages} of {drawn.count}, drawn fresh in cycle #{ctx.cycle_id}): {said}{found}"
+
+
+def _with_page_check(reason: str, page_check: str) -> str:
+    """A KDP request's description: the agent's reason, its page check (0.40.0) and what the owner does; the page
+    check cut to the room the request's description has."""
+    if not page_check:
+        return f"{reason}\n\n{KDP_NOTE}"
+    room = DESCRIPTION_MAX - len(reason) - len(KDP_NOTE) - 4
+    return f"{reason}\n\n{_cut(page_check, room)}\n\n{KDP_NOTE}"
 
 
 def _propose_reddit_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:

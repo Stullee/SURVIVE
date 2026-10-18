@@ -720,6 +720,37 @@ def _quoted(text: Any, limit: int) -> str:
     return json.dumps(flat if len(flat) <= limit else flat[: limit - 1] + "…", ensure_ascii=False)
 
 
+WORDS_SHOWN = 400  # characters of the owner's last words a page check quotes
+
+
+def last_words(conn: sqlite3.Connection, scope: AgentScope, title: str, project_id: int | None) -> str:
+    """0.40.0: the owner's last words on a book, for its page check: their comment on its newest request they rejected
+    or approved with changes, or their note on one KDP refused (failed); the book by its title or its product line.
+    "" when they wrote none. Live, the agent checked a resubmission against a checklist of its own from days before,
+    not against what the owner had written since (analysis-0.39.6, 3.2)."""
+    where, params = scope.where()
+    rows = conn.execute(
+        f"SELECT id, status, action, project_id, decided_at, closed_at, decision_comment, result_note FROM approvals"
+        f" WHERE {where} AND executor = ? AND status IN ('rejected', 'approved_with_changes', 'failed')"
+        " ORDER BY id DESC",
+        (*params, EXECUTOR),
+    ).fetchall()
+    for r in rows:
+        try:
+            book = book_from_action(r["action"])
+        except KdpError:
+            continue
+        if book.title != title and (project_id is None or r["project_id"] != project_id):
+            continue
+        words = r["result_note"] if r["status"] == "failed" else r["decision_comment"]
+        if not str(words or "").strip():
+            continue
+        when = str((r["closed_at"] if r["status"] == "failed" else r["decided_at"]) or "")[:10]
+        what = _STATES.get(str(r["status"]), str(r["status"])).split(":")[0]
+        return f"#{r['id']} ({what}{f' {when}' if when else ''}): {_quoted(words, WORDS_SHOWN)}"
+    return ""
+
+
 def text(conn: sqlite3.Connection, scope: AgentScope, now: datetime, author: str) -> str:
     """The plan's KDP section: how the owner publishes, this week's room under KDP's limit, and the newest books."""
     where, params = scope.where()
