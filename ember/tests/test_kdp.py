@@ -102,8 +102,31 @@ def project(agent: Any) -> int:
     return rows(agent, "SELECT MAX(id) AS id FROM projects")[0]["id"]
 
 
+# 0.40.0: what the agent saw on a paperback's fresh pages, for the owner
+QA = (
+    "White space: none; each day's lines reach the bottom margin. Rows: writing lines 8 mm apart. Calendar: no "
+    "dates. AI line: on the last page with the day's lines."
+)
+
+
+def next_reply(ctx: tools.ToolContext) -> None:
+    """0.40.0: the model's next reply in the cycle (call runs a tool as the newest reply's): a check's pages have
+    reached it."""
+    with ctx.db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO llm_calls (boot_id, cycle_id, purpose, model, simulated, status, ts, local_day)"
+            " VALUES ('test', ?, 'work', 'scripted', 1, 'ok', ?, ?)",
+            (ctx.cycle_id, ctx.now(), ctx.clock.today().isoformat()),
+        )
+
+
 def proposed(agent: Any, ctx: tools.ToolContext, path: str) -> int:
-    made = call(ctx, "propose_kdp_book", {"spec": path})
+    """A book proposed as the agent proposes it: a paperback (0.40.0) after a check drew its pages, in a later reply."""
+    if json.loads(ctx.workspace.read(path))["format"] == "paperback":
+        checked = call(ctx, "propose_kdp_book", {"spec": path, "check": True})
+        assert checked.ok, checked.text
+        next_reply(ctx)
+    made = call(ctx, "propose_kdp_book", {"spec": path, "qa": QA})
     assert made.ok, made.text
     return rows(agent, "SELECT MAX(id) AS id FROM approvals WHERE executor = 'kdp_package'")[0]["id"]
 
@@ -246,7 +269,9 @@ def test_an_ebook_s_cover_is_a_jpeg_in_kdp_s_proportions(tmp_path: Path) -> None
 def test_a_paperback_is_proposed_and_its_card_has_everything_to_publish_it(data_dir: Path) -> None:
     agent, ctx = publishing(data_dir)
     book_spec = spec(ctx.workspace, paperback(ctx.workspace), project_id=project(agent))
-    made = call(ctx, "propose_kdp_book", {"spec": book_spec})
+    assert call(ctx, "propose_kdp_book", {"spec": book_spec, "check": True}).ok  # 0.40.0: its pages first
+    next_reply(ctx)
+    made = call(ctx, "propose_kdp_book", {"spec": book_spec, "qa": QA})
     assert made.ok and made.text.startswith("Made books/journal-cover.pdf: a paperback cover for 120 pages")
     request = rows(agent, "SELECT MAX(id) AS id FROM approvals WHERE executor = 'kdp_package'")[0]["id"]
     assert f"Approval request #{request} is waiting for your owner. Nothing is at Amazon yet." in made.text
@@ -295,7 +320,7 @@ def test_check_makes_the_cover_and_checks_without_asking(data_dir: Path) -> None
     checked = call(ctx, "propose_kdp_book", {"spec": book_spec, "check": True})
     assert checked.ok, checked.text
     assert "Checked books/journal.json: KDP would take this paperback as it is." in checked.text
-    assert "Nothing went to your owner: propose it with check false." in checked.text
+    assert "Nothing went to your owner. Propose it with check false in a later reply of this cycle" in checked.text
     assert ctx.workspace.size_of("books/journal-cover-preview.png") is not None  # to look at
     assert rows(agent, "SELECT COUNT(*) AS n FROM approvals WHERE executor = 'kdp_package'")[0]["n"] == 0
     thin = spec(ctx.workspace, journal(ctx.workspace, "books/thin", days=40), "books/thin.json",

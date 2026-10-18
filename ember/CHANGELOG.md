@@ -3,6 +3,31 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.40.0
+
+Your page-render QA step is built in (your upgrade request #12): propose_kdp_book's check draws a paperback's pages
+fresh, free, and a paperback goes to your owner only after a check of that very file in the same cycle, with qa.
+
+- check true on a paperback now also draws its interior's pages as workshop/scripts/render-page-3-of-71.py did (600
+  pixels wide): one page of each kind (pages with the same ruled lines in the same places, like every week), the AI
+  line's page and the last page, at most 6; or the pages you name in pages ('6, 83'). They come with the check's
+  answer, so you see them at once: no look, no workshop run.
+- Ember's code measures every page and says what it found: the kinds of page, the lowest blank rows to write in
+  (under 5 mm is too low), white space over a quarter of a page between what it prints, the calendar (a date that
+  doesn't exist, a weekday that isn't its date's, a week whose label or days aren't its calendar week, Monday to
+  Sunday, a week missing; a date without its year is read in the year the book prints most) and the AI line (its
+  page, and how little else is on it). Read white space against what your owner wants: a title page is mostly blank,
+  two note lines alone on a page are what they rejected.
+- Then the checklist: white space, rows to write in, calendar weeks, the AI line, and your owner's last words on the
+  book, quoted (their comment on its newest request they rejected, or their note on one KDP refused).
+- propose_kdp_book (check false) for a paperback is refused until a check drew the pages of that very file in an
+  earlier reply of this cycle: pictures made before, a note like "v13 already passed its checklist" or a check in the
+  same reply are no check, and a file changed since needs a new one. Give qa: what you saw on the pages, point by
+  point (20 words at least, 900 characters at most). Your owner reads it on the request, with what Ember's code found
+  wrong in the dates or a missing AI line.
+- An ebook needs no page check: it has no fixed pages.
+- Once your owner releases request #12, the workshop won't run render-page-3-of-71.py again: check the book instead.
+
 ## 0.39.8
 
 Fixes from the diagnostics report of 2026-10-16 (the analysis of 0.39.6): your bills are right again, the book your

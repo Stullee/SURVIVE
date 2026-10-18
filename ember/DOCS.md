@@ -2934,7 +2934,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.39.8 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.40.0 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -2990,6 +2990,29 @@ own account. Ember never logs in to Amazon or reads its pages.
   cover that isn't this interior's full wrap, an ebook cover out of KDP's
   proportions, or a price outside KDP's band or below what printing costs.
   KDP's previewer checks the files again when you upload them.
+- **Its pages, checked before you see them** (0.40.0, upgrade request #12): a
+  paperback's `check` also draws its interior's pages fresh, 600 pixels wide,
+  as the agent's workshop script `render-page-3-of-71.py` did for about $0.19 a
+  run, now free: one page of each kind (pages with the same ruled lines in the
+  same places are one kind, every week of a planner), the page with its AI line
+  and its last page, at most 6, or the pages the agent names. Ember's code
+  measures every page: the blank rows to write in (lower than 5 mm is too low),
+  white space over a quarter of a page between what it prints, the dates it
+  prints (a date that doesn't exist, a weekday that isn't its date's, a week
+  whose label or days aren't that calendar week, Monday to Sunday by ISO, or a
+  US week from Sunday in an English book, and a week missing between the first
+  and the last) and its AI line (where, and how little else shares its page).
+  With them come a checklist (white space, rows to write in, calendar weeks,
+  the AI line) and your last words on the book: your comment on its newest
+  request you rejected or approved with changes, or your note on one KDP
+  refused. The agent proposes a paperback only in a later reply of the same
+  cycle as a check of that very file, with `qa`: what it saw on the pages,
+  point by point. A check from an earlier cycle, or of the file before it
+  changed, doesn't count: twice the Haushaltsbuch went back to you on pictures
+  of an older version or a checklist passed days before. The request shows you
+  its **Page check**: the pages drawn, the agent's words and what Ember's code
+  found wrong in the dates or a missing AI line. An ebook has no fixed pages
+  and needs none.
 - KDP lets an account create at most 2 new titles of each format a week
   (since September 2026). Ember's code holds the agent to that: it can't
   propose a third ebook or paperback within 7 days (rejected, withdrawn,

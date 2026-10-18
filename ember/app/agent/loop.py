@@ -2015,8 +2015,9 @@ class CycleRunner:
     @staticmethod
     def _result_block(use: dict[str, Any], outcome: tools.Outcome) -> dict[str, Any]:
         content: str | list[dict[str, Any]] = outcome.text or "-"
-        if outcome.image is not None:
-            content = [{"type": "text", "text": outcome.text or "-"}, tools.image_block(outcome.image)]
+        pictures = [*([outcome.image] if outcome.image is not None else []), *outcome.pictures]  # 0.40.0: several
+        if pictures:
+            content = [{"type": "text", "text": outcome.text or "-"}, *(tools.image_block(p) for p in pictures)]
         block: dict[str, Any] = {
             "type": "tool_result",
             "tool_use_id": use.get("id", ""),

@@ -600,4 +600,6 @@ def test_the_self_test_makes_one_of_each() -> None:
     # 0.25.0: a book's interior at a KDP trim size, and its covers
     assert lines[8].startswith("Made out/book.pdf: 24 pages (6x9in portrait)")
     assert lines[9].startswith("Made out/book-cover.pdf: a paperback cover for 24 pages at 6x9 on cream paper")
-    assert lines[10].startswith("Made out/ebook-cover.jpg: an ebook cover, 1600 x 2560 pixels") and len(lines) == 11
+    assert lines[10].startswith("Made out/ebook-cover.jpg: an ebook cover, 1600 x 2560 pixels")
+    # 0.40.0: the book's page check (propose_kdp_book's)
+    assert lines[11] == "Checked out/book.pdf's pages: 24 measured, pages 1, 24 drawn." and len(lines) == 12

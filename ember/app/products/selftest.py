@@ -4,7 +4,8 @@ The image build runs this on every platform, so a library that doesn't work ther
 fails the build instead of the owner's first product. 0.23.0: every layout make_image draws (a text photo and a
 poster too), a print file of a photo (resize_image) and a Nebenkostenabrechnung (make_cost_statement: its formulas
 worked out and checked, its cover drawn). 0.25.0: a book's interior at a KDP trim size and its KDP covers (a JPEG in a
-PDF, and an ebook's JPEG). 0.38.0: a cover with a small table (make_image's layout table).
+PDF, and an ebook's JPEG). 0.38.0: a cover with a small table (make_image's layout table). 0.40.0: the book's page
+check (propose_kdp_book's: every page measured, its text read, pages drawn).
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from pathlib import Path
 
 from ..agent import netguard
 from ..agent.sandbox import Jail
-from . import images, make
+from . import images, make, pagecheck
 
 DOCUMENT = """---
 title: Self-test
@@ -119,7 +120,14 @@ def run() -> list[str]:
             ]
             if images.page_count(jail.read_bytes("out/test.pdf")) != 2:
                 raise AssertionError("the test document should have two pages")
-        return [line for m in made for line in m.report[:1]]
+            checked = pagecheck.check(jail.read_bytes("out/book.pdf"))
+            if len(checked.pages) != 24 or not checked.pictures or "Self-test book" not in checked.pages[0].text:
+                raise AssertionError("the book's page check should read its 24 pages and draw some")
+        drawn = ", ".join(map(str, checked.shown))
+        return [
+            *(line for m in made for line in m.report[:1]),
+            f"Checked out/book.pdf's pages: {len(checked.pages)} measured, pages {drawn} drawn.",
+        ]
 
 
 if __name__ == "__main__":

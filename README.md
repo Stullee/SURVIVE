@@ -455,6 +455,16 @@ strategy had stopped. Your yes to a spend on Ember's listings (the Etsy Ads test
 is a paid test Ember sees in STATUS while it runs and when it ends. The
 diagnostics list every waiting step.
 
+0.40.0: Ember checks a book's pages before you do. Its upgrade request #12 asked
+for the workshop script it rendered KDP interior pages with (one page, 600
+pixels wide, about $0.19 a run) to become a step that always runs: twice the
+Haushaltsbuch went back to you on pictures of an older version or a checklist
+passed days before. Now `propose_kdp_book`'s check draws one page of each kind
+fresh, free, measures every page (rows to write in, white space, the calendar's
+dates and weeks, the AI line) and lists what to check with your last words on
+the book; a paperback is proposed only after such a check of that very file in
+the same cycle, and its request shows you what Ember saw on the pages.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
