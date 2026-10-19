@@ -1393,10 +1393,11 @@ def _again(facts: Facts, product: Mapping[str, Any], now: str) -> list[str]:
     return []
 
 
-def _rework(facts: Facts, step: Mapping[str, Any], line: int, now: str) -> bool:
+def _rework(facts: Facts, step: Mapping[str, Any], line: int) -> bool:
     """0.39.8 (analysis-0.39.6, 3.2): whether a step proposing a request again (_again) follows the owner's rejection of
-    the last one, decided within weights.REWORK_DAYS: they asked for a change and wait for it (live, "finally looking
-    good. last small change is to extend the lines for the notes"). An expired, withdrawn or failed request isn't."""
+    the last one: they asked for a change and wait for it (live, "finally looking good. last small change is to extend
+    the lines for the notes"). 0.40.1 (analysis-0.40.0, 3.3): until the request is proposed again (the owner's hold or
+    drop of the line ends its steps), not for 3 days. An expired, withdrawn or failed request isn't."""
     template = str(step["template"] or "")
     if not template.startswith("propose/") or step["kind"] != "ship":
         return False
@@ -1406,9 +1407,7 @@ def _rework(facts: Facts, step: Mapping[str, Any], line: int, now: str) -> bool:
         f" WHERE {where} AND COALESCE(a.project_id, y.project_id) = ? AND a.executor = ? ORDER BY a.id DESC LIMIT 1",
         (*params, line, template.removeprefix("propose/")),
     ).fetchone()
-    if last is None or last["status"] != "rejected" or not last["decided_at"]:
-        return False
-    return from_iso(now) - from_iso(str(last["decided_at"])) <= timedelta(days=weights.REWORK_DAYS)
+    return last is not None and last["status"] == "rejected" and bool(last["decided_at"])
 
 
 def _asks(kind: str | None, spec: Mapping[str, Any]) -> tuple[str, ...]:
@@ -2246,7 +2245,7 @@ def candidates(
                 stage["stage"] == "maintain" and (current["stage"] == "launch" or live)
             )
             stale[step["id"]] = _stale(facts, step, picks)
-            rework[step["id"]] = _rework(facts, step, pid, now)
+            rework[step["id"]] = _rework(facts, step, pid)
             reason: str | None
             if stopped or held:
                 reason = "hold"
@@ -3693,9 +3692,11 @@ def wait_step(
     not released or declined, another open step, or a day at most WAIT_DAYS ahead (WAITS_A_DAY a day). Its age stops
     meanwhile, and the code takes it up again once the block is gone (``_lift_waits``). 0.39.1: with no ``line``, a
     venture cycle's step of its ventures (a triage, a brainstorm): live, an idea "paused until 10-20" came back the next
-    day, as nothing could make it wait."""
+    day, as nothing could make it wait. 0.40.1 (analysis-0.40.0, 3.4): a promise's step on a date, PROMISE_NEAR_DAYS
+    before the promise is due at the latest (_promise_waits); a decision's and the owner's own steps stay theirs."""
     row = _line_step(conn, scope, step_id, line)
-    if row["obligation_id"] is not None or row["kind"] == templates.OWNER_KIND:
+    latest = _promise_waits(conn, row, on, today)
+    if (row["obligation_id"] is not None and latest is None) or row["kind"] == templates.OWNER_KIND:
         raise PlanError("step_id", f"step #{row['id']} is your owner's: what blocks it goes in your message to them")
     where, params = scope.where()
     waited = conn.execute(
@@ -3730,6 +3731,8 @@ def wait_step(
             raise PlanError("until", "give the day it waits for as YYYY-MM-DD") from None
         if not today < day <= today + timedelta(days=WAIT_DAYS):
             raise PlanError("until", f"a step waits for a day after today, at most {WAIT_DAYS} days ahead")
+        if latest is not None and day > latest:
+            raise PlanError("until", f"step #{row['id']} keeps a promise: it waits until {latest} at the latest")
         blocked = f"{day.isoformat()}"
     else:
         raise PlanError("on", f"say what it waits on: {', '.join(WAIT_ON)}")
@@ -3745,6 +3748,28 @@ def wait_step(
     )
     change(conn, scope, row["id"], cycle_id, "agent", "wait", f"on {blocked}: {why}", now)
     return f"Step #{row['id']} waits on {blocked} ({waited + 1} of {WAITS_A_DAY} waits today)."
+
+
+def _promise_waits(conn: sqlite3.Connection, row: Mapping[str, Any], on: str | None, today: date) -> date | None:
+    """0.40.1 (analysis-0.40.0, 3.4): the last day a step keeping a promise may wait for, PROMISE_NEAR_DAYS before the
+    promise is due, when it waits on a date; None for any other step. A promise's step couldn't wait at all: live,
+    three cycles took "Report milestone #18's outcome by 10-31", which can't be kept before the milestone is judged on
+    10-24, each was refused ("what blocks it goes in your message to them") and two of them wrote to the owner."""
+    if row["obligation_id"] is None or row["kind"] != "promise":
+        return None
+    owed = conn.execute("SELECT due FROM obligations WHERE id = ?", (row["obligation_id"],)).fetchone()
+    if owed is None:
+        return None
+    due = date.fromisoformat(str(owed["due"]))
+    latest = due - timedelta(days=weights.PROMISE_NEAR_DAYS)
+    if on != "date" or latest <= today:
+        when = f"from {latest.isoformat()} on" if latest > today else "now"
+        raise PlanError(
+            "on" if on != "date" else "until",
+            f"step #{row['id']} keeps your promise due {due.isoformat()}: it waits only on a date, until"
+            f" {latest.isoformat()} at the latest; {when} keep it, or tell your owner why you can't",
+        )
+    return latest
 
 
 def hold(conn: sqlite3.Connection, scope: AgentScope, line: int, why: str, cycle_id: int | None, now: str) -> str:

@@ -407,3 +407,34 @@ new products.
 | "Its test depends on your Etsy Ads run (ends 10-23) and pin #139 (still awaiting your approval)" | You approved #139 at 04:43 on 10-18, and it went live at 08:01. The bundle has 8 views now (bet #16 won) and 0 favorites |
 | "If no sale/strong favorites by 10-24, I'll park venture #12 honestly on 10-31" | Ember's code parks it on 10-31 if milestone #18 isn't met. Promise #62 then reports it to you |
 | "KDP Haushaltsbuch note-line fix is the top unblocked work. Before any resubmission I'll render every page type…" | The note lines were fixed the evening before (#321). What is left is the AI line and page 3 (3.2). 0.40.0 does the render check now, free |
+
+---
+
+## 8. What 0.40.1 does
+
+| | Change | Where |
+|---|---|---|
+| 4.3.1 | Past 6 kinds of page, a check draws the kind that holds the most pages first, then the marked pages, the other kinds of more than one page, the AI line's page and the last page. On the book as #332 left it: pages 3, 4, 5, 6, 83 and 84 (was 1 to 5 and 83); with the two edits of 4.1: 1, 2, 4, 5, 6 and 83. The AI line's page holds "little else" only with fewer than 40 words and fewer than 5 ruled lines | `products/pagecheck.py` (`_chosen`, `ALONE_RULES`) |
+| 4.3.2 | A work conversation holds 96,000 bytes. workspace_list of a folder shows its subfolders, then its files the newest first with the time each was written, 40 at most ("… 151 older") | `agent/loop.py` (`MAX_CONVERSATION_BYTES`), `agent/tools.py` (`_workspace_list`, `FOLDER_SHOWN`) |
+| 4.3.3 | make_document records each PDF it makes (its SHA-256), the file it was made from and that file's SHA-256 then. The KDP check says "Made with make_document from books/…-v18.md (unchanged since)", or that it changed since, and names the newest PDF in the folder written after the manuscript of the same book | `migrations/0097_made_pdfs.sql`, `agent/tools.py` (`_made_pdf`, `_made_from`, `_newer_interior`), `diagnostics.py` |
+| 4.3.4 | A request the owner rejected stays urgent until it is proposed again; `REWORK_DAYS` is gone. Two tries a day stay | `agent/plan.py` (`_rework`), `agent/weights.py` |
+| 4.3.5 | plan_step wait on a date works for a step keeping a promise, until two days before the promise is due (`PROMISE_NEAR_DAYS`); any other wait of it is refused with that day. A decision's steps and the owner's stay refused | `agent/plan.py` (`wait_step`, `_promise_waits`) |
+| 4.3.6 | A request waiting for the owner caps the sleep at 4 hours only while their approval or their rejection wouldn't wake the agent | `agent/service.py` |
+| 4.3.7 | etsy_listing shows the critic's newest check of the listing (day, score, verdict, fixes, and whether the listing changed since), before its description, and for a Printify product's listing too | `agent/quality.py` (`listing_text`), `agent/tools.py` (`_critic`) |
+| 4.3.8 | A workspace text file over 20,000 characters shows its first 12,000 and its last 8,000, with how many are left out | `diagnostics.py` (`_ends`) |
+
+Where 0.40.1 differs from 4.3:
+- **4.3.3:** the source is kept in the database (`made_pdfs`), not in the PDF's metadata as 4.3.3 said. The PDFs Ember
+  makes go to buyers on Etsy and to KDP as they are, and a buyer shouldn't find "books/…-v18.md (sha256 …)" in a €39
+  product's properties. A newer PDF counts as the same book when it was made from the same file or, for a PDF made
+  before 0.40.1 (no record), when its name is the manuscript's but for a version at its end (v15, v22). That is the live
+  case: neither v15.pdf nor v22.pdf has a record.
+- **4.3.6:** the cap is lifted when your decisions wake Ember, not tied to `plan.busy`. Work that is ready cuts the
+  sleep to your shortest (30 minutes) already, so a cap kept only for ready work would never apply. It stays for an
+  owner who switched those wakes off: then nothing else brings the decision in.
+- **4.3.8:** every long text file shows its start and its end, not only a KDP spec's source. The live spec named
+  v15.pdf, which names no source, so the code couldn't have found v18.md from it.
+- **Not done:** `books/checklist.md` and the old versions in `books/` stay. They are Ember's files. The CHANGELOG tells
+  Ember that the check has the list, and the folder listing now shows the newest files first.
+- **The CHANGELOG** names the book's two edits for Ember, as 0.39.8's did for `fill`, in case your message of 4.1 isn't
+  sent before the upgrade. If the book was proposed by then, it tells Ember to leave the request alone.

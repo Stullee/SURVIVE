@@ -445,8 +445,9 @@ def test_maintenance_tells_the_agent_that_any_wake_up_starts_a_new_day() -> None
 def test_a_waiting_request_cuts_the_sleep_to_four_hours_at_a_short_default_sleep(
     data_dir: Path, interval: int, chosen: int, slept: int
 ) -> None:
-    settings = ROOMY.model_copy(update={"min_sleep_minutes": 30, "wake_interval_minutes": interval})
-    agent, _ = make_agent(data_dir, asks_and_sleeps(chosen), settings)
+    # 0.40.1: while a rejection doesn't wake the agent (when both decisions do, its sleep stands)
+    update = {"min_sleep_minutes": 30, "wake_interval_minutes": interval, "wake_on_rejection": False}
+    agent, _ = make_agent(data_dir, asks_and_sleeps(chosen), ROOMY.model_copy(update=update))
     started = agent.clock.now()
     assert agent.run_cycle("schedule").status == "completed"
     assert agent._meta_time("next_wake_at") == started + timedelta(minutes=slept)

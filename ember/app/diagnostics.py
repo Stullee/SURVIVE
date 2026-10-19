@@ -94,6 +94,10 @@ DIGESTS_SHOWN = 10
 EVENTS_SHOWN = 200
 WORKSPACE_TEXT_CHARS = 200_000  # the contents of the workspace's text files, the newest first
 WORKSPACE_FILE_CHARS = 20_000
+# 0.40.1 (analysis-0.40.0, 3.6): of a longer file its start and its end, this share of WORKSPACE_FILE_CHARS its end's:
+# the KDP book's source (27,517 characters) was cut after its 37th week, and its back matter, where the defect the
+# owner rejected was, had to be pieced together from the cycles' reads of it
+WORKSPACE_FILE_END = 0.4
 TAIL_COLUMNS = frozenset({"notes"})  # a project's notes are a log: the newest are at the end, so a cut keeps the end
 WORKSPACE_ENTRIES = 100
 TABLES = (
@@ -133,6 +137,7 @@ TABLES = (
     "listing_gates",
     "listing_lines",  # 0.39.8
     "paid_tests",  # 0.39.8
+    "made_pdfs",  # 0.40.1
     "bets",
     "cases",
     "principles",
@@ -365,6 +370,17 @@ def _cut(text: str, chars: int, *, tail: bool = False) -> str:
     if len(text) <= chars:
         return text
     return "…" + text[1 - chars :] if tail else text[: chars - 1] + "…"
+
+
+def _ends(text: str, chars: int) -> str:
+    """At most ``chars`` characters: a longer text's start and its end (WORKSPACE_FILE_END of them), masked first, with
+    how much is left out between them."""
+    text = _mask(text)
+    if len(text) <= chars:
+        return text
+    end = int(chars * WORKSPACE_FILE_END)
+    start = chars - end
+    return f"{text[:start]}\n… [{len(text) - start - end:,} characters left out] …\n{text[-end:]}"
 
 
 def _block(text: str, indent: str = "    ") -> str:
@@ -985,6 +1001,8 @@ def _agent(state: AppState, full: bool = True) -> str:
                 ["id", "approval_id", "started_on", "ends_on", "listings", "baseline", "status", "final"],
                 10,
             ),
+            # 0.40.1: the file each PDF make_document made was made from (a KDP check names it)
+            ("made_pdfs", ["id", "path", "source", "cycle_id", "made_at"], 10),
             # 0.13.0 (Phase E2): Ember's boards and pins on the owner's Pinterest account
             ("pinterest_boards", ["id", "approval_id", "status", "board_id", "name", "error"], 10),
             (
@@ -1196,13 +1214,14 @@ def _listing(conn: Any, scope: Any, row: Any) -> dict[str, Any]:
 
 
 def _workspace_texts(workspace: Any, entries: list[Any]) -> str:
-    """The workspace's text files, the newest first, each whole up to WORKSPACE_FILE_CHARS."""
+    """The workspace's text files, the newest first, each whole up to WORKSPACE_FILE_CHARS; a longer one its start and
+    its end (0.40.1)."""
     files = sorted((e for e in entries if not e.is_dir and kind_of(e.path) == "text"), key=lambda e: -e.modified)
     parts: list[str] = []
     used = 0
     for index, entry in enumerate(files):
         try:
-            body = _cut(workspace.read(entry.path), WORKSPACE_FILE_CHARS)
+            body = _ends(workspace.read(entry.path), WORKSPACE_FILE_CHARS)
         except Exception as exc:  # noqa: BLE001
             body = f"(unreadable: {exc})"
         if parts and used + len(body) > WORKSPACE_TEXT_CHARS:

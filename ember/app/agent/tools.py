@@ -124,6 +124,7 @@ INBOX_CHARS = 3_500
 EMAIL_READ_CHARS = 3_000
 MAX_ACTION_CHARS = 12_000  # the approvals table's limit for an action
 ELSEWHERE_SHOWN = 3  # 0.39.2: the files of a missing file's name a refusal names
+FOLDER_SHOWN = 40  # 0.40.1: the entries workspace_list shows of one folder, its newest files first
 DONE_WORDS = 2  # 0.39.2: a step said done says what was done in at least as many words
 LOOK_PIXELS = 1_000  # the longer side of a picture the agent looks at: about 1,000-1,300 input tokens
 # 0.40.0 (upgrade request #12): what the agent saw on a paperback's fresh pages (qa), for the owner's request card
@@ -2059,12 +2060,22 @@ def wrap(ctx: ToolContext, source: str, text: str) -> str:
 def _workspace_list(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     limits = ctx.workspace.limits
     path = args.get("path")
-    # Without a path, the files in every folder (their paths name the folders).
-    entries = ctx.workspace.listing(path) if path else ctx.workspace.walk(limits.max_entries).files
+    if path:
+        # 0.40.1 (analysis-0.40.0, 3.2): a folder's subfolders, then its files the newest first with their time,
+        # FOLDER_SHOWN at most. Its first 100 by name took 4 KB a listing: four listings of books/ (185 files,
+        # versions v3 to v22) took 16 KB of a cycle's conversation, and still didn't say which file was the newest.
+        found = ctx.workspace.listing(path)
+        entries = [e for e in found if e.is_dir] + sorted((e for e in found if not e.is_dir), key=lambda e: -e.modified)
+        shown = entries[:FOLDER_SHOWN]
+        lines = [f"{e.path}/" if e.is_dir else f"{e.path}  {e.size:,} B  {_mtime(ctx, e.modified)}" for e in shown]
+        more = f"\n… {len(entries) - len(shown)} older" if len(entries) > len(shown) else ""
+    else:
+        # Without a path, the files in every folder (their paths name the folders).
+        entries = ctx.workspace.walk(limits.max_entries).files
+        lines = [f"{e.path}/" if e.is_dir else f"{e.path}  {e.size:,} B" for e in entries[:100]]
+        more = f"\n… {len(entries) - 100} more" if len(entries) > 100 else ""
     used = ctx.workspace.usage()
     text_bytes, product_bytes = ctx.workspace.sizes()
-    lines = [f"{e.path}/" if e.is_dir else f"{e.path}  {e.size:,} B" for e in entries[:100]]
-    more = f"\n… {len(entries) - 100} more" if len(entries) > 100 else ""
     usage = (
         f"Using {text_bytes / 1024:.1f} KB of {limits.max_total_bytes // (1024 * 1024)} MB and "
         f"{used.files:,} of {limits.max_files:,} files (in {used.folders} folder{'s' if used.folders != 1 else ''})"
@@ -2076,6 +2087,11 @@ def _workspace_list(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
         )
     body = "\n".join(lines) if lines else "(empty)"
     return Outcome(True, f"{body}{more}\n{usage}", f"{len(entries)} entries")
+
+
+def _mtime(ctx: ToolContext, modified: float) -> str:
+    """When a file was last written, in the owner's time ('10-18 01:11')."""
+    return datetime.fromtimestamp(modified, ctx.clock.tz).strftime("%m-%d %H:%M") if modified else "-"
 
 
 def _workspace_read(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
@@ -4060,7 +4076,21 @@ def _make_document(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
         previews=args.get("pictures", True),
         pages=args.get("pages") or "",  # 0.39.1
     )
+    _made_pdf(ctx, args["source"], args["output"])
     return _made(made, "made a document")
+
+
+def _made_pdf(ctx: ToolContext, source: str, output: str) -> None:
+    """0.40.1 (analysis-0.40.0, 3.2): which file a PDF was made from, and that file's text then (made_pdfs), for a KDP
+    check (_made_from). In the database, not in the PDF: Ember's files go to buyers and to KDP as they are."""
+    pdf = hashlib.sha256(ctx.workspace.read_bytes(output)).hexdigest()
+    text = hashlib.sha256(ctx.workspace.read(source).encode()).hexdigest()
+    with ctx.db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO made_pdfs (mode, session, path, sha256, source, source_sha256, cycle_id, made_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (ctx.scope.mode, ctx.scope.session, output, pdf, source, text, ctx.cycle_id, ctx.now()),
+        )
 
 
 def _make_spreadsheet(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
@@ -4584,17 +4614,28 @@ def _etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
             found = printify_publisher.current_product(conn, ctx.scope, listing_id)
             if found is not None:  # 0.39.0: in full, as a change of it starts from
                 made += "\n" + printify_publisher.product_text(found[1])
+            critic = _critic(conn, ctx.scope, listing_id)  # 0.40.1
+            made += f"\n{critic}" if critic else ""
             waiting = printify_publisher.open_edit(conn, ctx.scope, listing_id)
             if waiting is not None:
                 made += f"\n\nRequest #{waiting} changes it and hasn't been made yet."
             return Outcome(True, made.strip(), f"read #{listing_id}")
         raise ToolError(f"#{listing_id} isn't one of your live listings; etsy_listing without a number lists them")
     said = f"{as_read}: {numbers.get(listing_id, 'not read yet')}." if read else "Etsy's numbers: not read yet."
+    critic = _critic(conn, ctx.scope, listing_id)  # 0.40.1: before its description, which may be long
+    said += f"\n{critic}" if critic else ""
     text = etsy.listing_text(listing_id, listing, etsy_publisher.state_text(row), said)
     waiting = etsy_publisher.open_edit(conn, ctx.scope, listing_id)
     if waiting is not None:
         text += f"\n\nRequest #{waiting} changes it and hasn't been made yet."
     return Outcome(True, text, f"read #{listing_id}")
+
+
+def _critic(conn: Any, scope: AgentScope, listing_id: int) -> str:
+    """0.40.1 (analysis-0.40.0, 3.5): the quality critic's newest check of a listing (quality.listing_text)."""
+    from . import quality  # here, not at the top: quality imports prompts, which imports tools, then this
+
+    return quality.listing_text(conn, scope, listing_id)
 
 
 def _printify_listings(conn: Any, scope: AgentScope, listing_id: int | None = None) -> str:
@@ -5797,6 +5838,8 @@ def _draw_pages(ctx: ToolContext, spec: dict[str, Any], book: kdp.Book, pages: s
     listed = " ".join(f"{n}. {item}" for n, item in enumerate([*pagecheck.CHECKLIST, owner], 1))
     shown = ", ".join(map(str, checked.shown))
     head = f"Its pages, drawn now from {path} as it is ({len(checked.pages)} pages): {shown}, shown below."
+    made = _made_from(ctx, path, hashlib.sha256(data).hexdigest())
+    head += f"\n{made}" if made else ""
     tail = (
         f"Check on these pictures (pages: '45, 47' draws others): {listed}\n"
         "Nothing went to your owner. Propose it with check false in a later reply of this cycle, with qa: what you "
@@ -5805,6 +5848,82 @@ def _draw_pages(ctx: ToolContext, spec: dict[str, Any], book: kdp.Book, pages: s
     # what is measured gives way first: the check's own text and the cover's come before it in the result
     room = MAX_RESULT_CHARS - DRAWN_ROOM - len(head) - len(tail)
     return "\n".join([head, _cut("\n".join(checked.measures()), room), tail]), tuple(checked.pictures)
+
+
+def _made_from(ctx: ToolContext, path: str, digest: str) -> str:
+    """0.40.1 (analysis-0.40.0, 3.2): what a paperback's interior (its bytes' SHA-256 ``digest``) was made from
+    (made_pdfs) and whether that file changed since, and a newer PDF of the same book in its folder: made from the same
+    file, or (made before 0.40.1) named the same but for its version. Live, the spec named v15.pdf, the book the owner
+    rejected, while v19 to v22 had been made from v18.md, and each cycle on the book spent its first steps finding out
+    which file the book was."""
+    said = []
+    made = _source_of(ctx, digest)
+    if made is not None:
+        source, digest = made
+        try:
+            now = ctx.workspace.read(source)
+        except SandboxError:
+            now = None
+        if now is None:
+            state = "it isn't there any more"
+        elif hashlib.sha256(now.encode()).hexdigest() == digest:
+            state = "unchanged since"
+        else:
+            state = "changed since: make_document it again and check the new PDF, or this isn't the book as it is"
+        said.append(f"Made with make_document from {source} ({state}).")
+    newer = _newer_interior(ctx, path, made)
+    if newer is not None:
+        when = _mtime(ctx, ctx.workspace.modified(newer) or 0.0)
+        said.append(f"{newer} ({when}) is newer than {path}: if it is the book, set the spec's manuscript to it.")
+    return " ".join(said)
+
+
+NEWER_READ = 10  # 0.40.1: the newer PDFs of an interior's folder whose source a check looks up at most
+
+
+def _newer_interior(ctx: ToolContext, path: str, made: tuple[str, str] | None) -> str | None:
+    """The newest PDF in ``path``'s folder written after it, of the same book: made from the same file, or named the
+    same but for a version at its end (v15, v22)."""
+    folder, _, _ = path.rpartition("/")
+    written = ctx.workspace.modified(path)
+    if written is None:
+        return None
+    try:
+        found = ctx.workspace.listing(folder)
+    except SandboxError:
+        return None
+    later = sorted(
+        (e for e in found if not e.is_dir and e.path.lower().endswith(".pdf") and e.modified > written),
+        key=lambda e: -e.modified,
+    )
+    for entry in later[:NEWER_READ]:
+        try:
+            other = _source_of(ctx, hashlib.sha256(ctx.workspace.read_bytes(entry.path)).hexdigest())
+        except SandboxError:  # gone since the listing: the agent's own files only change in its cycle
+            continue
+        if (made is not None and other is not None and other[0] == made[0]) or _book_stem(entry.path) == _book_stem(
+            path
+        ):
+            return entry.path
+    return None
+
+
+def _source_of(ctx: ToolContext, digest: str) -> tuple[str, str] | None:
+    """The file make_document made the PDF of these bytes from, and that file's SHA-256 then; None for a PDF made
+    otherwise (or before 0.40.1)."""
+    where, params = ctx.scope.where()
+    with ctx.db.connection() as conn:
+        row = conn.execute(
+            f"SELECT source, source_sha256 FROM made_pdfs WHERE {where} AND sha256 = ? ORDER BY id DESC LIMIT 1",
+            (*params, digest),
+        ).fetchone()
+    return (str(row["source"]), str(row["source_sha256"])) if row is not None else None
+
+
+def _book_stem(path: str) -> str:
+    """A file's name without its folder, its extension and a version at its end: 'interior' of 'b/interior-v15.pdf'."""
+    name = path.rpartition("/")[2].rsplit(".", 1)[0]
+    return re.sub(r"[-_.]?v?\d+$", "", name, flags=re.IGNORECASE)
 
 
 def _page_check(ctx: ToolContext, book: kdp.Book, qa: Any) -> str:

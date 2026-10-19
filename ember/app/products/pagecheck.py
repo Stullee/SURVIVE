@@ -55,7 +55,9 @@ _PART_LEAST = 4  # a column of a row inked this much (of 255) and less than _BLO
 _KIND_MM = 2.0  # ruled lines in the same place within this are the same layout
 SHOWN = 5  # examples a measure names at most
 KINDS_SHOWN = 10  # kinds of page named one by one
-ALONE_WORDS = 40  # the AI line's page with fewer words in all holds little else
+ALONE_WORDS = 40  # the AI line's page with fewer words in all holds little else...
+# ...and with fewer ruled lines (0.40.1): a page of writing lines with the AI line under them is full, not empty
+ALONE_RULES = 5
 # What the agent checks on the pictures before it proposes a paperback, and answers in qa (tools: propose_kdp_book).
 # The owner's last words on the book come after it.
 CHECKLIST = (
@@ -145,7 +147,7 @@ class Check:
         if self.ai_pages:
             first = self.pages[self.ai_pages[0] - 1]
             last = ", the last page," if first.number == len(self.pages) else ""
-            alone = ": little else" if first.words < ALONE_WORDS else ""
+            alone = ": little else" if first.words < ALONE_WORDS and len(first.rules) < ALONE_RULES else ""
             lines.append(
                 f"AI line: page {_numbers(self.ai_pages)}; page {first.number}{last} has {first.words} words{alone}."
             )
@@ -321,18 +323,22 @@ def _kinds(pages: list[Page]) -> list[list[int]]:
 
 
 def _chosen(pages: list[Page], kinds: list[list[int]], ai_pages: list[int], calendar: Calendar) -> list[int]:
-    """The pages a check draws: the first of each kind, the AI line's page and the last page; past PAGES_SHOWN, those
-    with something measured first (white space, low rows, a calendar mistake)."""
+    """The pages a check draws: the first of each kind, the AI line's page and the last page; past PAGES_SHOWN, the
+    kind that holds the most pages first (a planner's week), then those with something measured (white space, low
+    rows, a calendar mistake), the other kinds of more than one page by their size, the AI line's page and the last
+    page, then the other kinds in their order. 0.40.1 (analysis-0.40.0, 3.3): the kinds came in the order they first
+    appear after the marked pages, and of the Haushaltsbuch's 84 pages a check drew the title, the year's two pages, a
+    month's two and the AI line's, never a week: 53 of its pages, the ones the owner rejected five times."""
     wanted = list(dict.fromkeys([numbers[0] for numbers in kinds] + ai_pages[:1] + [len(pages)]))
     if len(wanted) <= PAGES_SHOWN:
         return sorted(wanted)
     marked = {p.number for p in pages if p.blank_share > BLANK_SHARE or (p.rows and p.rows[0] < WRITE_LEAST)}
     marked |= {int(m[1]) for f in calendar.findings if (m := re.search(r"page (\d+)", f))}
-    for numbers in kinds:  # a kind with a marked page shows that page
-        hit = next((n for n in numbers if n in marked), None)
-        if hit is not None and numbers[0] in wanted:
-            wanted[wanted.index(numbers[0])] = hit
-    ordered = [n for n in wanted if n in marked] + [n for n in wanted if n not in marked]
+    # a kind with a marked page shows that page
+    shown = {numbers[0]: next((n for n in numbers if n in marked), numbers[0]) for numbers in kinds}
+    drawn = [shown.get(n, n) for n in wanted]
+    largest = [shown[numbers[0]] for numbers in sorted(kinds, key=len, reverse=True) if len(numbers) > 1]
+    ordered = [*largest[:1], *(n for n in drawn if n in marked), *largest, *ai_pages[:1], len(pages), *drawn]
     return sorted(list(dict.fromkeys(ordered))[:PAGES_SHOWN])
 
 

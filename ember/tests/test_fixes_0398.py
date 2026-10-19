@@ -272,9 +272,9 @@ def test_the_book_the_owner_rejected_comes_before_a_promise_and_gets_a_second_cy
     taken = cycles(agent, 3)  # each takes it, and nothing moves for it: two tries today, then the brake
     assert [t.title for t in taken[:2]] == [again, again]
     assert taken[2].title != again and waits_on(agent, again, book) == "tried"
-    agent.clock.advance(days=weights.REWORK_DAYS + 1)  # days after the decision: its worth alone, one try a day
+    agent.clock.advance(days=4)  # 0.40.1 (analysis-0.40.0, 3.3): days after the decision, until it is proposed again
     keep(agent)
-    assert candidate(steered(agent), again, book).step.urgency == 0.0
+    assert candidate(steered(agent), again, book).step.urgency == weights.REWORK
 
 
 def test_a_request_that_expired_gets_no_rework_urgency(data_dir: Path) -> None:

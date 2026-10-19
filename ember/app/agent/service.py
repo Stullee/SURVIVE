@@ -872,10 +872,14 @@ class Agent:
                     reason += f"; {end.sleep_cut}"
                 # 0.12.0: waiting for the owner is no reason to sleep long (it slept 12 hours for an approval): while
                 # its requests wait, it wakes within WAITING_SLEEP_MINUTES (0.15.0; or the default interval, if longer)
-                # at the latest, to work on something else.
+                # at the latest, to work on something else. 0.40.1 (analysis-0.40.0, 3.4): only while the owner's
+                # decision on them doesn't wake it. When it does, the decision brings it back, and work that is ready
+                # cut the sleep already (slack.sleep): live on 10-17 a pin waiting for the owner woke the agent after 4
+                # of the 6 hours it chose, twice to nothing it could do.
                 cap = max(self.settings.min_sleep_minutes, self.settings.wake_interval_minutes, WAITING_SLEEP_MINUTES)
+                woken = self.settings.wakes_on("approval") and self.settings.wakes_on("rejection")
                 with self.db.connection() as conn:
-                    waiting = store.count_rows(conn, "approvals", self.scope(), "status = 'pending'")
+                    waiting = 0 if woken else store.count_rows(conn, "approvals", self.scope(), "status = 'pending'")
                 if waiting and minutes > cap:
                     uncut = now + timedelta(minutes=minutes), reason
                     minutes = cap
