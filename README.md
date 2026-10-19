@@ -465,6 +465,20 @@ dates and weeks, the AI line) and lists what to check with your last words on
 the book; a paperback is proposed only after such a check of that very file in
 the same cycle, and its request shows you what Ember saw on the pages.
 
+0.40.1: the fixes from the diagnostics report of 2026-10-18 (the analysis of
+0.40.0). The Haushaltsbuch's week pages have been right since 10-16, but five
+cycles worked on the book without proposing it: four ran out of room in their
+conversation, and the last edit put the AI line alone on a page again. A cycle
+now holds 96,000 bytes, room for two page checks and the fix between them, and
+a folder's listing shows its newest files first. The check draws the kind of
+page most of the book is first (a planner's week: 0.40.0 drew the title, the
+year and a month, never a week), and says which file the PDF was made from,
+whether it changed since, and a newer PDF of the same book. A book you rejected
+stays urgent until Ember proposes it again, not for 3 days. A promise can wait
+for its day, a request waiting for you no longer wakes Ember after 4 hours when
+your decision wakes it anyway, `etsy_listing` shows what the quality critic
+found, and the diagnostics show a long file's start and end.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

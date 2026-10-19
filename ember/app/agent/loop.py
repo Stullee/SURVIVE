@@ -113,7 +113,9 @@ log = logging.getLogger(__name__)
 MAX_TOOL_CALLS_PER_TURN = tools.MAX_TOOL_CALLS_PER_TURN
 # The work conversation's size limit (bytes of JSON, pictures counted as below). At 24,000 (until 0.9.0) it ended every
 # cycle that made a product and looked at its pictures after 5 to 10 tool steps. Money is checked before each step.
-MAX_CONVERSATION_BYTES = 64_000
+# 0.40.1 (analysis-0.40.0, 3.3): at 64,000 four of the five cycles on the KDP book ended before they could propose it,
+# and a book's page check (0.40.0) takes about 20,000 of it: six pages and its measures; a fix needs two checks.
+MAX_CONVERSATION_BYTES = 96_000
 MAX_EMPTY_NUDGES = 1
 RETRY_DELAY_SECONDS = 5.0
 NUDGE = "Continue with the plan, or reply with a short report of what you did."

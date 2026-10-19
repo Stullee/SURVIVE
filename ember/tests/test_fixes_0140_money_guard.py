@@ -28,7 +28,7 @@ from app.economy.metering import OVERRUN_STOP, REVIEW, WORKSHOP, CallFailed, Cal
 from app.economy.pricing import safety_factor
 from tests import economy_helpers
 from tests.economy_helpers import FakeClock, ScriptedTransport, make_economy, message, metered, request, restart
-from tests.test_agent import make_agent, plan, rows, text, tools
+from tests.test_agent import ROOMY, make_agent, plan, rows, text, tools
 from tests.test_owner_loop import APPROVAL
 
 MODEL = "claude-sonnet-5"
@@ -344,7 +344,8 @@ def test_after_an_overrun_stop_a_waiting_request_still_cuts_the_sleep(data_dir: 
         ("set_sleep", {"minutes": 720, "reason": "the poster waits for the owner"}),
     )
     script = [plan(steps=["ask to publish", "notes"], sleep=720), tools(("request_approval", APPROVAL)), text("Asked.")]
-    agent, _ = make_agent(data_dir, [*script, big, reflection])
+    quiet = ROOMY.model_copy(update={"wake_on_rejection": False})  # 0.40.1: only then does a waiting request cut it
+    agent, _ = make_agent(data_dir, [*script, big, reflection], quiet)
     assert agent.run_cycle("schedule").status == "stopped"
     assert rows(agent, "SELECT status FROM approvals") == [{"status": "pending"}]
     assert agent._meta_time("next_wake_at") == agent.clock.now() + timedelta(minutes=240)

@@ -10,11 +10,13 @@ from app import web
 from app.agent import context, service
 from app.config import Settings
 from app.economy.clock import from_iso
-from tests.test_agent import make_agent, plan, rows, text, tools
+from tests.test_agent import ROOMY, make_agent, plan, rows, text, tools
 from tests.test_autonomy import request_for
 from tests.test_owner_loop import APPROVAL, owner
 
 JOURNAL = tools(("write_journal", {"summary": "Asked to publish", "entry": "Waiting for my owner."}))
+# 0.40.1: a waiting request cuts the sleep only while one of the owner's decisions on it wouldn't wake the agent
+QUIET_REJECTION = ROOMY.model_copy(update={"wake_on_rejection": False})
 
 
 def asks_and_sleeps(minutes: int) -> list:
@@ -28,7 +30,7 @@ def asks_and_sleeps(minutes: int) -> list:
 
 
 def test_a_request_waiting_for_the_owner_cuts_a_long_sleep(data_dir: Path) -> None:
-    agent, transport = make_agent(data_dir, [*asks_and_sleeps(720), plan(steps=[], sleep=720)])
+    agent, transport = make_agent(data_dir, [*asks_and_sleeps(720), plan(steps=[], sleep=720)], QUIET_REJECTION)
     started = agent.clock.now()
     assert agent.run_cycle("schedule").status == "completed"
     fields = agent.agent_fields()

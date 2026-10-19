@@ -82,12 +82,13 @@ IMPROVE = 1.0  # the critic's suggestions (an improve verdict above DEFECT_SCORE
 CRITIC_VIEWS = 10
 ASKED = 2.0  # the owner asked for it
 RECURRING_DUE = 1.0  # a recurring step on its due day
-# 0.39.8 (analysis-0.39.6, 3.2): a request the owner rejected, proposed again, is urgent for REWORK_DAYS after their
-# decision. Live, their decision on the KDP book ("finally looking good. last small change...") weighed 30 as an
-# obligation; once a cycle had taken it in, the step proposing the book again weighed 2.6, below a promise about a
-# Bluesky post and the review's steps, and the book got no cycle for a day.
+# 0.39.8 (analysis-0.39.6, 3.2): a request the owner rejected, proposed again, is urgent. Live, their decision on the
+# KDP book ("finally looking good. last small change...") weighed 30 as an obligation; once a cycle had taken it in,
+# the step proposing the book again weighed 2.6, below a promise about a Bluesky post and the review's steps, and the
+# book got no cycle for a day. 0.40.1 (analysis-0.40.0, 3.3): until it is proposed again, not for 3 days after their
+# decision: five cycles in those days ran out of room before they proposed it, and from the fourth day the book got
+# one try a day, its worth level with a review's step.
 REWORK = 4.0
-REWORK_DAYS = 3
 REWORK_TRIES = 2  # cycles a day may take such a step before the brake holds it (one took it and ran out of room)
 # 0.36.0: the ventures (plan.py; 0.37.0: each venture's step): their worth unless the owner sets one or a business case
 # expects more (that of a product that could earn $5 a month), and a venture Ember's code parks within a week by its

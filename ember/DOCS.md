@@ -49,7 +49,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Dry run | on | Fake model, no API calls, no cost. |
 | Let the agent read whole web pages | off | Off: live research is web search only. On: it can also read pages from its search results (about $0.01–0.02 each). PDFs and other documents are always refused, because they have no size limit, and so are Etsy's pages, because Etsy's API terms forbid programs reading its site (searching it is fine). |
 | Wake Ember when you write | on | A message you send in the **Inbox** wakes the agent to read it, 5 minutes after your last message or decision (at most 15 after the first, and at least 30 after the last such wake), so one cycle reads them all (after a running cycle, unless that cycle saw them; not while the agent is paused or dormant). **Wake now** is immediate. Off: it reads your message at its next scheduled wake-up. |
-| Wake Ember when you decide | on | Your decisions switched on in the five options below wake the agent to act on them, the same way as a message. Off: none of them does, whatever those options say; it sees your decisions at its next scheduled wake-up. Either way, while a request waits for you the agent sleeps at most 4 hours (or the **Default sleep**, if that is longer), and works on other things meanwhile. Once no request waits any more, the sleep it chose stands again (counted from the end of that cycle). |
+| Wake Ember when you decide | on | Your decisions switched on in the five options below wake the agent to act on them, the same way as a message. Off: none of them does, whatever those options say; it sees your decisions at its next scheduled wake-up. While a request waits for you and a decision of yours on it wouldn't wake the agent (this option, or **Wake Ember when you approve a request** or **… when you reject a request**, off), the agent sleeps at most 4 hours (or the **Default sleep**, if that is longer), and works on other things meanwhile. Once no request waits any more, the sleep it chose stands again (counted from the end of that cycle). Since 0.40.1, while both your approval and your rejection wake it, a waiting request leaves its sleep as it chose it: your decision brings it back, and work that is ready cuts the sleep anyway. On 10-17 a pin waiting for you woke it after 4 of the 6 hours it chose, twice to nothing it could do. |
 | Wake Ember when you approve a request | on | Approving one of its requests, as it is or with your changes, wakes it (0.31.0). Off: it sees your approval at its next scheduled wake-up. |
 | Wake Ember when you reject a request | on | Rejecting one of its requests wakes it. |
 | Wake Ember when you mark a request done or failed | on | Marking an approved request done or failed, or cancelling one Ember carries out itself, wakes it. |
@@ -693,6 +693,13 @@ one before it goes into the agent's workspace (by default `workshop/out`):
 - Text files must be UTF-8, at most 64 KB. Anything else (SVG, archives,
   programs, fonts), and any file that can't be read whole, is refused.
 
+Since 0.40.1 the agent's listing of one folder shows its subfolders, then its
+files the newest first with the time each was written, 40 at most ("… 151
+older"): listed by name, the first 100 of `books/` (185 files, versions v3 to
+v22 of the Haushaltsbuch) took 4 KB a listing, and four listings in one cycle
+still didn't say which file was the newest. The whole workspace is listed by
+path, as before.
+
 Since 0.39.2 the workshop's result says first where it kept a file whose task
 named another folder for it, and wherever a file the agent asks for doesn't
 exist, the refusal names a file of that name elsewhere in its workspace: the
@@ -1237,11 +1244,14 @@ none. The Plan tab says why a step waits ("taken today, and nothing it is
 checked by moved"); pin it to have the next cycle try it again today.
 
 Since 0.39.8 a request you **rejected** and Ember proposes again ("Propose the
-book again: request #120 rejected") is urgent for 3 days after your decision,
-and two cycles a day may take it before the brake holds it. Your decision
-weighed a lot as something owed; once a cycle had taken it in, the step proposing
-the book again weighed 2.6, below a promise about a Bluesky post, and the book
-you called "finally looking good" got no cycle for a day.
+book again: request #120 rejected") is urgent, and two cycles a day may take it
+before the brake holds it. Your decision weighed a lot as something owed; once a
+cycle had taken it in, the step proposing the book again weighed 2.6, below a
+promise about a Bluesky post, and the book you called "finally looking good" got
+no cycle for a day. Since 0.40.1 it stays urgent until Ember proposes it again
+(or you hold or drop the product), not for 3 days after your decision: five
+cycles in those days ran out of room before they proposed the book, and from the
+fourth day it got one try a day, weighing as much as a step of the daily review.
 
 Since 0.39.8 a product's weekly pin, Bluesky post or monthly blog post waits
 (*its channel brings next to nothing*) while that channel is worth less than
@@ -1342,7 +1352,12 @@ ventures (a triage, a brainstorm) wait for a day. Since 0.39.2 a step she says i
 done needs a reason of more than one word (one was closed with "placeholder"),
 and she is told that a step of the kind *market* (a pin, a post, a blog post) is
 a marketing cycle's: a step for pins added as another kind went to an ordinary
-cycle, which has no pin tool.
+cycle, which has no pin tool. Since 0.40.1 a step keeping one of her promises can
+wait on a day, at the latest two days before the promise is due (from then on it
+is urgent: she keeps it, or tells you why she can't). Until then it couldn't wait
+at all: three cycles took "Report milestone #18 outcome (sale or park) by 10-31",
+which can't be kept before the milestone is judged on 10-24, and each was told to
+write to you about it. Your decisions' steps can't wait, as before.
 What you, a promise or Ember's code put in the plan stays. She can **hold** a
 product to work on others, with her reason, and resume it. She can't close,
 drop or delete a project or product: only you do. Each change is kept with its
@@ -2171,7 +2186,9 @@ can also remove the app's access at Etsy).
 ### Changing a live listing
 
 - The agent reads its listings as it listed them or last changed them
-  (`etsy_listing`) and proposes a change with `propose_etsy_edit`: a new title,
+  (`etsy_listing`; since 0.40.1 with the quality critic's newest check of the
+  listing: its day, score and fixes, and whether the listing changed since)
+  and proposes a change with `propose_etsy_edit`: a new title,
   description, price, tags or category, or a new set of photos or of the files
   buyers download. The approval card shows each change next to what it
   replaces, and the new photos.
@@ -2934,7 +2951,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.40.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.40.1 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3013,6 +3030,24 @@ own account. Ember never logs in to Amazon or reads its pages.
   its **Page check**: the pages drawn, the agent's words and what Ember's code
   found wrong in the dates or a missing AI line. An ebook has no fixed pages
   and needs none.
+- **Which pages, and which file** (0.40.1, the analysis of 0.40.0): past 6
+  kinds of page, a check draws the kind most of the book is first (every week of
+  a planner), then the pages where something was measured, the other kinds of
+  more than one page, the AI line's page and the last page. The Haushaltsbuch has
+  10 kinds, and 0.40.0 drew its title, the year's pages, a month's two and the
+  AI line's page: never a week, 53 of its 84 pages. A page of writing lines
+  with the AI line under them no longer counts as holding "little else".
+  Ember's code keeps which file each PDF `make_document` makes was made from
+  (in its database, not in the PDF, which goes to buyers and to KDP as it is),
+  and the check says so: "Made with make_document from books/…-v18.md (unchanged
+  since)", or that the file changed since and needs making again. It also names a
+  newer PDF of the same book in the folder (made from the same file, or named
+  the same but for its version): the spec still named v15.pdf, the book you
+  rejected, while v19 to v22 had been made since, and each cycle on the book
+  spent its first steps finding out which file was the book. A cycle's work
+  conversation holds 96,000 bytes (64,000 until 0.40.1), room for two checks of
+  six pages each: four of the five cycles on the book before 0.40.0 ended at
+  64,000 without proposing it.
 - KDP lets an account create at most 2 new titles of each format a week
   (since September 2026). Ember's code holds the agent to that: it can't
   propose a third ebook or paperback within 7 days (rejected, withdrawn,
@@ -3045,8 +3080,10 @@ next plan would see, the latest wake cycles with every model call, what the
 model wrote and every tool call (texts whole), research, the agent's records
 (journal entries, approvals, ventures, the roadmap, the plan tree with its
 picks and its weights' settings, listings, memory and the workspace's text
-files), the mailbox (its status, its emails and the sends) and recent events.
-Use **Copy** to paste it into a bug report or a chat.
+files; since 0.40.1 a file longer than 20,000 characters shows its start and
+its end, with how much is left out between them), the mailbox (its status, its
+emails and the sends) and recent events. Use **Copy** to paste it into a bug
+report or a chat.
 
 The report is **shareable** by default: it leaves out other people's text (the
 emails the agent read, the web pages it researched and the emails it wrote to

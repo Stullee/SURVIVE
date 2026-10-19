@@ -24,7 +24,7 @@ from app.products import site
 from tests.test_agent import make_agent, rows
 from tests.test_anthropic_transport import BLOCK, REQUEST, START, Server, error, sse, stream, transport
 from tests.test_autonomy import request_for
-from tests.test_decision_wakes import asks_and_sleeps
+from tests.test_decision_wakes import QUIET_REJECTION, asks_and_sleeps
 from tests.test_loop_shapes import run
 from tests.test_money_goal import call
 from tests.test_owner_loop import owner
@@ -150,7 +150,7 @@ def test_a_server_error_before_the_stream_is_rejected(status: int) -> None:
 
 
 def test_the_owners_last_decision_lifts_the_sleep_cut(data_dir: Path) -> None:
-    agent, _ = make_agent(data_dir, asks_and_sleeps(720))
+    agent, _ = make_agent(data_dir, asks_and_sleeps(720), QUIET_REJECTION)  # 0.40.1: the cut needs it
     assert agent.run_cycle("schedule").status == "completed"
     ended = agent.clock.now()
     fields = agent.agent_fields()
@@ -166,7 +166,7 @@ def test_the_owners_last_decision_lifts_the_sleep_cut(data_dir: Path) -> None:
 
 
 def test_the_cut_stays_while_a_request_waits_or_the_wake_changed(data_dir: Path) -> None:
-    agent, _ = make_agent(data_dir, asks_and_sleeps(720))
+    agent, _ = make_agent(data_dir, asks_and_sleeps(720), QUIET_REJECTION)  # 0.40.1: the cut needs it
     assert agent.run_cycle("schedule").status == "completed"
     cut = agent.agent_fields()["next_wake_at"]
     agent.lift_sleep_cut()  # the request still waits

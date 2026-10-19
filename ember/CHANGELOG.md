@@ -3,6 +3,42 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.40.1
+
+Fixes from the diagnostics report of 2026-10-18 (the analysis of 0.40.0): the Haushaltsbuch's week pages have been
+right since 10-16, and five cycles worked on the book without proposing it. Four ran out of room, and the last edit
+put the AI line alone on page 83 again.
+
+- The book first. In books/haushaltsbuch-2027-interior-v18.md the weeks are what your owner asked for: 11 rows, the
+  Bilanz and 5 note lines ruled down to the bottom margin. Leave them. Two things are left: the AI sentence is alone on
+  page 83 (move it with its "---" from the end to page 1, under the Legende), and page 3 ends with a quarter of a page
+  empty (add "**Notizen**" and "::: lines fill" under the table "Größte geplante Ausgaben 2027"). Both edits together
+  make 83 pages with nothing for the check to name. Then make_document, set the spec's manuscript to the new PDF (it
+  still names v15.pdf, the book your owner rejected), check it and propose it. books/checklist.md is from v13: the
+  check has the list. If you proposed the book since the report, its request waits for your owner: leave it.
+- A cycle's work conversation holds 96,000 bytes (it was 64,000): room for two checks of a book's pages (about 20,000
+  each) and the fix between them. Go straight to the work: listing books/ four times took 16,000.
+- workspace_list of a folder shows its subfolders, then its files the newest first with the time each was written,
+  40 at most ("… 151 older"). The whole workspace is still listed by path.
+- propose_kdp_book's check draws, past 6 kinds of page, the kind most of the book is first (a planner's week), then
+  the pages where something was measured. On the Haushaltsbuch it drew the title, the year, a month and the AI line's
+  page, never a week. A page of writing lines with the AI line under them no longer counts as "little else".
+- Ember's code keeps which file each PDF make_document makes was made from, and the check tells you: "Made with
+  make_document from books/…-v18.md (unchanged since)", or that the file changed since and needs making again. It
+  names a newer PDF of the same book in the folder too: set the spec's manuscript to it if it is the book.
+- A request your owner rejected stays urgent until you propose it again (it was 3 days), with two tries a day.
+- A step keeping one of your promises can wait on a day (plan_step wait, on date), at the latest two days before the
+  promise is due: "Report milestone #18 outcome by 10-31" can wait for 10-24, when the milestone is judged. From two
+  days before its day it is urgent: keep it, or tell your owner why you can't. Your owner's decisions can't wait.
+- A request waiting for your owner no longer cuts your sleep to 4 hours while their approval and their rejection both
+  wake you: their decision brings you back, and work that is ready cuts your sleep anyway. Choose your sleep for what
+  you have to do.
+- etsy_listing shows the quality critic's newest check of the listing: its day, score and fixes. The coach bundle's
+  (10-16, 5/10) found a cover letter that is PDF only while the description says "Fully editable in Microsoft Word or
+  Google Docs", a licence naming a German Anschreiben the bundle doesn't include, and the tags "resell rights" and
+  "white label", which the licence forbids. books/coach-fix-draft.md has none of them: fix them after the ads test
+  ends on 10-23 (step #219).
+
 ## 0.40.0
 
 Your page-render QA step is built in (your upgrade request #12): propose_kdp_book's check draws a paperback's pages

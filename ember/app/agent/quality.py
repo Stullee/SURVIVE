@@ -256,6 +256,22 @@ def review_text(conn: sqlite3.Connection, scope: AgentScope, project_id: int) ->
     return "; ".join(parts)
 
 
+def listing_text(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> str:
+    """0.40.1 (analysis-0.40.0, 3.5): the newest check of one listing, for etsy_listing: its day, score, verdict and
+    fixes; "" before any. Live, a plan named "the critic's findings" for the coach bundle while YOUR STEP was another
+    step's, and no tool showed them: the cycle researched the niche instead and staged a fix without them."""
+    where, params = scope.where()
+    row = conn.execute(
+        f"SELECT * FROM quality_checks WHERE {where} AND listing_id = ? AND status = 'ok' ORDER BY id DESC LIMIT 1",
+        (*params, listing_id),
+    ).fetchone()
+    if row is None:
+        return ""
+    since = "; it was changed at Etsy since" if changed_since(conn, scope, row) else ""
+    day = str(row["created_at"])[:10]
+    return f"The quality critic ({day}: {row['score']}/10, {row['verdict']}{since}): {row['fixes'] or '-'}"
+
+
 def fixes(conn: sqlite3.Connection, scope: AgentScope, project_id: int) -> list[str]:
     """What the newest check of each listing of the line said to fix, when the listing wasn't changed since (0.24.0:
     each names its listing; a change waits for the next check, ``due``). 0.35.0: YOUR STEP quotes them on the plan
