@@ -6,6 +6,8 @@ dev/data-local/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.coverage
+.coverage.*
 .ruff_cache/
 .venv/
 venv/
