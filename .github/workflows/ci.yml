@@ -3,6 +3,10 @@ name: CI
 on:
   push:
   pull_request:
+  # 0.40.3: once a week on the default branch too, so a test that fails on a date shows before a release needs CI
+  # (a test failed from 2026-10-28 on, analysis-0.40.1's codebase analysis, X1).
+  schedule:
+    - cron: "17 4 * * 1"
 
 permissions:
   contents: read
@@ -10,6 +14,7 @@ permissions:
 jobs:
   test:
     name: Tests and lint
+    timeout-minutes: 45
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -27,6 +32,7 @@ jobs:
 
   secrets:
     name: Secret scan
+    timeout-minutes: 20
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -45,6 +51,7 @@ jobs:
 
   image:
     name: Build and smoke-test image (${{ matrix.platform }})
+    timeout-minutes: 90
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false

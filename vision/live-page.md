@@ -1,6 +1,10 @@
 # Vision: follow Ember live on the owner's website
 
-*Draft, 2026-10-01, written against 0.15.0. Nothing here is built yet.*
+*Draft, 2026-10-01, written against 0.15.0. Built in 0.16.0 (`integrations/live_view.py`, `products/live.py`): the
+scoreboard, the curve, what it is doing, the record, the memorial with its approved last will, the staleness line and
+the kill switch stopping uploads. Not built (as of 0.40.3): `live.json`, the public diary, the archive of past lives,
+the page's views as a metric, a one-click take-down in the dashboard, and uploads triggered by events rather than
+the 15-minute schedule.*
 
 ## The idea in one paragraph
 

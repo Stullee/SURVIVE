@@ -115,7 +115,7 @@ into sub-goals, this month's milestones and this week's steps; every milestone
 shows how far it got (by its metric, or by the steps that lead to it) and
 whether it keeps its pace, on the Roadmap tab's goal tree and in every plan. Until
 you set one, the money goal Ember's code keeps stands in for it. See the
-[Roadmap section of the docs](ember/DOCS.md#roadmap).
+[Plan section of the docs](ember/DOCS.md#plan) (the Roadmap tab became the Plan tab in 0.35.0).
 
 0.30.0 gives Ember a plan she keeps and a playbook that grows. The list her plans
 take a line from put the line worked on longest ago first, so nearly every cycle
@@ -519,9 +519,9 @@ Both the planner and the worker default to `claude-sonnet-5`. For better
 business decisions, plan with `claude-opus-5-5` and keep the worker on Sonnet 5
 (see [Choosing models](ember/DOCS.md#choosing-models)). The spec suggested
 Haiku 4.5 as a cheaper worker; to use it (or any other model), add its prices to
-the price table and set `worker_model`. Haiku 4.5 is not deprecated as of
-2026-09-27: Anthropic lists its retirement as "not sooner than 2026-10-15" and
-gives at least 60 days' notice before retiring a model.
+the price table and set `worker_model`. Check Anthropic's model deprecations page
+before relying on any model: Anthropic gives at least 60 days' notice before it
+retires one.
 
 ## Home Assistant sensors
 
