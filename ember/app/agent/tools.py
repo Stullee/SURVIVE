@@ -312,7 +312,10 @@ class Field:
     enum: tuple[str, ...] = ()
     minimum: int | None = None
     maximum: int | None = None
-    cut: bool = False  # too long: cut to max_len with a note instead of refusing (for notes, not content)
+    # too long: cut to max_len with a note instead of refusing. 0.41.0 (analysis-0.40.1 codebase, 5.5): every note for
+    # Ember or its owner that loses little when cut (a reason, a title, a theme); what goes to buyers or outside, a
+    # file, a path, an id or a brief refuses (tests/test_tool_limits.py classifies each field)
+    cut: bool = False
     remedy: str = ""  # 0.15.0: what to do when it is too long, said in the refusal
     items: tuple[tuple[str, Field], ...] = ()  # an array's objects: their fields, in order
     exact: bool = False  # 0.40.3: its spaces and line breaks are its text (an edit's find and content), even alone
@@ -489,7 +492,8 @@ SPECS: dict[str, Spec] = {
                     "add, split, replace: the new steps, in order.",
                     plan.MAX_NEW_STEPS,
                     {
-                        "title": _s("A small concrete step.", plan.TITLE_CHARS),
+                        # 0.41.0 (analysis-0.40.1 codebase, 5.5): cut, not refused (live, 185 of 120 cost a step)
+                        "title": _s("A small concrete step.", plan.TITLE_CHARS, cut=True),
                         # 0.39.2: live, a step to send pins was added as "ship": an ordinary cycle took it, and that
                         # has no propose_pin (analysis-0.39.1, 3.4)
                         "kind": _s(
@@ -636,7 +640,10 @@ SPECS: dict[str, Spec] = {
             "from a venture or give a theme; leave both out for anything.",
             {
                 "venture_id": _i("Branch the new ideas from this venture.", required=False),
-                "theme": _s("A market, a customer group, a problem or a skill to think about.", 300, required=False),
+                # 0.41.0 (analysis-0.40.1 codebase, 5.5): cut, not refused (live, 471 of 300 cost a step)
+                "theme": _s(
+                    "A market, a customer group, a problem or a skill to think about.", 300, required=False, cut=True
+                ),
             },
             per_cycle=1,
         ),
@@ -667,7 +674,7 @@ SPECS: dict[str, Spec] = {
                 "due": _s("A new date, YYYY-MM-DD.", 10, required=False),
                 "note": _s("Progress, or why the date moved.", roadmap.NOTE_CHARS, required=False, cut=True),
                 "wait_for": _s(
-                    "What it waits for, with check_at; 'nothing' ends it.", roadmap.WAIT_CHARS, required=False
+                    "What it waits for, with check_at; 'nothing' ends it.", roadmap.WAIT_CHARS, required=False, cut=True
                 ),
                 "check_at": _s(f"YYYY-MM-DD to check again, within {roadmap.WAIT_DAYS} days.", 10, required=False),
                 "parent_id": _i("Link it to this milestone.", required=False),
@@ -683,14 +690,14 @@ SPECS: dict[str, Spec] = {
             "AI wherever your work reaches people, and flag legal points (German owner: Impressum, GDPR, taxes).",
             {
                 "type": _s("", 20, enum=APPROVAL_TYPES),
-                "title": _s("Short title.", 120),
+                "title": _s("Short title.", 120, cut=True),
                 "description": _s("What, why, and what your owner has to do.", 2_000),
                 "payload": _s(
                     "The exact content (text, listing, amounts); a longer text: its workspace file.",
                     ONE_REPLY_CHARS,
                 ),
                 "expected_cost": _s("In words, e.g. 'about 5 EUR a month'.", 300),
-                "expected_benefit": _s("In words.", 300),
+                "expected_benefit": _s("In words.", 300, cut=True),
                 "project_id": _i("The project this belongs to, if any.", required=False),
             },
             per_cycle=3,
@@ -719,7 +726,9 @@ SPECS: dict[str, Spec] = {
                     200,
                     required=False,
                 ),
-                "commits": _s("What it promises to do or send later.", obligations.WHAT_CHARS, required=False),
+                "commits": _s(
+                    "What it promises to do or send later.", obligations.WHAT_CHARS, required=False, cut=True
+                ),
                 "due": _s(
                     f"YYYY-MM-DD the promise is due, within {obligations.PROMISE_DAYS} days.", 10, required=False
                 ),
@@ -745,7 +754,7 @@ SPECS: dict[str, Spec] = {
             "money, or your owner would otherwise do work for you. Say what is missing, what you would do with it "
             "and what it could earn.",
             {
-                "title": _s("Short title.", 120),
+                "title": _s("Short title.", 120, cut=True),
                 "problem": _s("What limits you today, and what it costs you.", 600, cut=True),
                 "proposed_change": _s("The ability or change you need.", 600, cut=True),
                 "expected_benefit": _s("What you would do with it and what it could earn.", 600, cut=True),
@@ -956,14 +965,14 @@ SPECS: dict[str, Spec] = {
         Spec(
             "mark_opt_out",
             "Never email the sender of an email again: when it asks for that in words Ember's code missed. Free.",
-            {"email_id": _i("The email that asks."), "reason": _s("What it asks, briefly.", 200)},
+            {"email_id": _i("The email that asks."), "reason": _s("What it asks, briefly.", 200, cut=True)},
             per_cycle=5,
             reflect=True,
         ),
         Spec(
             "inquiry_done",
             "Close a person's email that needs no answer (OBLIGATIONS lists those waiting): a thank-you, spam. Free.",
-            {"email_id": _i(""), "reason": _s("Why it needs no answer.", 200)},
+            {"email_id": _i(""), "reason": _s("Why it needs no answer.", 200, cut=True)},
             per_cycle=5,
         ),
         Spec(
@@ -1885,14 +1894,13 @@ def skip(
 # 0.19.2: a call's next text written inside the one before it, as the model's own markup ("...</entry>\n<parameter
 # name="next">..."): live, five journals kept their handoff inside the entry, and the next plan had none.
 _LEAKED = re.compile(r'<parameter name="([a-z_]{1,40})">')
-_CLOSING = re.compile(r"(?:\s*</[a-z_:]{1,40}>)+\s*$", re.IGNORECASE)
 # 0.24.0: another tool's whole call written inside a text, its last field's text beside this call's fields:
 # '...</entry>\n<parameter name="next">...</parameter>\n</invoke>\n<invoke name="memory_update">\n<parameter
 # name="file">lessons', with "content" and "mode" given as if they were this call's. Live, two reflections lost their
 # journal to it ("unknown field 'content'", "unknown field 'next_step'"), with the lessons or the project update in it.
 _INVOKE = re.compile(r'</invoke>\s*<invoke name="([a-z_]{1,40})">', re.IGNORECASE)
 # 0.40.3 (analysis-0.40.1 codebase, T1): a closing tag inside a field's text (its own closes it, at its end), and one
-# that ends a text (searched in its last 43 characters: _CLOSING searched in a long text takes its length squared)
+# that ends a text (searched in its last 43 characters, the longest a closing tag is: _unclosed)
 _CLOSED = re.compile(r"</[a-z_:]{1,40}>", re.IGNORECASE)
 _CLOSED_END = re.compile(r"</[a-z_:]{1,40}>\Z", re.IGNORECASE)
 # 0.39.4: why a call taken out of a journal that doesn't only read isn't run (run). The model can tell its own call from
@@ -1927,9 +1935,9 @@ def unleaked(spec: Spec, raw: Any, notes: list[str], leaked: list[tuple[str, dic
             or not _slipped(value, marks)
         ):
             continue
-        fixed[name] = _CLOSING.sub("", value[: marks[0].start()]).rstrip()
+        fixed[name] = _unclosed(value[: marks[0].start()]).rstrip()
         for mark, after in zip(marks, [*marks[1:], None], strict=True):
-            text = _CLOSING.sub("", value[mark.end() : after.start() if after else len(value)]).strip()
+            text = _unclosed(value[mark.end() : after.start() if after else len(value)]).strip()
             given = raw.get(mark[1])
             if text and not (isinstance(given, str) and given.strip()):
                 fixed[mark[1]] = text
@@ -1947,9 +1955,24 @@ def _slipped(value: str, marks: list[re.Match[str]]) -> bool:
         before = value[: mark.start()].rstrip()
         if not _CLOSED_END.search(before[-43:]) or _inside(before):
             return False
-        if _CLOSED.search(_CLOSING.sub("", value[mark.end() : after.start() if after else len(value)])):
+        if _CLOSED.search(_unclosed(value[mark.end() : after.start() if after else len(value)])):
             return False
     return True
+
+
+def _unclosed(text: str) -> str:
+    """0.41.0 (analysis-0.40.1 codebase, 9): ``text`` without the closing tags at its end and the spaces before them
+    ('...</entry>\\n</parameter>\\n'), or as it is when it ends in none, in linear time. The pattern that took them off
+    (0.19.2) was tried at each position of a run of spaces, which takes the run's length squared: 20,000 spaces after
+    a field's mark took 0.6 s, and a journal's raw input is read before its lengths are checked."""
+    end, found = len(text), False
+    while True:
+        while end and text[end - 1].isspace():
+            end -= 1
+        tag = _CLOSED_END.search(text, max(0, end - 43), end)
+        if tag is None:
+            return text[:end] if found else text
+        end, found = tag.start(), True
 
 
 def _inside(text: str) -> bool:
@@ -1981,7 +2004,7 @@ def _take_out(
         # 0.39.4: a call with no field written after it (all beside the journal's, or none) failed the journal
         for mark, after in zip(marks, [*marks[1:], None] if marks else [], strict=True):
             if mark[1] in other.fields:
-                call[mark[1]] = _CLOSING.sub("", tail[mark.end() : after.start() if after else len(tail)]).strip()
+                call[mark[1]] = _unclosed(tail[mark.end() : after.start() if after else len(tail)]).strip()
         for key in raw:
             if key not in spec.fields and key in other.fields:
                 call[key] = fixed.pop(key)
@@ -2052,8 +2075,9 @@ def _checked(fields: dict[str, Field], raw: Any, notes: list[str] | None, where:
                     # 0.39.1: and how much to cut (live, commits of 101 characters was refused, and a lesson kept)
                     over = f"(cut {len(value) - f.max_len:,})"
                     raise ToolError(f"{name} is too long: {len(value):,} of {f.max_len:,} characters {over}{remedy}")
-                if notes is not None:
-                    notes.append(f"{name} was cut to {f.max_len:,} of its {len(value):,} characters")
+                if notes is not None:  # 0.41.0: an item's text says which item ("steps item 2's title")
+                    named = f"{where}'s {name}" if where else name
+                    notes.append(f"{named} was cut to {f.max_len:,} of its {len(value):,} characters")
                 value = value[: f.max_len - 1].rstrip() + "…"
             if f.enum and value not in f.enum:
                 raise ToolError(f"{name} must be one of {', '.join(f.enum)}")
@@ -5852,7 +5876,8 @@ def _propose_kdp_book(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     reason = " ".join(str(spec.get("reason") or "").split())
     if not reason:
         raise ToolError(f"{path} needs reason: why this book, for your owner")
-    page_check = _page_check(ctx, book, args.get("qa")) if book.format == "paperback" else ""
+    page_check = _page_check(ctx, book, args.get("qa"), notes) if book.format == "paperback" else ""
+    noted = "".join(f" Note: {note}." for note in notes)  # 0.41.0: with a qa cut to its length
     with ctx.db.transaction() as conn:
         project_id = _product_line(ctx, conn, spec, "book")
         _refuse(ctx, conn, preconditions.KDP_WEEK, form=book.format)  # 0.25.0; 0.41.0: the plan waits on it too
@@ -5918,7 +5943,8 @@ def _draw_pages(ctx: ToolContext, spec: dict[str, Any], book: kdp.Book, pages: s
     tail = (
         f"Check on these pictures (pages: '45, 47' draws others): {listed}\n"
         "Nothing went to your owner. Propose it with check false in a later reply of this cycle, with qa: what you "
-        "saw, point by point (your owner reads it). Once the file changes, check it again."
+        f"saw, point by point (your owner reads it; {QA_CHARS:,} characters are kept). Once the file changes, check it "
+        "again."
     )
     # what is measured gives way first: the check's own text and the cover's come before it in the result
     room = MAX_RESULT_CHARS - DRAWN_ROOM - len(head) - len(tail)
@@ -6001,10 +6027,11 @@ def _book_stem(path: str) -> str:
     return re.sub(r"[-_.]?v?\d+$", "", name, flags=re.IGNORECASE)
 
 
-def _page_check(ctx: ToolContext, book: kdp.Book, qa: Any) -> str:
+def _page_check(ctx: ToolContext, book: kdp.Book, qa: Any, notes: list[str]) -> str:
     """0.40.0 (upgrade request #12): a paperback goes to the owner only after a check drew its interior's pages, of
     the same file, in an earlier reply of this cycle (one in the same reply hadn't reached the model when it wrote the
-    proposal), with qa: what the agent saw on them. The owner reads qa on the request, with what Ember's code found."""
+    proposal), with qa: what the agent saw on them. The owner reads qa on the request, with what Ember's code found
+    (0.41.0: a longer qa cut to QA_CHARS, said in ``notes``)."""
     path = book.manuscript.path
     drawn = ctx.state.drawn.get(path)
     if drawn is None:
@@ -6026,8 +6053,12 @@ def _page_check(ctx: ToolContext, book: kdp.Book, qa: Any) -> str:
             " take the sentence out, make it again and check it; a book never prints [words in brackets]"
         )
     said = " ".join(str(qa or "").split())
+    # 0.41.0 (analysis-0.40.1 codebase, 5.5): cut, not refused. Live, qa of 1,605 and 909 characters were refused: each
+    # cost a step of the cycle whose check it needs, and three cycles that day ended at their last step. It is the
+    # agent's own account for its owner, who checks the files before approving, beside what Ember's code found.
     if len(said) > QA_CHARS:
-        raise ToolError(f"qa has {len(said):,} characters: say what you saw in at most {QA_CHARS:,}")
+        notes.append(f"qa was cut to {QA_CHARS:,} of its {len(said):,} characters on your owner's request")
+        said = _cut(said, QA_CHARS)
     if len(said.split()) < QA_WORDS:
         raise ToolError(
             f"qa says what you saw on its fresh pages, point by point of the check's list (at least {QA_WORDS} "

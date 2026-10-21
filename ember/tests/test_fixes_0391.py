@@ -570,5 +570,8 @@ def test_a_promise_still_needs_its_day_and_a_text_too_long_says_how_much_to_cut(
         ctx, "message_owner", {"text": "The book comes.", "commits": "None of the pins wait: the book first"}
     )
     assert not undated.ok and "a promise needs both" in undated.text  # "none" alone, or before a dash, is none
-    long = call(ctx, "message_owner", {"text": "Soon.", "commits": "x" * 101, "due": agent.clock.today().isoformat()})
-    assert not long.ok and "commits is too long: 101 of 100 characters (cut 1)" in long.text
+    long = call(ctx, "message_owner", {"text": "x" * 2_001})
+    assert not long.ok and "text is too long: 2,001 of 2,000 characters (cut 1)" in long.text
+    # 0.41.0 (test_tool_limits.py): a promise's commits, a note OBLIGATIONS shows cut anyway, is cut, not refused
+    cut = call(ctx, "message_owner", {"text": "Soon.", "commits": "x" * 101, "due": agent.clock.today().isoformat()})
+    assert cut.ok and "commits was cut to 100 of its 101 characters" in cut.text

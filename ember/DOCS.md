@@ -3113,7 +3113,8 @@ own account. Ember never logs in to Amazon or reads its pages.
   request you rejected or approved with changes, or your note on one KDP
   refused. The agent proposes a paperback only in a later reply of the same
   cycle as a check of that very file, with `qa`: what it saw on the pages,
-  point by point. A check from an earlier cycle, or of the file before it
+  point by point (since 0.41.0, a longer one is cut to 900 characters, not
+  refused). A check from an earlier cycle, or of the file before it
   changed, doesn't count: twice the Haushaltsbuch went back to you on pictures
   of an older version or a checklist passed days before. The request shows you
   its **Page check**: the pages drawn, the agent's words and what Ember's code
@@ -3136,7 +3137,9 @@ own account. Ember never logs in to Amazon or reads its pages.
   spent its first steps finding out which file was the book. A cycle's work
   conversation holds 96,000 bytes (64,000 until 0.40.1), room for two checks of
   six pages each: four of the five cycles on the book before 0.40.0 ended at
-  64,000 without proposing it.
+  64,000 without proposing it. Since 0.41.0 each work step is told how much of
+  it is used ("Room: 61 of 96 KB of this cycle's conversation used."), with a
+  warning from three quarters on.
 - **Placeholders** (0.40.2, the analysis of 0.40.1): the check finds words in
   square brackets ("[Verlag/Herausgeber]", "[Name]"; not a box to tick, `[ ]` or
   `[x]`, nor a note's number, `[1]`), "Lorem ipsum" and TODO on the pages, and the

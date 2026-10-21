@@ -257,8 +257,7 @@ def test_a_paperback_is_proposed_only_after_a_check_drew_its_pages_in_an_earlier
     next_reply(ctx)
     thin = propose(ctx, path, "Looks good, all fixed.")
     assert not thin.ok and f"point by point of the check's list (at least {tools.QA_WORDS} words)" in thin.text
-    long = propose(ctx, path, "Alles gut. " * 100)
-    assert not long.ok and f"say what you saw in at most {tools.QA_CHARS:,}" in long.text
+    # 0.41.0: a longer qa is cut, not refused (test_tool_limits.py)
     assert rows(agent, "SELECT COUNT(*) AS n FROM approvals WHERE executor = 'kdp_package'")[0]["n"] == 0
     other = check(ctx, path, pages="10")  # another page of the same file: the pages seen add up
     assert len(other.pictures) == 1 and "(24 pages): 10, shown below." in other.text
