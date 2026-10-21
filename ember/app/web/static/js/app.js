@@ -5035,14 +5035,42 @@
     ]);
     var preview = ready ? h("a", { class: "btn", href: "api/site/preview/index.html", target: "_blank", rel: "noopener", text: "Preview" }) : null;
     var download = h("button", { type: "button", class: "btn btn-primary", text: "Download (zip)", disabled: !ready });
+    // 0.40.3 (analysis-0.40.1, W3): the zip is fetched and saved here, then the download is recorded with a POST of
+    // the version it holds (the GET records nothing: a prefetch or a second tab counted as a download).
     download.addEventListener("click", function () {
-      var link = h("a", { href: "api/site/download", download: "website.zip", hidden: true });
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      setStatusText("site-status", "Downloading website.zip (check your downloads). Upload its files to your host.", "ok");
-      download.blur();  // the card shows the download once the dashboard has it (a focused button holds the card)
-      window.setTimeout(refresh, 3000);
+      var saved = false;
+      download.disabled = true;
+      setStatusText("site-status", "Downloading website.zip…", "");
+      fetch("api/site/download", { cache: "no-store", credentials: "same-origin" }).then(function (response) {
+        if (!response.ok) {
+          return response.text().then(function (text) {
+            var data = null;
+            try { data = JSON.parse(text); } catch (e) { data = null; }
+            throw new RequestError("http", isObject(data) && typeof data.error === "string" ? data.error : "HTTP " + response.status, response.status);
+          });
+        }
+        var version = response.headers.get("x-ember-site-version") || "";
+        return response.blob().then(function (blob) {
+          var url = window.URL.createObjectURL(blob);
+          var link = h("a", { href: url, download: "website.zip", hidden: true });
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          window.setTimeout(function () { window.URL.revokeObjectURL(url); }, 60000);
+          saved = true;
+          return request("POST", "api/site/download", { version: version });
+        });
+      }).then(function (res) {
+        if (!res.ok) throw httpError(res);
+        setStatusText("site-status", "Saved website.zip (check your downloads). Upload its files to your host.", "ok");
+      }).catch(function (err) {
+        if (!(err instanceof RequestError)) console.error(err);
+        setStatusText("site-status", (saved ? "Saved website.zip, but Ember didn't record the download: " : "The download didn't work: ") + errorText(err), "error");
+      }).then(function () {
+        download.disabled = false;
+        download.blur();  // the card shows the download once the dashboard has it (a focused button holds the card)
+        window.setTimeout(refresh, 3000);
+      });
     });
     replace($("site-actions"), [h("div", { class: "form-actions" }, preview, download), h("p", { class: "form-status", id: "site-status", role: "status" })]);
     replace($("site-pages"), pages.length ? h("div", { class: "table-wrap" }, h("table", null,

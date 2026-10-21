@@ -24,6 +24,7 @@ import json
 import os
 import platform
 import re
+import secrets
 import sys
 import textwrap
 from collections.abc import Callable
@@ -217,6 +218,10 @@ NOT_INSTRUCTIONS = (
     " AI agent that reads emails and web pages."
 )
 _MASK: contextvars.ContextVar[privacy.Masker | None] = contextvars.ContextVar("diagnostics_mask", default=None)
+# 0.40.3 (analysis-0.40.1, W1): this report's mark of a text masked before its cut (_masked), which its section doesn't
+# mask again: every text was masked twice, as a cell and in its section. A text the agent or a sender wrote can't
+# carry the mark: it is new for each report.
+_MARK: contextvars.ContextVar[str] = contextvars.ContextVar("diagnostics_mark", default="")
 _HEADING = re.compile(r"^(## )", re.MULTILINE)  # a line that could pose as a section of the report
 _USER_ID = re.compile(r"[0-9a-f]{32}\b")  # a Home Assistant user ID
 _LABEL = re.compile(r"(.{1,25}?) \(([0-9a-f]{32})\)")  # how web._owner labels a user's action: "name (user ID)"
@@ -228,9 +233,11 @@ _REPLIED = re.compile(r'(replied|wrote) "(.*?)"?', re.DOTALL)  # an opt-out in t
 def report(state: AppState, *, full: bool = False) -> str:
     """The report: shareable, or with other people's text when ``full`` (the owner's own eyes only)."""
     token = _MASK.set(_masker(state, full))
+    mark = _MARK.set(secrets.token_hex(8))
     try:
         return _report(state, full)
     finally:
+        _MARK.reset(mark)
         _MASK.reset(token)
 
 
@@ -243,6 +250,8 @@ def _masker(state: AppState, full: bool) -> privacy.Masker:
             others = {} if full else {**_others(conn, own), **_owners(conn, state.loaded.settings.owner_user_ids)}
     except Exception:  # noqa: BLE001 - no database (see DATABASE): nothing was removed that could be found
         redactor, others = privacy.Redactor(), {}
+    if not full:
+        others.update(_personal(state.loaded.settings))
     return privacy.Masker(own, redactor, full, others)
 
 
@@ -342,10 +351,40 @@ def _mask(text: str) -> str:
 
 def _section(body: str, budget: int) -> str:
     """A section's text: masked, its lines that start like a heading moved in by a space, within its budget."""
-    body = _HEADING.sub(r" \1", _mask(body))
+    body = _HEADING.sub(r" \1", _unmarked(body))
     if len(body) <= budget:
         return body
     return body[:budget] + f"\n… [section cut: its budget is {budget:,} characters]"
+
+
+def _masked(text: str) -> str:
+    """0.40.3 (analysis-0.40.1, W1): a masked text, marked so its section doesn't mask it again (a cell, a table of
+    them, a file): without the marks of the masked texts in it, which one mark covers."""
+    marks = _marks()
+    if marks is None:
+        return text
+    start, end = marks
+    return f"{start}{text.replace(start, '').replace(end, '')}{end}"
+
+
+def _unmarked(body: str) -> str:
+    """A section's text masked: what isn't marked as masked (_masked), and without the marks."""
+    marks = _marks()
+    if marks is None:
+        return _mask(body)
+    start, end = marks
+    parts = body.split(start)
+    shown = [_mask(parts[0])]
+    for part in parts[1:]:  # each begins with a masked text
+        masked, found, rest = part.partition(end)
+        shown.append(masked + _mask(rest) if found else _mask(part))
+    return "".join(shown)
+
+
+def _marks() -> tuple[str, str] | None:
+    """Where a masked text begins and ends in this report (a private-use character and the report's mark), or None."""
+    mark = _MARK.get()
+    return (f"\ue000{mark}", f"\ue001{mark}") if mark else None
 
 
 def _json(value: Any) -> str:
@@ -360,7 +399,7 @@ def _rows(rows: list[Any], columns: list[str]) -> str:
         lines.append(
             " | ".join(_cell(row[c], WIDE_COLUMNS.get(c, CELL_CHARS), tail=c in TAIL_COLUMNS) for c in columns)
         )
-    return "\n".join(lines)
+    return _masked("\n".join(lines))  # 0.40.3: its cells are, and the rest is the columns' names
 
 
 def _cell(value: Any, chars: int = CELL_CHARS, *, tail: bool = False) -> str:
@@ -373,8 +412,8 @@ def _cut(text: str, chars: int, *, tail: bool = False) -> str:
     """At most ``chars`` characters (the last ones with ``tail``), masked first so no part of a secret is left."""
     text = _mask(text)
     if len(text) <= chars:
-        return text
-    return "…" + text[1 - chars :] if tail else text[: chars - 1] + "…"
+        return _masked(text)
+    return _masked("…" + text[1 - chars :] if tail else text[: chars - 1] + "…")
 
 
 def _ends(text: str, chars: int) -> str:
@@ -382,10 +421,10 @@ def _ends(text: str, chars: int) -> str:
     how much is left out between them."""
     text = _mask(text)
     if len(text) <= chars:
-        return text
+        return _masked(text)
     end = int(chars * WORKSPACE_FILE_END)
     start = chars - end
-    return f"{text[:start]}\n… [{len(text) - start - end:,} characters left out] …\n{text[-end:]}"
+    return _masked(f"{text[:start]}\n… [{len(text) - start - end:,} characters left out] …\n{text[-end:]}")
 
 
 def _block(text: str, indent: str = "    ") -> str:
@@ -443,7 +482,38 @@ PERSONAL_OPTIONS = (
     "site_phone",
     "site_vat_id",
     "kdp_author",  # 0.25.0: the author name of the owner's books (theirs, or a pen name)
+    "blog_sftp_user",  # 0.40.3 (analysis-0.40.1, W2): the login at their host, and the folder, often named after them
+    "blog_sftp_folder",
 )
+# 0.40.3 (analysis-0.40.1, W2): what the shareable report shows instead of these options' values wherever they are
+# written (a KDP request's payload named the author: "Author: ...", the blog's state the SFTP user and folder). A value
+# of one ordinary word (the live author was "Ember") or of fewer than 5 characters only after the label Ember's code
+# writes it with: everywhere, it would replace that word in every text.
+PERSONAL_SHOWN = {
+    "email_owner_name": ("[the owner's name]", ()),
+    "site_owner_name": ("[the owner's name]", ()),
+    "site_address": ("[the owner's address]", ()),
+    "site_email": ("[the owner's email address]", ()),
+    "site_phone": ("[the owner's phone number]", ()),
+    "site_vat_id": ("[the owner's VAT ID]", ()),
+    "kdp_author": ("[the author's name]", (("Author: ", ""),)),  # kdp.payload
+    "blog_sftp_user": ("[the SFTP user]", (('"user": "', '"'),)),  # Agent.integrations()["blog"]
+    "blog_sftp_folder": ("[the SFTP folder]", (('"folder": "', '"'),)),
+}
+
+
+def _personal(settings: Any) -> dict[str, str]:
+    """The owner's personal options' values (PERSONAL_SHOWN) and what the shareable report shows instead."""
+    shown: dict[str, str] = {}
+    for key, (instead, labels) in PERSONAL_SHOWN.items():
+        value = str(getattr(settings, key, "") or "").strip()
+        if not value:
+            continue
+        for before, after in labels:
+            shown[f"{before}{value}{after}"] = f"{before}{instead}{after}"
+        if len(value) >= 5 and not _WORD.fullmatch(value):
+            shown[value] = shown[json.dumps(value, ensure_ascii=False)[1:-1]] = instead
+    return shown
 
 
 def _options(state: AppState) -> str:
@@ -667,28 +737,37 @@ def _cycles(state: AppState, full: bool) -> str:
     size = 0
     with state.db.connection() as conn:
         cycles = conn.execute("SELECT * FROM cycles ORDER BY id DESC LIMIT ?", (CYCLES_SHOWN,)).fetchall()
-        for index, c in enumerate(cycles):
-            text = _cycle(conn, c, full)
-            if out and size + len(text) > CYCLES_CHARS:  # the newest cycle is always shown
-                out.append(f"(… {len(cycles) - index} older cycles left out: the report has a size cap)")
-                break
-            out.append(text)
-            size += len(text) + 1
+    for index, c in enumerate(cycles):
+        # 0.40.3 (analysis-0.40.1, W1): each cycle's rows are read under the database's lock and shown (masked) after
+        # it: the report held the lock for 15.7 s, and the dashboard, the agent's loop and the executors waited
+        with state.db.connection() as conn:
+            rows = _cycle_rows(conn, c)
+        text = _cycle(c, *rows, full)
+        if out and size + len(text) > CYCLES_CHARS:  # the newest cycle is always shown
+            out.append(f"(… {len(cycles) - index} older cycles left out: the report has a size cap)")
+            break
+        out.append(text)
+        size += len(text) + 1
     return "\n".join(out) or "(no cycles yet)"
 
 
-def _cycle(conn: Any, c: Any, full: bool = True) -> str:
-    """One wake cycle: its row, the plan, every model call, what the model wrote besides its tool calls, and every tool
-    call (shareable: an email to someone else only with the length of its subject and text)."""
+def _cycle_rows(conn: Any, c: Any) -> tuple[list[Any], list[Any], list[Any]]:
+    """A wake cycle's model calls, tool calls and the model's texts."""
     calls = conn.execute("SELECT * FROM llm_calls WHERE cycle_id = ? ORDER BY id", (c["id"],)).fetchall()
     tools = conn.execute("SELECT * FROM tool_calls WHERE cycle_id = ? ORDER BY id", (c["id"],)).fetchall()
-    if not full:
-        tools = [{**dict(t), "input": _email_input(t["tool"], t["input"]), "result": _library_result(t)} for t in tools]
     texts = conn.execute(
         "SELECT t.llm_call_id, l.purpose, t.text, t.stop_details FROM call_texts t JOIN llm_calls l ON l.id ="
         " t.llm_call_id WHERE l.cycle_id = ? ORDER BY t.llm_call_id",
         (c["id"],),
     ).fetchall()
+    return calls, tools, texts
+
+
+def _cycle(c: Any, calls: list[Any], tools: list[Any], texts: list[Any], full: bool = True) -> str:
+    """One wake cycle: its row, the plan, every model call, what the model wrote besides its tool calls, and every tool
+    call (shareable: an email to someone else only with the length of its subject and text)."""
+    if not full:
+        tools = [{**dict(t), "input": _email_input(t["tool"], t["input"]), "result": _library_result(t)} for t in tools]
     replies = [
         f"    reply of call #{t['llm_call_id']} ({t['purpose']}): {_reply_text(t, full)}"
         + (f" | stop_details: {_cell(t['stop_details'])}" if t["stop_details"] else "")
@@ -841,6 +920,7 @@ def _agent(state: AppState, full: bool = True) -> str:
     scope = agent.scope()
     where, params = scope.where()
     out = [f"scope: mode={scope.mode} session={scope.session} life={scope.life_id}"]
+    tables: list[tuple[str, list[Any], list[str]]] = []  # each table's heading, rows and columns
     with state.db.connection() as conn:
         for table, columns, limit in (
             ("projects", ["id", "status", "venture_id", "title", "next_step", "updated_at", "notes"], 15),
@@ -1096,7 +1176,7 @@ def _agent(state: AppState, full: bool = True) -> str:
                     }
                     for r in rows
                 ]
-            out.append(f"-- {table}\n" + _rows(rows, columns))
+            tables.append((f"-- {table}", rows, columns))
         # 0.15.0: whether Ember's code's daily record (observations, 0.12.0) runs: how much of it, never a value
         observed = conn.execute(
             "SELECT subject, metric, COUNT(DISTINCT day) AS days, COUNT(DISTINCT subject_id) AS subjects, MAX(day) AS"
@@ -1104,81 +1184,88 @@ def _agent(state: AppState, full: bool = True) -> str:
             params,
         ).fetchall()
         columns = ["subject", "metric", "days", "subjects", "newest"]
-        out.append("-- observations (by subject and metric)\n" + _rows(observed, columns))
-        # 0.35.2: the numbers the weights and the choice use, so the picks above can be re-scored from the report alone
+        tables.append(("-- observations (by subject and metric)", observed, columns))
+        learned = []
+        if full:  # what the study learned: Ember's words, but drawn from the owner's documents (full report only)
+            learned = conn.execute(
+                f"SELECT document_id, part, topic, text FROM learnings WHERE {where} ORDER BY id DESC LIMIT 20", params
+            ).fetchall()
+        # The scripts upgrade requests carry: what the one who builds the upgrade needs (the report is its hand-off).
+        scripts = conn.execute(
+            f"SELECT id, script_path, script_text FROM upgrades WHERE {where} AND script_text IS NOT NULL"
+            " ORDER BY id DESC LIMIT 3",
+            params,
+        ).fetchall()
+    # 0.40.3 (analysis-0.40.1, W1): the rows are shown (masked) after the database's lock they were read under, and
+    # the plan tree's step is chosen outside it (it reads what it needs)
+    out += [f"{heading}\n" + _rows(rows, columns) for heading, rows, columns in tables]
+    # 0.35.2: the numbers the weights and the choice use, so the picks above can be re-scored from the report alone
+    out.append(
+        "-- plan tree: its weights' settings (weights.py, plan.py and 0.39.1 quality.py's, as this version runs"
+        " them)\n" + _json(plan.settings())
+    )
+    # 0.34.0: the step the plan tree takes now (0.35.0: the next cycle's), its next ones with their weight's parts,
+    # and what waits. 0.35.3: as the loop decides it (the ventures' turn, what the owner waits for first)
+    try:
+        steered = agent.next_steer()
+        pick, found = steered.pick, steered.found
+        ranking = [
+            {"step": s.id, "line": s.product, "weight": round(p.total, 2), "title": s.title, "why": p.text()}
+            for s, p in pick.ranked[:8]
+        ]
         out.append(
-            "-- plan tree: its weights' settings (weights.py, plan.py and 0.39.1 quality.py's, as this version runs"
-            " them)\n" + _json(plan.settings())
+            f"-- plan tree: the ranking now (the next cycle takes: {pick.decided})\n"
+            + _rows(ranking, ["step", "line", "weight", "title", "why"])
         )
-        # 0.34.0: the step the plan tree takes now (0.35.0: the next cycle's), its next ones with their weight's parts,
-        # and what waits. 0.35.3: as the loop decides it (the ventures' turn, what the owner waits for first)
-        try:
-            steered = agent.next_steer()
-            pick, found = steered.pick, steered.found
-            ranking = [
-                {"step": s.id, "line": s.product, "weight": round(p.total, 2), "title": s.title, "why": p.text()}
-                for s, p in pick.ranked[:8]
-            ]
-            out.append(
-                f"-- plan tree: the ranking now (the next cycle takes: {pick.decided})\n"
-                + _rows(ranking, ["step", "line", "weight", "title", "why"])
-            )
-            waiting = [
-                {"step": c.step.id, "line": c.step.product, "waiting": c.waiting, "title": c.step.title}
-                for c in found
-                if c.waiting not in (None, "step")
-            ]
+        waiting = [
+            {"step": c.step.id, "line": c.step.product, "waiting": c.waiting, "title": c.step.title}
+            for c in found
+            if c.waiting not in (None, "step")
+        ]
+        with state.db.connection() as conn:
             limits = plan.limits(conn, scope, to_iso(agent.clock.day_start(agent.clock.today())))
-            out.append(
-                "-- plan tree: steps that wait (on the owner, a channel, an upgrade, a hold; 0.36.0: the Explore step"
-                " also on its date, the burn mode or an owner's message first, an empty READY; 0.37.6: 'tried', taken"
-                " today with nothing moved, and 'approved', its approved requests being carried out; 0.37.9: 'queue',"
-                " a pin, post or blog post the publishing queue would refuse, and 'messages', a report to the owner the"
-                " day's message limit would refuse; 0.38.1: 'sales', a listing, a change of one, a Printify product or"
-                " a KDP book the sell requests waiting for the owner would refuse; 0.39.8: 'listing', a weekly pin or"
-                " post of a line with no listing of its own, and 'floor', one of a channel at its floor; every one,"
-                f" 0.39.8: the first 15 left the KDP book's 'tried' out. Now: {limits.text()})\n"
-                + _rows(waiting, ["step", "line", "waiting", "title"])
-            )
-        except Exception as exc:  # noqa: BLE001 - the report goes on without it
-            out.append(f"-- plan tree: unavailable ({type(exc).__name__})")
-        # 0.37.8: the publishing queue: each approved pin and post with its slot and what set it
-        try:
-            settings = agent.settings
-            per_day = {"pinterest": settings.pinterest_pins_per_day, "bluesky": settings.bluesky_posts_per_day}
+        out.append(
+            "-- plan tree: steps that wait (on the owner, a channel, an upgrade, a hold; 0.36.0: the Explore step"
+            " also on its date, the burn mode or an owner's message first, an empty READY; 0.37.6: 'tried', taken"
+            " today with nothing moved, and 'approved', its approved requests being carried out; 0.37.9: 'queue',"
+            " a pin, post or blog post the publishing queue would refuse, and 'messages', a report to the owner the"
+            " day's message limit would refuse; 0.38.1: 'sales', a listing, a change of one, a Printify product or"
+            " a KDP book the sell requests waiting for the owner would refuse; 0.39.8: 'listing', a weekly pin or"
+            " post of a line with no listing of its own, and 'floor', one of a channel at its floor; every one,"
+            f" 0.39.8: the first 15 left the KDP book's 'tried' out. Now: {limits.text()})\n"
+            + _rows(waiting, ["step", "line", "waiting", "title"])
+        )
+    except Exception as exc:  # noqa: BLE001 - the report goes on without it
+        out.append(f"-- plan tree: unavailable ({type(exc).__name__})")
+    # 0.37.8: the publishing queue: each approved pin and post with its slot and what set it
+    try:
+        settings = agent.settings
+        per_day = {"pinterest": settings.pinterest_pins_per_day, "bluesky": settings.bluesky_posts_per_day}
+        with state.db.connection() as conn:
             queue = [
                 {"channel": name, "request": s.approval_id, "slot": to_iso(s.at), "why": s.why, "language": s.language}
                 for name in publish_queue.CHANNELS
                 for s in publish_queue.slots(conn, scope, agent.clock, name, per_day[name])
             ]
-            out.append(
-                "-- publishing queue (0.37.8: each approved pin and post with its slot; why: now, gap, link, hours or"
-                " limit)\n" + _rows(queue, ["channel", "request", "slot", "why", "language"])
-            )
-        except Exception as exc:  # noqa: BLE001 - the report goes on without it
-            out.append(f"-- publishing queue: unavailable ({type(exc).__name__})")
-        if full:  # what the study learned: Ember's words, but drawn from the owner's documents (full report only)
-            learned = conn.execute(
-                f"SELECT document_id, part, topic, text FROM learnings WHERE {where} ORDER BY id DESC LIMIT 20", params
-            ).fetchall()
-            if learned:
-                out.append(
-                    "-- learnings (the newest 20)\n"
-                    + _rows([dict(r) for r in learned], ["document_id", "part", "topic", "text"])
-                )
-        # The scripts upgrade requests carry: what the one who builds the upgrade needs (the report is its hand-off).
-        for row in conn.execute(
-            f"SELECT id, script_path, script_text FROM upgrades WHERE {where} AND script_text IS NOT NULL"
-            " ORDER BY id DESC LIMIT 3",
-            params,
-        ):
-            text = row["script_text"]
-            cut = "\n… [script cut]" if len(text) > SCRIPT_CHARS else ""
-            out.append(
-                f"-- upgrade #{row['id']} script {row['script_path']}\n{_block(_mask(text)[:SCRIPT_CHARS])}{cut}"
-            )
+        out.append(
+            "-- publishing queue (0.37.8: each approved pin and post with its slot; why: now, gap, link, hours or"
+            " limit)\n" + _rows(queue, ["channel", "request", "slot", "why", "language"])
+        )
+    except Exception as exc:  # noqa: BLE001 - the report goes on without it
+        out.append(f"-- publishing queue: unavailable ({type(exc).__name__})")
+    if learned:
+        out.append(
+            "-- learnings (the newest 20)\n"
+            + _rows([dict(r) for r in learned], ["document_id", "part", "topic", "text"])
+        )
+    for row in scripts:
+        text = row["script_text"]
+        cut = "\n… [script cut]" if len(text) > SCRIPT_CHARS else ""
+        out.append(
+            f"-- upgrade #{row['id']} script {row['script_path']}\n{_block(_masked(_mask(text)[:SCRIPT_CHARS]))}{cut}"
+        )
     for name, text in agent.memory_files().items():  # indented: a "## " heading in them can't pose as a section
-        out.append(f"-- memory/{name}.md ({len(text.encode())} B)\n{_block(_mask(text))}")
+        out.append(f"-- memory/{name}.md ({len(text.encode())} B)\n{_block(_masked(_mask(text)))}")
     workspace, _ = agent.roots()
     try:
         used = workspace.usage()

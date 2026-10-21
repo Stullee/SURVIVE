@@ -50,6 +50,7 @@ _UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
 _PHONE = re.compile(r"(?:\+|0)\d{7,}")
 # Links and addresses in one pass (0.15.0), so what one of them masks can't break the other.
 _LINKS = re.compile(f"(?P<url>{_URL.pattern})|(?P<address>{_EMAIL.pattern})")
+_TOKEN = re.compile(r"\w+")  # 0.40.3: a run of letters, digits and _, by which the Masker finds the words in a text
 # 0.15.0: a person's name, as a sender's display name gives it: two to four words of letters ("Anne-Marie O'Neil").
 _NAME_WORD = re.compile(r"[^\W\d_]+(?:['’.-][^\W\d_]+)*\.?")
 # Words that make a sender's name a company's or a team's, not a person's ("Etsy Support", "The Printify Team").
@@ -194,32 +195,54 @@ def load(conn: sqlite3.Connection) -> Redactor:
 class Masker:
     """Masks a text for someone other than the owner: addresses, codes, link tokens and the removed words, and
     (unless ``full``) other people's text from emails and web pages, and their words wherever they were quoted
-    (``others``: the emails' subjects and senders' names, and what shows instead)."""
+    (``others``: the emails' subjects and senders' names, and what shows instead), and (0.40.3) phone numbers and
+    IBANs."""
 
     own_address: str = ""
     redactor: Redactor = field(default_factory=Redactor)
     full: bool = False
     others: dict[str, str] = field(default_factory=dict)
     addresses: dict[str, int] = field(default_factory=dict)  # each other address and its number in this report
-    _pattern: re.Pattern[str] = field(default=_LINKS, init=False, repr=False)
+    _keys: dict[str, list[str]] = field(default_factory=dict, init=False, repr=False)
+    _patterns: dict[tuple[str, ...], re.Pattern[str]] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        words = sorted((w for w in self.others if w.strip()), key=len, reverse=True)  # the longest first
-        if words and not self.full:
-            # 0.15.0: other people's words in one pass with the links and addresses, whole only (never a part of an
-            # address, a host name or a word), so a name can't break an address and a subject takes its address along.
-            quoted = "|".join(rf"(?<![\w@.-]){re.escape(w)}(?![\w@-]|\.\w)" for w in words)
-            self._pattern = re.compile(f"(?P<quoted>{quoted})|{_LINKS.pattern}")
+        # 0.40.3 (analysis-0.40.1, W1): each text's pattern has only the words written in it. One pattern of every
+        # subject and name was tried at every place of every text: 300 emails made 200 KB take 3 s to mask. A word is
+        # found by its longest run of letters and digits (_TOKEN), which a text that has the word whole has whole too.
+        if self.full:
+            return
+        for word in self.others:
+            if word.strip():
+                self._keys.setdefault(max(_TOKEN.findall(word), key=len, default=""), []).append(word)
 
     def __call__(self, text: str) -> str:
         if not text:
             return text
         if not self.full:
             text = leave_out_third_party(text)
-        text = self._pattern.sub(self._replace, text)
+        text = self._pattern(text).sub(self._replace, text)
         text = self.redactor.apply(text)
+        if not self.full:  # 0.40.3 (analysis-0.40.1, 6.2): before the codes, which would take a number's first part
+            text = _LINE_PHONE.sub(_phone, _IBAN.sub(_iban, text))
         text = _CODE_AFTER.sub(lambda m: f"{m[1]}{CODE}", text)
         return _CODE_BEFORE.sub(lambda m: f"{CODE}{m[2]}", text)
+
+    def _pattern(self, text: str) -> re.Pattern[str]:
+        """The links and addresses, and the other people's words written in ``text``, the longest first."""
+        if not self._keys:
+            return _LINKS
+        found = [w for key in {"", *_TOKEN.findall(text)} for w in self._keys.get(key, ()) if w in text]
+        if not found:
+            return _LINKS
+        words = tuple(sorted(found, key=lambda w: (-len(w), w)))
+        pattern = self._patterns.get(words)
+        if pattern is None:
+            # 0.15.0: other people's words in one pass with the links and addresses, whole only (never a part of an
+            # address, a host name or a word), so a name can't break an address and a subject takes its address along.
+            quoted = "|".join(rf"(?<![\w@.-]){re.escape(w)}(?![\w@-]|\.\w)" for w in words)
+            pattern = self._patterns[words] = re.compile(f"(?P<quoted>{quoted})|{_LINKS.pattern}")
+        return pattern
 
     def _replace(self, match: re.Match[str]) -> str:
         if match.lastgroup == "quoted":
@@ -283,6 +306,32 @@ _ZERO_PHONE = re.compile(r"(?<![\w.,+])0\d{1,4}[\s/()-]+\d[\d\s()/-]*\d")  # 015
 _WORD = re.compile(r"[\w.-]+")
 _IPV4 = re.compile(r"(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])")
 _IBAN = re.compile(r"(?<![a-z0-9])[a-z]{2}\d{2}(?: ?[a-z0-9]){11,30}(?![a-z0-9])", re.IGNORECASE)
+# 0.40.3 (analysis-0.40.1, 6.2): what the Masker shows of the phone numbers and IBANs the public page refuses (the
+# shareable report printed them): a phone number as _PLUS_PHONE and _ZERO_PHONE find it, but within its line (a
+# report's lines are records: across them it took the numbers of the next line along), and an IBAN only if its check
+# digits are right (a long id of letters and digits has an IBAN's shape)
+PHONE = "[phone number]"
+IBAN = "[IBAN]"
+_LINE_PHONE = re.compile(
+    r"\+[^\S\n]?\(?\d(?:[\d()/.-]|[^\S\n]){4,}\d"
+    r"|(?<![\w.,+])0\d{1,4}(?:[/()-]|[^\S\n])+\d(?:[\d()/-]|[^\S\n])*\d"
+)
+
+
+def _phone(match: re.Match[str]) -> str:
+    return PHONE if _digits(match) >= (7 if match[0].startswith("+") else 8) else match[0]
+
+
+def _iban(match: re.Match[str]) -> str:
+    """An IBAN masked, the words after it kept (_IBAN takes the next short words along: "DE89 3704 … 00 bitte")."""
+    text = match[0]
+    for end in sorted({len(text), *(n for n, c in enumerate(text) if c == " ")}, reverse=True):
+        code = text[:end].replace(" ", "").upper()
+        if len(code) < 15 or sum(c.isdigit() for c in code) < 10 or not code.isascii():
+            continue
+        if int("".join(str(int(c, 36)) for c in code[4:] + code[:4])) % 97 == 1:  # its check digits
+            return IBAN + text[end:]
+    return text
 
 
 def visible(text: str) -> str:

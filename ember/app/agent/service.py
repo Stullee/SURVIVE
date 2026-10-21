@@ -1423,13 +1423,23 @@ class Agent:
         with self.db.connection() as conn:
             return website.built(conn, self.scope(), website.owner(self.settings))
 
-    def site_download(self) -> bytes:
-        """The website as a zip for the owner to publish; the download is recorded, so the plan and the dashboard can
-        say what changed since. Raises site.SiteError."""
+    def site_download(self) -> tuple[bytes, str]:
+        """The website as a zip for the owner to publish, and its version (website.version). Raises site.SiteError.
+        0.40.3 (analysis-0.40.1, W3): nothing is recorded (a GET that wrote counted a prefetch or a second tab as a
+        download): the dashboard records the download once the zip is saved (record_site_download)."""
         files = self.site_files()
+        return site.archive(files), website.version(files)
+
+    def record_site_download(self, version: str) -> str:
+        """0.40.3: the owner saved the zip of ``version``: recorded (when), so the plan and the dashboard can say what
+        changed since. Raises site.SiteError, also when the website changed after that download (it isn't this one)."""
+        files = self.site_files()
+        if website.version(files) != version:
+            raise site.SiteError("the website changed after your download: download it again")
+        now = to_iso(self.clock.now())
         with self.db.transaction() as conn:
-            website.record_download(conn, self.scope(), files, to_iso(self.clock.now()))
-        return site.archive(files)
+            website.record_download(conn, self.scope(), files, now)
+        return now
 
     def workspace_product(self, path: str) -> tuple[str, bytes, str]:
         """(file name, bytes, content type) of a PDF, Word, Excel or PNG file; raises views.WorkspaceFileError."""

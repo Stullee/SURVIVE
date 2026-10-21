@@ -1005,13 +1005,14 @@ def site_preview(request: Request, name: Annotated[str, Path(max_length=60)]) ->
 
 @router.get("/api/site/download")
 def site_download(request: Request) -> Response:
-    """The website as one zip for the owner to upload to their host; the download is recorded (what changed since
-    is what the owner hasn't published)."""
+    """The website as one zip for the owner to upload to their host, with its version (x-ember-site-version). 0.40.3
+    (analysis-0.40.1, W3): a GET changes nothing: the dashboard records the download it saved with the POST below
+    (what changed since is what the owner hasn't published)."""
     agent = _state(request).agent
     if agent is None:
         return NO_AGENT
     try:
-        data = agent.site_download()
+        data, version = agent.site_download()
     except SiteError as exc:
         return JSONResponse({"error": f"The website can't be built yet: {exc}."}, status_code=409)
     return Response(
@@ -1022,8 +1023,24 @@ def site_download(request: Request) -> Response:
             "content-security-policy": "sandbox; default-src 'none'",
             "x-content-type-options": "nosniff",
             "cache-control": "no-store",
+            "x-ember-site-version": version,
         },
     )
+
+
+@router.post("/api/site/download")
+def site_downloaded(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """0.40.3 (analysis-0.40.1, W3): the owner saved the zip: {"version": its x-ember-site-version} is recorded."""
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    if not isinstance(body, dict) or not isinstance(body.get("version"), str):
+        return JSONResponse({"error": 'send {"version": "..."}', "field": "version"}, status_code=422)
+    try:
+        downloaded_at = agent.record_site_download(body["version"])
+    except SiteError as exc:
+        return JSONResponse({"error": f"The download wasn't recorded: {exc}."}, status_code=409)
+    return JSONResponse({"downloaded_at": downloaded_at})
 
 
 # 0.14.0: the blog on the owner's website: the page an upload request carries (the owner previews exactly what goes

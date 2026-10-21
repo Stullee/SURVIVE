@@ -2775,7 +2775,8 @@ code builds the site from them in one fixed design:
 Ember never publishes the site: you do. **System → Website → Pages to download** on the dashboard
 shows its pages and what changed since you last downloaded it. **Preview**
 opens it in a tab of its own (where it runs nothing); **Download (zip)** gives
-you every file. Upload them to your host: any host of static files works, for
+you every file (0.40.3: the download counts once the dashboard has saved the zip, not when the address is opened).
+Upload them to your host: any host of static files works, for
 example your web hosting package. If your host adds cookies, statistics or
 anything else, the privacy page doesn't cover it: tell them apart, or ask your
 host. The agent's plan shows the pages and what you haven't published yet
@@ -3173,7 +3174,12 @@ masked (`[email 1]`, and `[Ember's address]`), and so are one-time codes
 (`[masked]`; in a table, only when the code word is in the same cell), the
 tokens in links (`https://example.com/verify?[…]`), the words
 you removed from your messages (`[removed]`, see below), and your Home
-Assistant name and user ID (`[the owner]`, `[the owner's user ID]`). It never contains the API key, the
+Assistant name and user ID (`[the owner]`, `[the owner's user ID]`). Since 0.40.3 so are phone numbers
+(`[phone number]`) and IBANs (`[IBAN]`), and your personal options wherever they are written (your name, address,
+email, phone, VAT ID, the KDP author, the SFTP user and folder: `[the author's name]`, `[the SFTP user]` …; a value
+of one ordinary word, such as an author named "Ember", only after its label, as in a KDP request's `Author:`).
+Street addresses and postcodes aren't masked: told apart only by their digits, every listing number and amount would
+go. It never contains the API key, the
 mailbox password, Etsy's keystring, secret or tokens, or an email's text. It
 does hold your messages and the agent's work, so read it before you share it.
 
