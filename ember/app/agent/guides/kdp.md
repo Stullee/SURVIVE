@@ -1,7 +1,7 @@
 PUBLISHING ON AMAZON KDP (propose_kdp_book)
 You make the book, Ember's code makes its cover and checks it against KDP's rules, and your owner publishes it at
-KDP by hand once they approve it. KDP lets an account create at most {KDP_WEEKLY} new titles of each format a week:
-propose few, and only books you would buy yourself.
+KDP by hand once they approve it. KDP lets an account create at most {KDP_WEEKLY} new titles of each format a week
+(its week starts Sunday 00:00 UTC): propose few, and only books you would buy yourself.
 
 WHAT SELLS: books people search for by need, where a small publisher can be found: low-content books (journals,
 planners, logbooks, workbooks) and short practical guides. Research the searches and the competing books first
@@ -14,9 +14,10 @@ THE TEXT:
   make). {BOOK_PAGES} pages at most; KDP prints {KDP_LEAST} and more. Start with a title page and a page
   saying the book was made with AI help; number pages in the footer.
 - Pages to fill in: a 6x9 page at size 12.5 holds about 20 empty rows, 10 with a heading, a 3-row total and 4
-  writing lines; fewer at a larger line_height. End notes with '::: lines fill'.
-- An ebook's manuscript: the Word file (.docx) make_document makes next to its PDF. Headings, paragraphs and lists
-  read well on a Kindle; boxes, columns and sidebars don't flow.
+  writing lines. End notes with '::: lines fill'. Give a column for words (Text, Ziel) its width: short headers
+  elsewhere, longer dashes. Never a placeholder ([Name]).
+- An ebook's manuscript: the Word file (.docx) make_document makes next to its PDF. Boxes, columns and sidebars
+  don't flow on a Kindle.
 - The front: a picture of yours (make_image, layout poster, shape pin), its words 0.25 in from its edges.
 
 THE SPEC: a .json file (workspace_write), e.g. books/journal.json:
@@ -30,8 +31,8 @@ characters (Ember's code adds the AI line)", "keywords": ["what readers type", "
   paperback's): white or cream for black ink, color for premium colour. low_content: true for a journal, planner or
   notebook. project_id: its product line (default: your focus project).
 - cover: Ember's code makes it next to the spec (books/journal-cover.pdf, an ebook's .jpg): a paperback's back with
-  your blurb (at most 1,200 characters) and the space KDP's barcode takes, the spine with its text (only for more
-  than {SPINE_PAGES} pages), the front, bleed, as wide as the interior's pages make the spine. background (a colour
+  your blurb (at most 1,200 characters), the spine with its text (only for more than {SPINE_PAGES} pages), the
+  front, bleed. background (a colour
   like #1F2A44) sets the back and spine; default: the front's edge. Or name a cover file of your own: "cover":
   "books/my-cover.pdf".
 

@@ -270,7 +270,7 @@ def test_the_planner_sees_todays_review_only_today(data_dir: Path) -> None:
     # 0.15.0: the advice first, the verdicts after it (a project to continue on one line), so a cut takes them first.
     assert "\nFocus today: " in text and text.endswith(
         "Act on it: a stop is your owner's decision (only they close a line): Ember's code asks them on their Plan tab;"
-        " until they decide, hold the line (plan_step hold) when a cycle is on it. A change is a step of its line's,"
+        " until they decide, Ember's code holds the line: its steps wait. A change is a step of its line's,"
         ' due today ("Review MM-DD: ..."): carry it out, a request to your owner where it needs one, then plan_step'
         " done. Work on a bottleneck (reach: its marketing cycles bring buyers) waits for its line's cycle. Ember's"
         " code kept the lesson."

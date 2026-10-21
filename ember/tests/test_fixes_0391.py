@@ -333,8 +333,8 @@ def test_no_brainstorm_comes_within_a_week_of_one_whose_ideas_had_no_research(da
     today = agent.clock.today()
     ends = (today + timedelta(days=desk.BRAINSTORM_REST_DAYS)).isoformat()
     rest = (
-        f"the last brainstorm's 6 ideas ({today.isoformat()}) had no research: the next brainstorm comes on {ends}, or"
-        " once one of the ideas is researched"
+        f"none of the last brainstorm's 6 ideas ({today.isoformat()}) went on past triage: the next brainstorm comes on"
+        f" {ends}, or once one of them is being researched"
     )
     keep(agent)
     assert brainstorm_steps(agent) == [{"status": "dropped", "result": rest}]
@@ -361,11 +361,13 @@ def test_the_brainstorms_rest_reads_its_last_batch_of_ideas() -> None:
     later = "2026-10-14T09:00:00Z"
     said = desk.brainstorm_rests(batch, later)
     assert said == (
-        "the last brainstorm's 6 ideas (2026-10-12) had no research: the next brainstorm comes on 2026-10-19, or once"
-        " one of the ideas is researched"
+        "none of the last brainstorm's 6 ideas (2026-10-12) went on past triage: the next brainstorm comes on"
+        " 2026-10-19, or once one of them is being researched"
     )
     assert desk.brainstorm_rests(batch, "2026-10-19T00:00:00Z") == ""  # a week on
-    assert desk.brainstorm_rests([*batch[1:], idea(1, 3711, researched=1)], later) == ""  # one was researched
+    # 0.40.2 (analysis-0.40.1, 3.4): an idea researched and parked, or researched and still an idea, doesn't end it
+    assert desk.brainstorm_rests([*batch[1:], idea(1, 3711, researched=1)], later) == said
+    assert desk.brainstorm_rests([*batch[1:], idea(1, 3711, stage="idea", researched=1)], later) == said
     assert desk.brainstorm_rests([*batch[1:], idea(1, 3711, stage="researching")], later) == ""
     assert desk.brainstorm_rests([idea(1, 3711), idea(2, 3700)], later) == ""  # one idea a cycle: no brainstorm
     assert desk.brainstorm_rests([*batch, idea(9, 3720, by="owner"), idea(10, 3721)], later) == said  # not theirs

@@ -450,6 +450,15 @@ def close_approval(request: Request, approval_id: ItemId, body: Annotated[Any, B
     return _reply(reply)
 
 
+@router.post("/api/approvals/{approval_id}/link")
+def link_approval(request: Request, approval_id: ItemId, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """0.40.2: the owner adds a KDP book's link at Amazon to its request marked done without one."""
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.add_link(approval_id, body, _owner(request)))
+
+
 def _poke_executor(request: Request, reply: Reply) -> None:
     """An approved email is sent by the scheduler's next round: start it now rather than within the minute."""
     approval = reply.body.get("approval") if reply.status == 200 else None

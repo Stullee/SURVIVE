@@ -27,7 +27,7 @@ import sqlite3
 import zipfile
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import PurePosixPath
 from typing import Any
@@ -96,7 +96,8 @@ EBOOK_RATIO_TOLERANCE = Decimal("0.02")
 MANUSCRIPT_KINDS = {"ebook": ".docx", "paperback": ".pdf"}
 COVER_KINDS = {"ebook": ".jpg", "paperback": ".pdf"}
 MAX_FILE_BYTES = 15 * 1024 * 1024  # the workspace's limit for one product file; KDP takes far more
-# 2026: KDP lets an account create at most 2 new titles of each format a week. Ember's code proposes no more.
+# 2026-09-21: KDP lets an account create at most 2 new titles of each format a week, KDP's week beginning on Sunday at
+# 00:00 UTC (its Create a Book help, "New title creation and submission limits"). Ember's code proposes no more.
 WEEKLY_TITLES = 2
 # Prices in USD at Amazon.com, KDP's first marketplace (the owner sets the others at KDP, or lets KDP convert them).
 # KDP's help is the reference; the card's royalty is an estimate and says so.
@@ -751,15 +752,31 @@ def last_words(conn: sqlite3.Connection, scope: AgentScope, title: str, project_
     return ""
 
 
-def text(conn: sqlite3.Connection, scope: AgentScope, now: datetime, author: str) -> str:
-    """The plan's KDP section: how the owner publishes, this week's room under KDP's limit, and the newest books."""
+def week_start(now: datetime) -> datetime:
+    """0.40.2 (analysis-0.40.1, 3.3): when KDP's week holding ``now`` began: its last Sunday at 00:00 UTC. Until then
+    Ember's code counted the last 7 days: live, the two books proposed on Monday 10-19 held the Kassenbuch until the
+    afternoon of Monday 10-26, past the Sunday KDP's next week began and the day the agent had promised it for."""
+    utc = now.astimezone(UTC)
+    midnight = utc.replace(hour=0, minute=0, second=0, microsecond=0)
+    return midnight - timedelta(days=(utc.weekday() + 1) % 7)
+
+
+def next_week(now: datetime, tz: tzinfo = UTC) -> str:
+    """0.40.2: when KDP's next week begins, in the owner's time: "Sunday 10-25 at 02:00"."""
+    begins = (week_start(now) + timedelta(days=7)).astimezone(tz)
+    return f"Sunday {begins:%m-%d} at {begins:%H:%M}"
+
+
+def text(conn: sqlite3.Connection, scope: AgentScope, now: datetime, author: str, tz: tzinfo = UTC) -> str:
+    """The plan's KDP section: how the owner publishes, this week's room under KDP's limit (0.40.2: KDP's week, from
+    Sunday 00:00 UTC; ``tz``: the owner's, for when the next one begins), and the newest books."""
     where, params = scope.where()
     rows = conn.execute(
         f"SELECT id, status, action, created_at, decision_comment, result_note, result_link FROM approvals"
         f" WHERE {where} AND executor = ? ORDER BY id DESC",
         (*params, EXECUTOR),
     ).fetchall()
-    since = to_iso(now - timedelta(days=7))
+    since = to_iso(week_start(now))
     counted = {form: 0 for form in FORMATS}
     lines = []
     for r in rows:
@@ -776,15 +793,20 @@ def text(conn: sqlite3.Connection, scope: AgentScope, now: datetime, author: str
         line += _STATES.get(str(r["status"]), str(r["status"]))
         if r["status"] == "done" and r["result_link"]:
             line += f" at {r['result_link']}"
+        elif r["status"] == "done":  # 0.40.2 (analysis-0.40.1, 3.1): nothing can link it, nor plan to
+            line += " (no link at Amazon yet: your owner can add it on the request; until then nothing can link it)"
         why = r["decision_comment"] if r["status"] == "rejected" else r["result_note"]
         if why and r["status"] in ("rejected", "done", "failed"):
             line += f" ({_quoted(why, 120)})"
         lines.append(line)
     room = ", ".join(f"{counted.get(form, 0)} {form}{'s' if counted.get(form, 0) != 1 else ''}" for form in FORMATS)
+    full = any(counted.get(form, 0) >= WEEKLY_TITLES for form in FORMATS)
     head = (
         "Your owner publishes your books at KDP by hand (Amazon has no API): propose one with propose_kdp_book from "
         f"its .json spec (guide 'kdp'). KDP lets them create at most {WEEKLY_TITLES} new titles of each format a "
-        f"week; proposed in the last 7 days: {room}. Royalties count once your owner records them. Author name: "
+        f"week, its week from Sunday 00:00 UTC; proposed this week: {room}"
+        + (f" (the next week begins {next_week(now, tz)})" if full else "")
+        + ". Royalties count once your owner records them. Author name: "
         f"{'set by your owner' if author else 'your owner enters it at KDP'}."
     )
     return "\n".join([head, *(["Your books, newest first:", *lines] if lines else ["No books yet."])])

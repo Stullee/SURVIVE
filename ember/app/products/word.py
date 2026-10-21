@@ -454,6 +454,8 @@ class Writer:
                 longest = max((len(w) for w in content.split()), default=0)
                 minimum[c] = max(minimum[c], longest * 1.9 + 4)
                 natural[c] = max(natural[c], len(content) * 1.9 + 4)
+        if block.widths is not None:  # 0.40.2: as the PDF draws them
+            natural = [share * width for share in block.widths]
         widths = _share(width, minimum, natural)
         table = self._table(container, len(rows), n, widths)
         if style == "grid":

@@ -89,6 +89,9 @@ class Table:
     header: list[list[Run]] | None  # None: a layout table without a header row
     rows: list[list[list[Run]]]
     align: list[str]  # "left", "center" or "right" per column
+    # 0.40.2: the columns' widths as shares, from the dashes of the line under the header when they differ
+    # (|---|----|------------|, at least 3 a column); None: by what the columns hold
+    widths: list[float] | None = None
 
 
 @dataclass
@@ -625,10 +628,12 @@ class _Parser:
         start = i
         rows: list[list[str]] = []
         align: list[str] | None = None
+        dashes: list[int] = []
         while i < len(self.lines) and self.lines[i].strip().startswith("|"):
             cells = _cells(self.lines[i].strip())
             if len(rows) == 1 and align is None and all(_ALIGN_CELL.match(c) for c in cells):
                 align = [_alignment(c) for c in cells]
+                dashes = [c.count("-") for c in cells]
             else:
                 rows.append(cells)
             i += 1
@@ -649,7 +654,11 @@ class _Parser:
                 self.warnings.append(f"line {number}: a table row has more cells than the header; extras dropped")
             grid.append([inline(c.strip()) for c in (row + [""] * width)[:width]])
         header = grid[0] if any(plain(c).strip() for c in grid[0]) else None
-        self._emit(Table(header, grid[1:], align), number)
+        # 0.40.2 (analysis-0.40.1, 3.2): dashes of different lengths set the columns' widths. Live, a cash book's
+        # column "Text", where each entry is described, came out 12 mm wide: a column's width followed its header's
+        # words, and nothing could widen it
+        widths = [d / sum(dashes) for d in dashes] if len(set(dashes)) > 1 else None
+        self._emit(Table(header, grid[1:], align, widths), number)
         return i
 
 

@@ -398,10 +398,15 @@ verdict, and the day's plans see it. Every plan that day shows the
 review, and the agent is told to carry it out: change what it changed, work on
 each bottleneck. A **stop** is yours (since 0.35.0 only you close a line): since
 0.39.1 Ember's code asks you on the Plan tab to keep the line or drop it, as at a
-decide-by date, at most once a week a line, and the agent holds the line until
-you decide. Until then the review told the agent to close the line itself, which
+decide-by date, at most once a week a line, and the line is held until you
+decide. Until then the review told the agent to close the line itself, which
 its tools can't: three cycles tried, and the next review said again that the
-stop wasn't carried out. Since 0.39.6 a **change** of a live or launched line
+stop wasn't carried out. Since 0.40.2 Ember's code holds the line from the
+review on (its steps wait), not the agent: on 10-21 two cycles ($0.37) took a
+stopped line's monthly blog post only to hold the line, and each cut the sleep
+before it. Your **keep** lifts the hold. The agent can resume the line too, and
+it stays resumed for that review; a line with a step you pinned or a promise
+open isn't held. Since 0.39.6 a **change** of a live or launched line
 is a step of its own, due that day ("Review 10-16: ..."), which Ember carries out
 and says done; the next review's change takes the place of one still open. A
 change waited for its line's cycle, which took the heaviest step instead: three
@@ -514,7 +519,13 @@ work, like a manager's calendar (the design is in `vision/learning.md`):
   at least twice its floor: Bluesky at 0.21, a listing view for every five posts,
   cut 7 of 12 sleeps on 10-16. Since 0.37.9 not a step whose work one of your limits would
   refuse either (a pin while the publishing queue is full, a report once the
-  day's messages are sent: [Plan](#plan), **Your limits**).
+  day's messages are sent: [Plan](#plan), **Your limits**). Since 0.40.2 a step
+  of the ventures (a brainstorm, a triage, an appraisal) counts only when it is
+  urgent (your wish, a park within days): on 10-21 a brainstorm and a triage
+  kept the afternoon's sleeps at 30 minutes, six ideas came of them, all parked,
+  and the next brainstorm was ready at once. A brainstorm rests for a week while none of the
+  last one's ideas went on past triage (researching, proposed or further); until
+  0.40.2 one idea researched and then parked ended the rest.
 
 All of it counts toward the daily cap, not the cycle cap, and none of it ends a
 cycle. The diagnostics report lists the bets, cases, principles, weekly looks
@@ -550,7 +561,13 @@ agent's workspace:
   0.39.8 the result says what each `fill` drew ("2 lines on pages 6, 7, 8 …; 14
   lines on pages 5, 12: each is ruled down to the bottom margin"): the agent read
   2 lines under a full week's table as `fill` stopping short, and went back to
-  fixed counts that put 5 lines a week on a page of their own.
+  fixed counts that put 5 lines a week on a page of their own. Since 0.40.2 the
+  dashes of the line under a table's header set its columns' widths when their
+  lengths differ (`|---|----|------------|`: the third column takes the most;
+  each column still at least as wide as its longest word), and a book names a
+  column to write words in (a header word of 4 letters or more) that comes out
+  under 13 mm: the Kassenbuch's "Text", where each entry is described, was 12 mm
+  wide on 48 pages, and nothing could widen it.
 - **Spreadsheets** (`make_spreadsheet`): a JSON description becomes an Excel
   file with formats, dropdowns, formulas, totals, a chart and a *How to use*
   sheet, plus a picture of each sheet, drawn since 0.37.5 from the file itself:
@@ -1152,7 +1169,11 @@ every open product line is one, laid out the first time Ember's code sees it,
 from its type's template (an Etsy download, a Printify product, a KDP book,
 website content, a channel). A line whose words name no type is laid out as a
 plain product; once its records name one (its first listing request, a
-Printify product, a KDP package), it takes that type's stages and steps. A
+Printify product, a KDP package), it takes that type's stages and steps. Since
+0.40.2 a line with an Etsy listing (its own, or one moved to it) is no KDP book
+by the tools its cycles used: a check of the Haushaltsbuch in a cycle of line
+#12, the coach bundle, made it a KDP book on 10-19. Such a line takes a plain
+product's stages again, with what Ember, you or her code added there. A
 product has stages (research, create, release, launch, maintain), and each stage
 has small steps. A step or a stage counts as done only when its check passes in
 Ember's records: a demand note, a request to you, a live listing, pins, Bluesky
@@ -1357,7 +1378,10 @@ wait on a day, at the latest two days before the promise is due (from then on it
 is urgent: she keeps it, or tells you why she can't). Until then it couldn't wait
 at all: three cycles took "Report milestone #18 outcome (sale or park) by 10-31",
 which can't be kept before the milestone is judged on 10-24, and each was told to
-write to you about it. Your decisions' steps can't wait, as before.
+write to you about it. Your decisions' steps can't wait, as before. Since 0.40.2
+a promise of no product line can wait the same way, in the cycle whose step it
+is: the promise to propose the Kassenbuch by 10-25, which KDP's weekly limit
+held until then, could only be tried and refused, a cycle a day.
 What you, a promise or Ember's code put in the plan stays. She can **hold** a
 product to work on others, with her reason, and resume it. She can't close,
 drop or delete a project or product: only you do. Each change is kept with its
@@ -2951,7 +2975,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.40.1 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.40.2 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3048,10 +3072,21 @@ own account. Ember never logs in to Amazon or reads its pages.
   conversation holds 96,000 bytes (64,000 until 0.40.1), room for two checks of
   six pages each: four of the five cycles on the book before 0.40.0 ended at
   64,000 without proposing it.
+- **Placeholders** (0.40.2, the analysis of 0.40.1): the check finds words in
+  square brackets ("[Verlag/Herausgeber]", "[Name]"; not a box to tick, `[ ]` or
+  `[x]`, nor a note's number, `[1]`), "Lorem ipsum" and TODO on the pages, and the
+  agent can't propose a paperback that prints one; your card's Page check names
+  it too. The Kassenbuch's last page printed "Gestaltet von
+  [Verlag/Herausgeber]", and the check, which measures space, found nothing.
 - KDP lets an account create at most 2 new titles of each format a week
-  (since September 2026). Ember's code holds the agent to that: it can't
-  propose a third ebook or paperback within 7 days (rejected, withdrawn,
-  expired and failed requests don't count).
+  (since September 2026), KDP's week beginning on Sunday at 00:00 UTC (02:00 in
+  Berlin in summer time, 01:00 in winter). Ember's code holds the agent to that:
+  it can't propose a third ebook or paperback in the same week (rejected,
+  withdrawn, expired and failed requests don't count), and the refusal and the
+  plan's KDP section say when the next week begins, in your time. Until 0.40.2
+  it counted the last 7 days: the two books proposed on Monday 10-19 held the
+  Kassenbuch until Monday 10-26, a day after KDP's week allowed it and past the
+  day the agent had promised it for.
 
 ### Publishing it
 
@@ -3068,6 +3103,11 @@ own account. Ember never logs in to Amazon or reads its pages.
   title there, enter the fields, upload the files, check KDP's previewer, and
   publish (KDP reviews a book for up to 72 hours). Then mark the request
   **done** with the book's link at Amazon, or **failed** with what went wrong.
+- A request marked done without the link has **Add its Amazon link** (0.40.2):
+  until it has one, nothing of Ember's can link the book, and the agent's KDP
+  section says so. Both Haushaltsbuch books were marked done with "published"
+  alone, and the daily review planned pins and posts "linking to Amazon" that
+  no tool could make.
 - Royalties come from KDP's reports (KDP pays about 60 days after the end of
   each month): record them in the ledger as revenue for the book's project.
   Ember doesn't read KDP's reports.
@@ -3081,7 +3121,9 @@ model wrote and every tool call (texts whole), research, the agent's records
 (journal entries, approvals, ventures, the roadmap, the plan tree with its
 picks and its weights' settings, listings, memory and the workspace's text
 files; since 0.40.1 a file longer than 20,000 characters shows its start and
-its end, with how much is left out between them), the mailbox (its status, its
+its end, with how much is left out between them; since 0.40.2 they are chosen
+from the whole workspace, not the first 100 entries by path, and the files the
+newest books were made from come first), the mailbox (its status, its
 emails and the sends) and recent events. Use **Copy** to paste it into a bug
 report or a chat.
 

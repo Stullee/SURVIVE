@@ -100,6 +100,11 @@ WORKSPACE_FILE_CHARS = 20_000
 WORKSPACE_FILE_END = 0.4
 TAIL_COLUMNS = frozenset({"notes"})  # a project's notes are a log: the newest are at the end, so a cut keeps the end
 WORKSPACE_ENTRIES = 100
+# 0.40.2 (analysis-0.40.1, 3.7): the text files are chosen from the whole workspace (the tree above stops after
+# WORKSPACE_ENTRIES, by path: live, nothing after books/haushaltsbuch… could be shown, the Kassenbuch's source among
+# it), and the sources of the newest books come first (made_pdfs: the PDFs make_document made in books/)
+WORKSPACE_ALL = 10_000
+BOOK_SOURCES = 3
 TABLES = (
     "ledger",
     "llm_calls",
@@ -1188,7 +1193,17 @@ def _agent(state: AppState, full: bool = True) -> str:
         out.append(
             f"-- workspace: {used.files} files, {used.folders} folders, {used.size} B{split}\n" + "\n".join(lines)
         )
-        out.append(_workspace_texts(workspace, tree.entries))
+        with state.db.connection() as conn:
+            where, params = agent.scope().where()
+            books = [
+                str(r["source"])
+                for r in conn.execute(
+                    f"SELECT source, MAX(id) AS newest FROM made_pdfs WHERE {where} AND path LIKE 'books/%'"
+                    " GROUP BY source ORDER BY newest DESC LIMIT ?",
+                    (*params, BOOK_SOURCES),
+                )
+            ]
+        out.append(_workspace_texts(workspace, workspace.walk(WORKSPACE_ALL).entries, books))
     except Exception as exc:  # noqa: BLE001
         out.append(f"-- workspace: unreadable ({exc})")
     return "\n".join(out)
@@ -1213,10 +1228,14 @@ def _listing(conn: Any, scope: Any, row: Any) -> dict[str, Any]:
     return shown
 
 
-def _workspace_texts(workspace: Any, entries: list[Any]) -> str:
+def _workspace_texts(workspace: Any, entries: list[Any], first: list[str] | None = None) -> str:
     """The workspace's text files, the newest first, each whole up to WORKSPACE_FILE_CHARS; a longer one its start and
-    its end (0.40.1)."""
-    files = sorted((e for e in entries if not e.is_dir and kind_of(e.path) == "text"), key=lambda e: -e.modified)
+    its end (0.40.1). 0.40.2: the files ``first`` (the newest books' sources) before the others."""
+    ahead = {path: n for n, path in enumerate(first or [])}
+    files = sorted(
+        (e for e in entries if not e.is_dir and kind_of(e.path) == "text"),
+        key=lambda e: (ahead.get(e.path, len(ahead)), -e.modified),
+    )
     parts: list[str] = []
     used = 0
     for index, entry in enumerate(files):

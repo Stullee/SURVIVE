@@ -66,6 +66,10 @@ WRITING_LINE = 8.0  # mm between writing lines
 GAP_LINES = 2  # 0.39.6: a book's writing lines that end a page with room for this many more below them are named
 FOOTER_SPACE = 8.0
 SPLITS_SHOWN = 6  # 0.39.1: the pages a book's checks name, at most
+# 0.40.2: a book's column to write words in, narrower than this, is named (live: 'Text' 12 mm, 'Ziel' 10 mm; a
+# receipt's number fits in 14)
+NARROW_MM = 13.0
+NARROW_LETTERS = 4  # 0.40.2: ... a column whose header has a word this long (a number's column, 'Nr.', is narrow)
 PROSE_WORDS = 40  # 0.39.2: a paragraph longer makes its part a chapter, which runs on, not a page to fill in
 _TOKENS = re.compile(r"\n|[^\S\n]+|\S+")
 
@@ -292,6 +296,9 @@ class Renderer:
         self.body_lh = t.size * t.line_height * MM_PER_PT
         self.gap = t.size * 0.62 * MM_PER_PT
         self.splits: list[int] = []  # 0.39.1: the pages a table to fill in ran on from
+        # 0.40.2: a book's tables to fill in with a column to write words in under NARROW_MM: by their header, the
+        # narrow columns (name, mm), every column (name, mm) and the pages the table is on
+        self.narrow: dict[tuple[str, ...], tuple[list[tuple[str, float]], list[tuple[str, float]], list[int]]] = {}
         self.gaps: list[int] = []  # 0.39.6: the pages whose writing lines end with room for GAP_LINES more below them
 
     # --- the document ---
@@ -336,6 +343,14 @@ class Renderer:
                 self.report.warn(
                     f"a table to fill in runs on to the next page from {_pages(self.splits)}: in a book keep each on "
                     "its page (fewer rows, a smaller size or line_height, or a pagebreak before it)"
+                )
+            for narrow, columns, pages in self.narrow.values():  # 0.40.2 (analysis-0.40.1, 3.2)
+                named = ", ".join(f"'{name}' {mm:.0f} mm" for name, mm in narrow)
+                every = ", ".join(f"{name} {mm:.0f}" for name, mm in columns)
+                self.report.warn(
+                    f"a column to write in is narrow: {named} ({every} mm) on {_pages(pages)}: give it the width with"
+                    " shorter words in the other columns' headers (a column is at least as wide as its longest word)"
+                    " and the dashes of the line under the header, its share of the width (|---|----|------------|)"
                 )
             if self.gaps:  # 0.39.6: the owner's rejection of request #120, "extend the lines for the notes"
                 self.report.warn(
@@ -385,6 +400,24 @@ class Renderer:
         if flow.bottom - (flow.y - self.gap) >= GAP_LINES * WRITING_LINE and flow.page not in self.gaps:
             self.gaps.append(flow.page)
 
+    def _narrow(self, flow: Flow, block: Table, widths: list[float]) -> None:
+        """0.40.2 (analysis-0.40.1, 3.2): a book's table to fill in whose column for words (a header word of
+        NARROW_LETTERS letters or more: 'Text', 'Ziel', not 'Nr.') comes out under NARROW_MM. Live, the Kassenbuch's
+        'Text' was 12 mm on 48 pages, and the Fahrtenbuch's 'Ziel', for an address, 10 mm."""
+        if not self.document.settings.page.endswith("in") or block.header is None or not _to_fill(block):
+            return
+        names = [" ".join(plain(cell).split()) for cell in block.header]
+        narrow = [
+            (name, mm)
+            for name, mm in zip(names, widths, strict=True)
+            if mm < NARROW_MM and any(len(w) >= NARROW_LETTERS for w in re.findall(r"[^\W\d_]+", name))
+        ]
+        if not narrow:
+            return
+        _, _, pages = self.narrow.setdefault(tuple(names), (narrow, list(zip(names, widths, strict=True)), []))
+        if flow.page not in pages:
+            pages.append(flow.page)
+
     @staticmethod
     def _overran(flow: Flow, start: int, form: bool, overruns: list[int]) -> None:
         end = flow.page - 1 if flow.at_top and flow.page > start else flow.page
@@ -404,7 +437,7 @@ class Renderer:
         elif not isinstance(block, Heading):
             return
         if isinstance(after, Table):
-            start: Block = Table(after.header, after.rows[:1], after.align)
+            start: Block = Table(after.header, after.rows[:1], after.align, after.widths)
         else:
             start = Lines(min(after.count, 2))
         if not flow.fits(self.measure([block, start], flow.width, look)):
@@ -637,9 +670,13 @@ class Renderer:
                 if words:
                     minimum[c] = max(minimum[c], max(w.width for w in words) + 2 * pad_x)
                     natural[c] = max(natural[c], sum(w.width + w.space for w in words) + 2 * pad_x)
+        if block.widths is not None:  # 0.40.2: the dashes under its header set them (each still its longest word)
+            natural = [share * flow.width for share in block.widths]
         widths = _share(flow.width, minimum, natural)
         if sum(minimum) > flow.width + 0.01:
             self.report.warn("a table is too wide for its column: words in it were split; use fewer columns")
+        if not flow.dry and flow.bottom != math.inf:
+            self._narrow(flow, block, widths)
         heights: list[float] = []
         cell_lines: list[list[list[Line]]] = []
         for r, row in enumerate(rows):

@@ -1098,7 +1098,7 @@ def project_stopped(
         return held
     if own is not None and not is_channel(own):
         return None
-    names = [channel] if channel else [name for name, table in CHANNEL_TABLES if _lists_in(conn, table, project_id)]
+    names = [channel] if channel else [name for name, table in CHANNEL_TABLES if lists_in(conn, table, project_id)]
     stopped = [channel_stopped(conn, scope, name) for name in names]
     return stopped[0] if stopped and all(v is not None for v in stopped) else None
 
@@ -1109,9 +1109,10 @@ def channel_stopped(conn: sqlite3.Connection, scope: AgentScope, channel: str) -
     return owner_stopped(conn, scope, row["id"]) if row is not None else None
 
 
-def _lists_in(conn: sqlite3.Connection, table: str, project_id: int) -> bool:
+def lists_in(conn: sqlite3.Connection, table: str, project_id: int) -> bool:
     """Whether a product line has listings in ``table`` (etsy_listings, printify_products), as metrics.listings
-    counts them: made (a listing number), by its request's project or its cycle's (0.39.8: or moved to it)."""
+    counts them: made (a listing number), by its request's project or its cycle's (0.39.8: or moved to it). 0.40.2:
+    plan.py reads it too (a line with an Etsy listing is no KDP book)."""
     return (
         conn.execute(
             f"SELECT 1 FROM {table} l JOIN approvals a ON a.id = l.approval_id LEFT JOIN cycles y ON y.id = a.cycle_id"

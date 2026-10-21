@@ -42,6 +42,11 @@ cap), for whatever step was ready: the critic's chores on listings 1 to 3 people
 had chosen 4 to 6 hours each time, with reasons ("No urgent action possible until that approval lands"). Now only work
 counts (plan._works): a step that is urgent, or one that makes or ships on a channel above its floor; a chore or a
 report leaves the agent's own sleep standing. A venture's step still counts: exploring is work.
+
+0.40.2 (analysis-0.40.1, 3.4): live on 2026-10-21 the cut came every 30 minutes from 12:06 for a brainstorm and a
+triage (six ideas, all parked, the next brainstorm ready at once) and for marketing steps of lines the daily review had
+stopped. A venture's step counts only when it is urgent (the owner's wish, a park within days), and a review's stop
+holds its line (plan._review_holds).
 """
 
 from __future__ import annotations

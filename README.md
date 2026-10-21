@@ -479,6 +479,20 @@ for its day, a request waiting for you no longer wakes Ember after 4 hours when
 your decision wakes it anyway, `etsy_listing` shows what the quality critic
 found, and the diagnostics show a long file's start and end.
 
+0.40.2: the fixes from the diagnostics report of 2026-10-21 (the analysis of
+0.40.1). Two books are on Amazon and a third is ready, but on 10-21 a cycle came
+every half hour for a brainstorm, a triage and the blog posts of lines the daily
+review had stopped. A step of the ventures cuts Ember's sleep only when it is
+urgent, a brainstorm rests while none of the last one's ideas went on past
+triage, and Ember's code holds a line the review says stop until you keep or
+drop it. KDP's weekly limit counts KDP's week, from Sunday 00:00 UTC (the last 7
+days held the Kassenbuch a day past it), and a promise of no line can wait for
+its day. A book that prints a placeholder ("[Verlag/Herausgeber]") is never
+proposed, and a table's dashes set its columns' widths: the Kassenbuch's "Text"
+column was 12 mm. A line with an Etsy listing is no longer made a KDP book by a
+check run in one of its cycles, you can add a book's Amazon link to a request
+marked done without it, and the diagnostics show the books' sources.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
