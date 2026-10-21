@@ -512,6 +512,22 @@ has 52 blank pages. The shareable report no longer holds the database (it took 2
 seconds with a full mailbox) and also hides phone numbers, IBANs, the KDP author
 and the SFTP login; the website's download counts only once the zip is saved.
 
+0.41.0: the structural changes the codebase analysis of 0.40.1 left for later.
+The plan and the tools read each rule from one place, so a step a tool would
+refuse waits (with the tool's words on the Plan tab) instead of costing a cycle;
+notes Ember writes are cut instead of refused; and each work step shows how much
+of the cycle's conversation is used. Ember keeps 1 GB free on its device, prunes
+the kept texts of deleted files, and Home Assistant backups skip the pre-upgrade
+database copies. The Python process runs as the unprivileged user `ember`, which
+can read its options but not change them. A rate-limited listing, pin or post
+stays approved and is retried, and a card whose file changed can't be approved.
+On the dashboard, "Treat usage.X as standard price" settles an episode of
+uncertain bills once you have checked the Console, **Keep as charged** hides the
+small interrupted-calls warning, and a 401 from Home Assistant's Ingress after the
+page sat idle is retried quietly instead of reading "Ember refused the request".
+CI measures coverage with a floor, pins its actions, audits the dependencies
+(Pillow 13 fixes eight advisories) and runs weekly.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
@@ -621,7 +637,15 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   and the agent hasn't read that email yet, the email waits until it has, and an
   approved email not sent within 7 days of its approval isn't sent at all. A send
   is recorded before it starts and never retried
-  (`ember/app/integrations/executor.py`). The kill switch stops whatever
+  (`ember/app/integrations/executor.py`). 0.41.0: when Etsy, Pinterest or
+  Bluesky answers "too many requests" (429, or 503 with Retry-After) before
+  anything changed (no draft, no part of a change, no new board, no post), an
+  approved listing, change, pin or post stays approved and Ember's code tries it
+  again when the service said (1 minute to 6 hours later, at most 3 times),
+  through every check again (`ember/app/integrations/retry.py`). Nothing that may
+  have changed something is tried again, nor anything an unlock approved, nor an
+  email. A card whose file changed since it was proposed says so, and its
+  Approve is refused. The kill switch stops whatever
   Ember's code hasn't begun, also in the middle of a round (0.37.3). A Reddit
   post becomes a link the owner opens and posts from their own account; a KDP
   book (0.25.0) becomes a package the owner publishes at KDP from their own
