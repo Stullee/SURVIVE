@@ -1684,6 +1684,19 @@ no longer shown); a study that failed three times stops until you press
   Ember's code can undo it. A listing, or a change to one, with fewer than 5
   photos (the one **QA** number: the Etsy guide, the plan's defects and the
   `qa_clean` metric read it too) says so on its card before you decide.
+  Since 0.41.0 the card of a listing, a change, a pin, a post or a Printify
+  product says which of its files changed since it was proposed (as a KDP
+  book's does): Ember uploads only the files as proposed, so **Approve** is
+  refused for it; reject it and ask the agent to propose it again.
+- **Asked to wait** (0.41.0): when Etsy, Pinterest or Bluesky answers "too many
+  requests" (or "down for now, come back later") before anything changed (no
+  draft, no part of a change, no new board, no post yet), the approved request
+  stays approved: Ember tries it again when the service said, at least a minute
+  and at most 6 hours later, with every check again (the kill switch, a pause,
+  the files, the daily limit, the publishing queue), at most 3 times, then it
+  fails as before. Its card says when; **Cancel** still stops it. A request your
+  unlock approved isn't tried again (the agent proposes it again), nor is an
+  email, nor anything that may have changed something.
 - **Autonomy** (0.13.0): on the Plan tab, each open product (0.35.0) and each
   open milestone's card has an **Autonomy** box. There you can let Ember's code carry out a few small kinds
   of request for that milestone without your click. Each is off (**Ask me**)

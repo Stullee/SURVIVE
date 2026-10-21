@@ -21,6 +21,10 @@ one is deleted, so the listing never is without them. A refusal before anything 
 changed 'partial'; anything unclear is 'unclear'. The row keeps the listing as it is afterwards (as far as Ember
 knows), for the agent's etsy_listing and the next change. Nothing is ever changed twice.
 
+0.41.0 (M3): when Etsy asks Ember's code to come back later (HTTP 429, or 503 with Retry-After) at the draft or at a
+change's first request, before anything changed, the request stays approved and is tried again then, at most
+retry.TRIES times (retry.py); a refusal after the draft exists or after a part changed stays as it was.
+
 ``sync`` (in the scheduler's rounds, so while the agent sleeps too, and at the start of a wake cycle; at most every
 SYNC_MINUTES, well within the 6 hours Etsy's API terms allow for listing content) records each listing's state, views
 and favorites, and the orders that hold Ember's listings: dates, totals and which listings, never who bought.
@@ -48,7 +52,7 @@ from ..config import Settings
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
 from ..economy.ledger import dollars_to_micros
-from . import connectors, etsy, printify_publisher, qa
+from . import connectors, etsy, printify_publisher, qa, retry
 from .etsy import Edit, EtsyError, Listing, NotSent, Shop, Unclear, Upload
 
 log = logging.getLogger(__name__)
@@ -85,7 +89,10 @@ def execution(
 ) -> dict[str, Any] | None:
     """What happened to an approved listing, for the dashboard (None before approval)."""
     listing = conn.execute("SELECT * FROM etsy_listings WHERE approval_id = ?", (row["id"],)).fetchone()
-    if listing is not None:
+    retry_at = retry.waiting(conn, row["id"])  # 0.41.0 (M3): Etsy asked to wait
+    if retry_at is not None and created_today(conn, clock, scope) < daily_limit:
+        return retry.execution(listing, retry_at, listing_id=None)
+    if listing is not None and retry_at is None:
         return {
             "status": listing["status"],
             "started_at": listing["started_at"],
@@ -106,7 +113,8 @@ def waiting(conn: sqlite3.Connection, scope: AgentScope) -> int:
     return int(
         conn.execute(
             f"SELECT COUNT(*) FROM approvals WHERE {where} AND executor = 'etsy_listing' AND status IN {APPROVED}"
-            " AND NOT EXISTS (SELECT 1 FROM etsy_listings x WHERE x.approval_id = approvals.id)",
+            " AND (NOT EXISTS (SELECT 1 FROM etsy_listings x WHERE x.approval_id = approvals.id)"
+            f" OR {retry.waiting_sql('approvals')})",  # 0.41.0 (M3): one Etsy asked to wait, too
             params,
         ).fetchone()[0]
     )
@@ -226,6 +234,9 @@ def open_edit(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> i
 def edit_execution(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any] | None:
     """What happened to an approved change, for the dashboard (None before approval)."""
     edit = conn.execute("SELECT * FROM etsy_edits WHERE approval_id = ?", (row["id"],)).fetchone()
+    retry_at = retry.waiting(conn, row["id"])  # 0.41.0 (M3): Etsy asked to wait
+    if retry_at is not None:
+        return retry.execution(edit, retry_at, listing_id=edit["listing_id"])
     if edit is not None:
         return {
             "status": edit["status"],
@@ -276,22 +287,22 @@ class Publisher:
             for approval_id in [] if undos else self._approved(scope, "etsy_listing", "etsy_listings"):
                 outcome = self._one(shop, scope, approval_id)
                 done.append((approval_id, outcome))
-                if outcome == connectors.HALTED:
-                    return done  # 0.37.3: the kill switch came on: the rest waits
+                if outcome in (connectors.HALTED, retry.LATER):
+                    return done  # 0.37.3: the kill switch came on (0.41.0: or Etsy asked to wait): the rest waits
                 if outcome == "waiting_limit":
                     break  # the rest waits for tomorrow too, in order
             for approval_id in self._approved(scope, "etsy_edit", "etsy_edits", undos):  # changes: no daily limit
                 outcome = self._change(shop, scope, approval_id)
                 done.append((approval_id, outcome))
-                if outcome == connectors.HALTED:
-                    break  # 0.37.3: the kill switch came on: the rest waits
+                if outcome in (connectors.HALTED, retry.LATER):
+                    break  # 0.37.3: the kill switch came on (0.41.0: or Etsy asked to wait): the rest waits
             return done
         finally:
             self._lock.release()
 
     def _approved(self, scope: AgentScope, executor: str, table: str, undos: bool = False) -> list[int]:
-        """The approved requests of ``executor`` that Ember's code hasn't started (no row in ``table``), oldest
-        first; with ``undos``, only the owner's Undo."""
+        """The approved requests of ``executor`` that Ember's code hasn't started (no row in ``table``; 0.41.0: or
+        that Etsy asked to wait until now), oldest first; with ``undos``, only the owner's Undo."""
         where, params = scope.where()
         undo = " AND EXISTS (SELECT 1 FROM action_undos u WHERE u.approval_id = approvals.id)" if undos else ""
         with self.db.connection() as conn:
@@ -299,8 +310,9 @@ class Publisher:
                 r[0]
                 for r in conn.execute(
                     f"SELECT id FROM approvals WHERE {where} AND executor = ? AND status IN {APPROVED}"
-                    f" AND NOT EXISTS (SELECT 1 FROM {table} x WHERE x.approval_id = approvals.id){undo} ORDER BY id",
-                    (*params, executor),
+                    f" AND (NOT EXISTS (SELECT 1 FROM {table} x WHERE x.approval_id = approvals.id)"
+                    f" OR {retry.retry_at_sql('approvals')} <= ?){undo} ORDER BY id",
+                    (*params, executor, to_iso(self.clock.now())),
                 )
             ]
 
@@ -313,8 +325,9 @@ class Publisher:
                 (approval_id, *params),
             ).fetchone()
             started = conn.execute("SELECT 1 FROM etsy_listings WHERE approval_id = ?", (approval_id,)).fetchone()
-            if row is None or row["status"] not in APPROVED or started is not None:
-                return "skipped"  # cancelled or decided meanwhile
+            again = started is not None and retry.due(conn, approval_id, self.clock.now())  # 0.41.0 (M3)
+            if row is None or row["status"] not in APPROVED or (started is not None and not again):
+                return "skipped"  # cancelled or decided meanwhile (or Etsy's wait isn't over)
             if connectors.halted(conn):
                 return connectors.HALTED  # 0.37.3: the kill switch came on while this round ran
             if created_today(conn, self.clock, scope) >= self.settings.etsy_listings_per_day:
@@ -325,15 +338,16 @@ class Publisher:
                 title = listing.title
                 photos, files = self._read(listing)
             except EtsyError as exc:
-                self._start(conn, scope, approval_id, stamp, title or row["title"][:140])
+                self._start(conn, scope, approval_id, stamp, title or row["title"][:140], again)
                 return self._failed(conn, approval_id, str(exc))
-            self._start(conn, scope, approval_id, stamp, listing.title)
+            self._start(conn, scope, approval_id, stamp, listing.title, again)
         # Committed: from here on this listing is never created a second time, whatever happens.
         try:
             with _guard(shop):
                 listing_id = shop.create_draft(listing)
-        except NotSent as exc:
-            return self._after(approval_id, "failed", None, f"Not listed: Etsy refused it ({exc})")
+        except NotSent as exc:  # 0.41.0 (M3): Etsy asking to come back later is no refusal: no draft exists
+            waits = self._wait("etsy_listings", approval_id, exc)
+            return waits or self._after(approval_id, "failed", None, f"Not listed: Etsy refused it ({exc})")
         except Exception as exc:  # noqa: BLE001 - Unclear, or anything else: a draft may exist
             error = str(exc) if isinstance(exc, Unclear) else type(exc).__name__
             if not isinstance(exc, EtsyError):
@@ -423,13 +437,31 @@ class Publisher:
         return "failed"
 
     @staticmethod
-    def _start(conn: sqlite3.Connection, scope: AgentScope, approval_id: int, stamp: str, title: str) -> None:
-        conn.execute(
-            "INSERT INTO etsy_listings (mode, session, approval_id, started_at, status, title)"
-            " VALUES (?, ?, ?, ?, 'running', ?)",
-            (scope.mode, scope.session, approval_id, stamp, title[:140]),
-        )
+    def _start(
+        conn: sqlite3.Connection, scope: AgentScope, approval_id: int, stamp: str, title: str, again: bool = False
+    ) -> None:
+        if again:  # 0.41.0 (M3): Etsy asked to wait: its row is tried again
+            retry.reopen(conn, "etsy_listings", approval_id, stamp, title=title[:140])
+        else:
+            conn.execute(
+                "INSERT INTO etsy_listings (mode, session, approval_id, started_at, status, title)"
+                " VALUES (?, ?, ?, ?, 'running', ?)",
+                (scope.mode, scope.session, approval_id, stamp, title[:140]),
+            )
         connectors.begin(conn, approval_id, stamp)  # 0.13.0: its listing's number comes when it is finished
+
+    def _wait(self, table: str, approval_id: int, exc: Exception) -> str | None:
+        """0.41.0 (M3): Etsy asked to come back later before anything changed (``etsy.Busy``): the request stays
+        approved and is tried again then (retry.park). None when it may not wait (an unlock's, or it waited
+        retry.TRIES times): it fails as before."""
+        if not isinstance(exc, etsy.Busy):
+            return None
+        with self.db.transaction() as conn:
+            if not retry.may_wait(conn, approval_id):
+                return None
+            note = retry.park(conn, table, approval_id, exc, self.clock, "Etsy")
+        events.record(self.db, "warning", "etsy", f"Request #{approval_id}: {note}"[:300])
+        return retry.LATER
 
     def _close(self, conn: sqlite3.Connection, approval_id: int, outcome: str, note: str, link: str | None) -> None:
         """Close the approval (unless the owner did meanwhile): the agent hears the result at its next wake."""
@@ -467,8 +499,9 @@ class Publisher:
                 f"SELECT * FROM approvals WHERE id = ? AND {where} AND executor = 'etsy_edit'", (approval_id, *params)
             ).fetchone()
             started = conn.execute("SELECT 1 FROM etsy_edits WHERE approval_id = ?", (approval_id,)).fetchone()
-            if row is None or row["status"] not in APPROVED or started is not None:
-                return "skipped"  # cancelled or decided meanwhile
+            again = started is not None and retry.due(conn, approval_id, self.clock.now())  # 0.41.0 (M3)
+            if row is None or row["status"] not in APPROVED or (started is not None and not again):
+                return "skipped"  # cancelled or decided meanwhile (or Etsy's wait isn't over)
             if connectors.halted(conn):
                 return connectors.HALTED  # 0.37.3: the kill switch came on while this round ran
             try:
@@ -482,9 +515,9 @@ class Publisher:
                     raise EtsyError(f"#{edit.listing_id} isn't one of the listings Ember made (live)")
                 photos, files = self._uploads(edit.photos or ()), self._uploads(edit.files or ())
             except EtsyError as exc:
-                self._start_change(conn, scope, approval_id, listing_id, stamp)
+                self._start_change(conn, scope, approval_id, listing_id, stamp, again=again)
                 return self._change_failed(conn, approval_id, str(exc))
-            self._start_change(conn, scope, approval_id, edit.listing_id, stamp, before)
+            self._start_change(conn, scope, approval_id, edit.listing_id, stamp, before, again)
             if differs:
                 return self._send_back(conn, scope, row, differs)
         # Committed: from here on this change is never made a second time, whatever happens.
@@ -641,6 +674,7 @@ class Publisher:
         progress: list[str] = []  # uploads and deletions of the photos or files being replaced
         halfway: set[str] = set()  # parts left half replaced
         status, error = "done", None
+        refusal: NotSent | None = None
         try:
             with _guard(shop):
                 for parts, step in steps:
@@ -653,12 +687,16 @@ class Publisher:
                         raise
                     made.update(parts)
         except NotSent as exc:
-            status, error = ("partial" if made or halfway else "failed"), str(exc)
+            status, error, refusal = ("partial" if made or halfway else "failed"), str(exc), exc
         except Exception as exc:  # noqa: BLE001 - Unclear, or anything else: something may have changed
             status = "unclear"
             error = str(exc) if isinstance(exc, EtsyError) else type(exc).__name__
             if not isinstance(exc, EtsyError):
                 log.exception("Changing Etsy listing %d (request #%d) failed", listing_id, approval_id)
+        if status == "failed" and refusal is not None:  # 0.41.0 (M3): nothing changed, so Etsy may ask to wait
+            waits = self._wait("etsy_edits", approval_id, refusal)
+            if waits:
+                return waits
         if leftover and "files" in made:  # 0.23.0: not replaced, whatever the steps said: the record keeps the old
             made.discard("files")
             halfway.add("files")
@@ -683,12 +721,16 @@ class Publisher:
         listing_id: int,
         stamp: str,
         before: Listing | None = None,
+        again: bool = False,
     ) -> None:
-        conn.execute(
-            "INSERT INTO etsy_edits (mode, session, approval_id, listing_id, started_at, status)"
-            " VALUES (?, ?, ?, ?, ?, 'running')",
-            (scope.mode, scope.session, approval_id, listing_id, stamp),
-        )
+        if again:  # 0.41.0 (M3): Etsy asked to wait: its row is tried again
+            retry.reopen(conn, "etsy_edits", approval_id, stamp, listing_id=listing_id)
+        else:
+            conn.execute(
+                "INSERT INTO etsy_edits (mode, session, approval_id, listing_id, started_at, status)"
+                " VALUES (?, ?, ?, ?, ?, 'running')",
+                (scope.mode, scope.session, approval_id, listing_id, stamp),
+            )
         # 0.13.0: the shared journal, with the listing as it was (what changing it back restores)
         connectors.begin(conn, approval_id, stamp, str(listing_id), before.to_action() if before else None)
 

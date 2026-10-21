@@ -21,6 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Res
 from . import diagnostics
 from . import events as event_log
 from .agent import owner as owner_side
+from .agent import views
 from .agent.views import WorkspaceFileError
 from .db import utcnow
 from .economy.ledger import OWNER_KINDS
@@ -456,6 +457,12 @@ def decide_approval(request: Request, approval_id: ItemId, body: Annotated[Any, 
     actions = _owner_actions(request)
     if actions is None:
         return NO_AGENT
+    approving = isinstance(body, dict) and body.get("decision") in ("approve", "approve_with_changes")
+    changed = views.changed_files(_state(request).agent, approval_id) if approving else []
+    if changed:  # 0.41.0 (analysis-0.40.1 codebase, M4): the owner saw other bytes than Ember's code would upload
+        name = _state(request).loaded.settings.agent_name
+        why = f"{', '.join(changed)} changed since {name} proposed this: reject it and ask {name} to propose it again"
+        return JSONResponse({"error": why, "field": "decision"}, status_code=409)
     reply = actions.decide(approval_id, body, _owner(request))
     _poke_executor(request, reply)
     rejected = reply.status == 200 and reply.body["approval"]["status"] == "rejected"

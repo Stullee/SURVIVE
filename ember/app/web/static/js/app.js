@@ -2835,6 +2835,7 @@
   var LISTING_EXECUTION = {
     waiting: { icon: "◔", label: "Waiting to be listed", tone: "accent" },
     waiting_limit: { icon: "◔", label: "Waiting for tomorrow's listing limit", tone: "warning" },
+    retrying: { icon: "◷", label: "Etsy asked to wait", tone: "warning" },
     running: { icon: "●", label: "Being created at Etsy", tone: "accent" },
     active: { icon: "✓", label: "Live on Etsy", tone: "good" },
     draft: { icon: "!", label: "A draft at Etsy: finish it there", tone: "warning" },
@@ -2844,6 +2845,7 @@
 
   var CHANGE_EXECUTION = {
     waiting: { icon: "◔", label: "Waiting to be made", tone: "accent" },
+    retrying: { icon: "◷", label: "Etsy asked to wait", tone: "warning" },
     running: { icon: "●", label: "Being made at Etsy", tone: "accent" },
     done: { icon: "✓", label: "Changed at Etsy", tone: "good" },
     partial: { icon: "!", label: "Partly changed: check it at Etsy", tone: "warning" },
@@ -2903,6 +2905,7 @@
         h("strong", { text: "Never automatic: " }), arr(a.never).join("; ") + ". It waits for you, whatever you unlocked.") : null,
       arr(a.qa).length ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "! " }),
         h("strong", { text: "QA (Ember's code): " }), arr(a.qa).join("; ") + ".") : null,
+      changedFilesBox(a, name),  // 0.41.0 (M4)
       executor === "email" && a.first_contact ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "! " }),
         h("strong", { text: "First email to this address." }), " Cold advertising emails are illegal in Germany (§ 7 UWG). Approve only if this person asked to hear from you.") : null,
       note ? h("p", { class: "todo-note" }, h("span", { "aria-hidden": "true", text: "☐ " }), note) : null,
@@ -2969,6 +2972,23 @@
       h("pre", { class: "payload capped", tabindex: "0", "data-copy": "body", text: asText(action.body) }));
   }
 
+  // 0.25.0 (a KDP book's), 0.41.0 (M4: every card whose files Ember's code uploads only as proposed): a file the
+  // workspace no longer holds as it was proposed, so what the card shows of it isn't what the request carries.
+  function changedMark(f, advice) {
+    return f && f.unchanged === false ? h("strong", { class: "kdp-changed", text: " changed or deleted since it was proposed: " + advice }) : null;
+  }
+
+  // 0.41.0 (M4): the files of a card (a listing's, a change's, a pin's, a post's, a product's) that changed since it was
+  // proposed, each with the KDP card's mark: the owner can't approve other bytes than Ember's code would upload.
+  function changedFilesBox(a, name) {
+    var changed = arr(a.files).filter(function (f) { return isObject(f) && f.unchanged === false; });
+    if (!changed.length) return null;
+    var advice = a.status === "pending" ? "it can't be approved: reject it and ask " + name + " to propose it again"
+      : name + " uploads only what you approved, so it won't carry this out";
+    return h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "! " }),
+      changed.map(function (f, i) { return [i ? h("br") : null, String(f.path), changedMark(f, advice)]; }));
+  }
+
   // 0.25.0: a book for Amazon KDP, which the owner publishes from their account: every field as KDP asks for it, the
   // files as they are in the workspace now (a file changed since it was proposed is flagged), and KDP's AI question.
   function kdpDraft(a) {
@@ -2991,7 +3011,7 @@
         h("dt", { text: "Files" }), h("dd", null, files.map(function (f, i) {
           var role = f.role === "cover" ? "Cover" : paperback ? "Interior" : "Manuscript";
           return [i ? h("br") : null, role + ": ", h("a", { href: wsProductUrl(String(f.path), false), text: String(f.path) }), " (" + byteSize(num(f.bytes) || 0) + ")",
-            f.unchanged === false ? h("strong", { class: "kdp-changed", text: " changed or deleted since it was proposed: check it, or reject and ask for it again" }) : null];
+            changedMark(f, "check it, or reject and ask for it again")];
         }), files.length ? [h("br"), workspaceButton(files.map(function (f) { return f.path; }))] : null),
         h("dt", { text: "AI content" }), h("dd", { text: "KDP asks whether AI tools made the book: " + asText(info.ai_answer) })),
       !paperback && files.length > 1 ? h("div", { class: "etsy-photos kdp-cover" }, h("a", { href: wsProductUrl(String(files[1].path), true), target: "_blank", rel: "noopener" },
@@ -3020,6 +3040,7 @@
     var detail;
     if (st === "waiting") detail = [name + " creates it by itself shortly; it checks for approved listings every few minutes."];
     else if (st === "waiting_limit") detail = [name + " has created its listings for today, so this one waits for tomorrow's limit."];
+    else if (st === "retrying") detail = retryDetail(ex, "Etsy");
     else if (st === "running") detail = ex.started_at ? ["Creating it at Etsy since ", timeEl(ex.started_at), "."] : ["Creating it now."];
     else if (st === "active") detail = ["Live since ", timeEl(ex.finished_at || ex.started_at), ex.url ? [": ", etsyLink(ex.url, ex.url)] : "."];
     else if (st === "draft") detail = [ex.result ? endSentence(sentence(ex.result)) : "It stayed a draft at Etsy: finish it there."];
@@ -3033,7 +3054,7 @@
   }
 
   // A listing the agent proposed: its words, and its photos and files as they are in the workspace now (Ember
-  // uploads them only if they are still exactly the ones proposed).
+  // uploads them only if they are still exactly the ones proposed; 0.41.0: the card marks one that isn't).
   function etsyDraft(action, final) {
     var photos = arr(action.photos);
     var files = arr(action.files);
@@ -3061,6 +3082,7 @@
     var name = agentName();
     var detail;
     if (st === "waiting") detail = [name + " makes it by itself shortly; it checks for approved changes every few minutes."];
+    else if (st === "retrying") detail = retryDetail(ex, "Etsy");
     else if (st === "running") detail = ex.started_at ? ["Changing it at Etsy since ", timeEl(ex.started_at), "."] : ["Changing it now."];
     else if (st === "done") detail = ["Changed ", timeEl(ex.finished_at || ex.started_at), ex.url ? [": ", etsyLink(ex.url, ex.url)] : "."];
     else if (ex.result) detail = [endSentence(sentence(ex.result))];
@@ -3119,6 +3141,13 @@
       h("p", { class: "execution-detail" }, detail));
   }
 
+  // 0.41.0 (M3): an approved request whose service asked Ember's code to come back later, before anything changed: when
+  // it is tried again (a pin's or post's slot, no earlier), and what the service said.
+  function retryDetail(ex, service) {
+    var due = ex.due_at ? [timeEl(ex.due_at, fmtDateTime(ex.due_at)), " (", relTime(ex.due_at), ")"] : "later";
+    return [service + " asked to wait: retrying ", due, ex.error ? ". It answered: " + endSentence(String(ex.error)) : "."];
+  }
+
   // 0.37.8: an approved pin or post in the publishing queue: when its slot comes, and what set it (the channel's hours,
   // the gap after the last one, a listing's last pin or post, the daily limit).
   function queuedDetail(ex) {
@@ -3131,6 +3160,7 @@
     waiting: { icon: "◔", label: "Waiting", tone: "accent" },
     scheduled: { icon: "◷", label: "In the queue", tone: "accent" },
     waiting_limit: { icon: "◔", label: "Waiting for tomorrow's limit", tone: "warning" },
+    retrying: { icon: "◷", label: "Pinterest asked to wait", tone: "warning" },
     running: { icon: "●", label: "At Pinterest now", tone: "accent" },
     active: { icon: "✓", label: "Pinned", tone: "good" },
     deleted: { icon: "–", label: "Deleted", tone: "" },
@@ -3145,6 +3175,7 @@
     if (st === "waiting") detail = [name + (executorOf(a) === "pinterest_delete" ? " deletes it" : " makes it") + " by itself shortly; it checks every few minutes."];
     else if (st === "scheduled") detail = queuedDetail(ex);
     else if (st === "waiting_limit") detail = [name + " has made its pins for today, so this one waits for tomorrow's limit."];
+    else if (st === "retrying") detail = retryDetail(ex, "Pinterest");
     else if (st === "running") detail = ex.started_at ? ["At Pinterest since ", timeEl(ex.started_at), "."] : ["At Pinterest now."];
     else if (st === "active") detail = ["Pinned ", timeEl(ex.finished_at || ex.started_at), ex.url && !a.simulated ? [": ", pinterestLink(ex.url, ex.url)] : "."];
     else if (ex.result) detail = [endSentence(sentence(ex.result))];
@@ -3159,6 +3190,7 @@
     waiting: { icon: "◔", label: "Waiting", tone: "accent" },
     scheduled: { icon: "◷", label: "In the queue", tone: "accent" },
     waiting_limit: { icon: "◔", label: "Waiting for tomorrow's limit", tone: "warning" },
+    retrying: { icon: "◷", label: "Bluesky asked to wait", tone: "warning" },
     running: { icon: "●", label: "At Bluesky now", tone: "accent" },
     active: { icon: "✓", label: "Posted", tone: "good" },
     deleted: { icon: "–", label: "Deleted", tone: "" },
@@ -3173,6 +3205,7 @@
     if (st === "waiting") detail = [name + (executorOf(a) === "bluesky_delete" ? " deletes it" : " posts it") + " by itself shortly; it checks every few minutes." + (ex.result ? " " + endSentence(sentence(ex.result)) : "")];
     else if (st === "scheduled") detail = queuedDetail(ex);
     else if (st === "waiting_limit") detail = [name + " has made its posts for today, so this one waits for tomorrow's limit."];
+    else if (st === "retrying") detail = retryDetail(ex, "Bluesky");
     else if (st === "running") detail = ex.started_at ? ["At Bluesky since ", timeEl(ex.started_at), "."] : ["At Bluesky now."];
     else if (st === "active") detail = ["Posted ", timeEl(ex.finished_at || ex.started_at), ex.url && !a.simulated ? [": ", blueskyLink(ex.url, ex.url)] : "."];
     else if (ex.result) detail = [endSentence(sentence(ex.result))];
@@ -3351,12 +3384,12 @@
       }
       if (executor === "etsy_listing") {
         var ls = executionStatus(a);
-        return ls === "waiting" || ls === "waiting_limit" ? [panelButton(it, "failed", "Cancel listing", true)] : [];
+        return ls === "waiting" || ls === "waiting_limit" || ls === "retrying" ? [panelButton(it, "failed", "Cancel listing", true)] : [];
       }
-      if (executor === "etsy_edit") return executionStatus(a) === "waiting" ? [panelButton(it, "failed", "Cancel change", true)] : [];
+      if (executor === "etsy_edit") return /^(waiting|retrying)$/.test(executionStatus(a)) ? [panelButton(it, "failed", "Cancel change", true)] : [];
       if (isAsIs(a)) {
         var ps = executionStatus(a);
-        return ps === "waiting" || ps === "waiting_limit" || ps === "scheduled" ? [panelButton(it, "failed", "Cancel", true)] : [];
+        return ps === "waiting" || ps === "waiting_limit" || ps === "scheduled" || ps === "retrying" ? [panelButton(it, "failed", "Cancel", true)] : [];
       }
       var tools = [];
       if (executor === "reddit_link") {

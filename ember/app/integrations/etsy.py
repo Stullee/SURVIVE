@@ -44,6 +44,7 @@ from ..agent import econ
 from ..config import Settings
 from ..economy.clock import Clock, from_iso, to_iso
 from ..logging_setup import register_secret
+from . import retry
 
 API_HOST = "api.etsy.com"
 API_URL = f"https://{API_HOST}"
@@ -86,6 +87,10 @@ class EtsyError(ValueError):
 
 class NotSent(EtsyError):
     """Etsy refused a request before anything changed."""
+
+
+class Busy(retry.Busy, NotSent):
+    """0.41.0 (M3): Etsy asked Ember's code to come back later (HTTP 429, or 503 with Retry-After): nothing changed."""
 
 
 class Unclear(EtsyError):

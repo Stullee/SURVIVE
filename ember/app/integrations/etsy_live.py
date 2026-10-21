@@ -2,8 +2,9 @@
 
 Every request goes to https://api.etsy.com (anything else is refused before it leaves, and redirects aren't
 followed), with the owner's app key (``x-api-key``: keystring and shared secret) and, for the shop, the OAuth
-access token, refreshed when it is about to expire. Errors come back as ``NotSent`` (Etsy refused: nothing changed)
-or ``Unclear`` (a timeout or a lost connection: something may have changed). Responses are size-limited and never
+access token, refreshed when it is about to expire. Errors come back as ``NotSent`` (Etsy refused: nothing changed;
+0.41.0: ``Busy`` when it asked to come back later) or ``Unclear`` (a timeout or a lost connection: something may have
+changed). Responses are size-limited and never
 logged; tokens and the shared secret are registered for log redaction.
 """
 
@@ -22,6 +23,7 @@ import httpx2
 from ..config import Settings
 from ..economy.clock import Clock, to_iso
 from ..logging_setup import register_secret
+from . import retry
 from .etsy import (
     API_HOST,
     API_URL,
@@ -30,6 +32,7 @@ from .etsy import (
     OAUTH_ENDPOINT,
     QUANTITY,
     REFRESH_EARLY,
+    Busy,
     EtsyError,
     Listing,
     Market,
@@ -101,7 +104,7 @@ def _send(client: httpx2.Client, method: str, path: str, *, changes: bool, **kwa
                 if len(body) > MAX_RESPONSE_BYTES:
                     raise NotSent("Etsy's answer was too large")
             status = response.status_code
-            retry = response.headers.get("retry-after")
+            retry_after, date = response.headers.get("retry-after"), response.headers.get("date")
     except EtsyError:
         raise
     except (httpx2.ConnectError, httpx2.ConnectTimeout) as exc:
@@ -119,8 +122,9 @@ def _send(client: httpx2.Client, method: str, path: str, *, changes: bool, **kwa
         str(data.get("error") or data.get("error_description") or "").strip()[:200] if isinstance(data, dict) else ""
     )
     message = f"HTTP {status}" + (f": {detail}" if detail else "")
-    if status == 429:
-        message += f" (too many requests; retry after {retry or '?'} s)"
+    if retry.asks_to_wait(status, retry_after, date):  # 0.41.0 (M3): Etsy's "come back later": nothing changed
+        wait = retry.seconds(retry_after, date)
+        raise Busy(message + retry.said(status, wait), wait)
     if status >= 500 and changes:
         raise Unclear(message)
     raise NotSent(message)

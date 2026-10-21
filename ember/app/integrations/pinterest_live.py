@@ -4,9 +4,9 @@ Every request goes to https://api.pinterest.com (0.30.2: or, with the sandbox op
 at https://api-sandbox.pinterest.com; anything else is refused before it leaves, and redirects aren't followed), with
 the OAuth access token, refreshed when it is about to expire (the token endpoint takes the app's id and
 secret as HTTP Basic). Errors come back as ``NotSent`` (Pinterest refused: nothing changed; ``Gone`` for what isn't
-there; 0.30.1: a refusal of the app's Trial access says it needs Standard access) or ``Unclear`` (a timeout or a lost
-connection: something may have changed). Responses are size-limited and never logged; tokens and the app secret are
-registered for log redaction.
+there; 0.30.1: a refusal of the app's Trial access says it needs Standard access; 0.41.0: ``Busy`` when it asked to come
+back later) or ``Unclear`` (a timeout or a lost connection: something may have changed). Responses are size-limited and
+never logged; tokens and the app secret are registered for log redaction.
 """
 
 from __future__ import annotations
@@ -23,10 +23,12 @@ import httpx2
 from ..config import Settings
 from ..economy.clock import Clock, from_iso, to_iso
 from ..logging_setup import register_secret
+from . import retry
 from .pinterest import (
     API_HOST,
     AccountInfo,
     Board,
+    Busy,
     Gone,
     NotSent,
     Pin,
@@ -98,6 +100,7 @@ def _send(client: httpx2.Client, method: str, path: str, *, changes: bool, **kwa
                 if len(body) > MAX_RESPONSE_BYTES:
                     raise NotSent("Pinterest's answer was too large")
             status = response.status_code
+            retry_after, date = response.headers.get("retry-after"), response.headers.get("date")
     except PinterestError:
         raise
     except (httpx2.ConnectError, httpx2.ConnectTimeout) as exc:
@@ -116,6 +119,9 @@ def _send(client: httpx2.Client, method: str, path: str, *, changes: bool, **kwa
     if status == 403 and client.base_url.host == API_HOST and any(word in detail.lower() for word in TRIAL_WORDS):
         raise NotSent(NEEDS_STANDARD)
     message = f"HTTP {status}" + (f": {detail}" if detail else "")
+    if retry.asks_to_wait(status, retry_after, date):  # 0.41.0 (M3): Pinterest's "come back later": nothing changed
+        wait = retry.seconds(retry_after, date)
+        raise Busy(message + retry.said(status, wait), wait)
     if status >= 500 and changes:
         raise Unclear(message)
     raise (Gone if status == 404 else NotSent)(message)
