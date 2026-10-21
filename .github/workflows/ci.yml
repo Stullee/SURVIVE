@@ -108,7 +108,8 @@ jobs:
           test -f "$RUNNER_TEMP/data/ember.db"
       - name: The app runs as the user ember, which can read its options but not change them
         run: |
-          pid=$(docker exec ember pgrep -xf "python3 -m app")
+          # A part of the command line, not all of it: under QEMU (arm64) the emulator stands in front of it.
+          pid=$(docker exec ember pgrep -o -f "python3 -m app")
           docker exec ember cat "/proc/$pid/status" > "$RUNNER_TEMP/app-status"
           grep -E '^(Uid|Gid|Groups):' "$RUNNER_TEMP/app-status"
           # Real, effective, saved and filesystem UID and GID: all ember's (1000), none root's.
