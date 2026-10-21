@@ -40,7 +40,7 @@ import logging
 import re
 import secrets
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -2206,7 +2206,7 @@ def _workspace_write(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outco
     kept = _keep_version(ctx, conn, path, mode)  # 0.33.0: what it held, before it changes
     if mode == "delete":
         ctx.workspace.delete(path)
-        return Outcome(True, f"Deleted {path}.{_restorable(kept)}", f"deleted {path}")
+        return Outcome(True, f"Deleted {path}.{_restorable(kept, VERSIONS_GONE_DAYS)}", f"deleted {path}")
     content = args.get("content")
     if not content:
         raise ToolError("content is required unless mode is delete or restore")
@@ -2260,8 +2260,48 @@ def keep_version(
     return True
 
 
-def _restorable(kept: bool) -> str:
-    return " Its text before is kept: restore brings it back." if kept else ""
+# 0.41.0 (analysis-0.40.1 codebase, 6.2 disk): the kept texts of a file that is gone (deleted, or renamed: a copy and a
+# delete; or a past dry-run session's) stay this many days after the newest of them, so restore brings back a file
+# deleted lately; then Ember's code prunes them (once a day, scheduler.py). They were kept for good, and versioned names
+# (-v3 ... -v22) multiplied them. All kept texts together take at most VERSIONS_MAX_BYTES, the oldest going first.
+VERSIONS_GONE_DAYS = 14
+VERSIONS_MAX_BYTES = 50 * 1024 * 1024
+
+
+def prune_versions(conn: Any, workspaces: Mapping[tuple[str, int], Jail], now: datetime) -> int:
+    """0.41.0: delete the kept texts of the files that are gone, VERSIONS_GONE_DAYS after their newest, and the oldest
+    beyond VERSIONS_MAX_BYTES; returns how many were deleted. ``workspaces``: the folder of each (mode, session) whose
+    files still exist (the live workspace, the dry-run session's): any other's are gone."""
+    stale = conn.execute(
+        "SELECT mode, session, path FROM workspace_versions GROUP BY mode, session, path HAVING MAX(created_at) < ?",
+        (to_iso(now - timedelta(days=VERSIONS_GONE_DAYS)),),
+    ).fetchall()
+    deleted = 0
+    for mode, session, path in stale:
+        if not _still_there(workspaces.get((mode, session)), path):
+            deleted += conn.execute(
+                "DELETE FROM workspace_versions WHERE mode = ? AND session = ? AND path = ?", (mode, session, path)
+            ).rowcount
+    deleted += conn.execute(
+        "DELETE FROM workspace_versions WHERE id IN (SELECT id FROM (SELECT id, SUM(length(CAST(content AS BLOB)))"
+        " OVER (ORDER BY id DESC) AS kept FROM workspace_versions) WHERE kept > ?)",
+        (VERSIONS_MAX_BYTES,),
+    ).rowcount
+    return deleted
+
+
+def _still_there(jail: Jail | None, path: str) -> bool:
+    try:
+        return jail is not None and jail.size_of(path, "text") is not None
+    except SandboxError:  # a folder of that name now, or a link: no text of it to restore
+        return False
+
+
+def _restorable(kept: bool, days: int | None = None) -> str:
+    """0.41.0: ``days``, for a deleted file: how long its text is kept (VERSIONS_GONE_DAYS)."""
+    if not kept:
+        return ""
+    return f" Its text before is kept{f' for {days} days' if days else ''}: restore brings it back."
 
 
 def _restore(ctx: ToolContext, conn: Any, path: str) -> Outcome:

@@ -59,7 +59,7 @@ from ..integrations.mail import Mailbox, select_mailbox
 from ..integrations.pinterest_connection import PinterestConnection
 from ..integrations.printify_connection import PrintifyConnection
 from ..products import blog, site
-from . import agenda, audit, metrics, netguard, news, policy, stages, store, ventures, website, workfiles
+from . import agenda, audit, metrics, netguard, news, policy, stages, store, tools, ventures, website, workfiles
 from . import plan as plan_tree
 from .loop import NO_STEP, CycleEnd, CycleRunner, expire_requests, recover_records
 from .memory import CAPS, Memory
@@ -92,6 +92,7 @@ WAITING_SLEEP_MINUTES = 240
 SLEEP_REASON_CHARS = 200  # of the agent's reason for its sleep, in the next wake's reason
 SHOP_RETRY = timedelta(minutes=etsy_publisher.SYNC_MINUTES)  # after a failed check of the Etsy shop
 CHECK_HOUR = 8  # the owner's hour a waiting milestone's check wakes the agent, on its day (0.12.0)
+DRY_RUN_FOLDER_KEY = "agent.dry_run.folder_session"  # the dry-run session whose files are in dry_run/workspace
 
 
 def cycles_enabled_by_env() -> bool:
@@ -245,7 +246,9 @@ class Agent:
 
     def roots(self) -> tuple[Jail, Jail]:
         base = paths.data_dir() / "dry_run" if self.mode == "dry_run" else paths.data_dir()
-        return Jail(base / "workspace"), Jail(base / "memory")
+        # 0.41.0 (analysis-0.40.1 codebase, 6.2 disk): the memory's three files (7 KB at most, each version kept in
+        # the database too) are written whatever the free space, so a full disk never keeps the agent from starting
+        return Jail(base / "workspace"), Jail(base / "memory", floor=0)
 
     def memory(self, scope: AgentScope | None = None) -> Memory:
         return Memory(self.db, self.roots()[1], scope or self.scope())
@@ -354,8 +357,7 @@ class Agent:
 
     def _rotate_dry_run_folders(self) -> None:
         session = str(self.economy.life.session())
-        key = "agent.dry_run.folder_session"
-        if self.db.get_meta(key) == session:
+        if self.db.get_meta(DRY_RUN_FOLDER_KEY) == session:
             return
         base = paths.data_dir() / "dry_run"
         for name in ("workspace", "memory"):
@@ -363,7 +365,20 @@ class Agent:
             if current.exists():
                 shutil.rmtree(previous, ignore_errors=True)
                 current.rename(previous)
-        self.db.set_meta(key, session)
+        self.db.set_meta(DRY_RUN_FOLDER_KEY, session)
+
+    def prune_versions(self) -> int:
+        """0.41.0 (analysis-0.40.1 codebase, 6.2 disk): the kept texts of the files that are gone
+        (tools.prune_versions), in every mode and session: the live workspace's and the dry-run session's files are
+        looked up, whichever mode runs now; a past dry-run session's folder is gone. The scheduler calls it daily."""
+        base = paths.data_dir()
+        folders = {("live", 0): base / "workspace"}
+        session = self.db.get_meta(DRY_RUN_FOLDER_KEY) or ""
+        if session.isdigit():
+            folders[("dry_run", int(session))] = base / "dry_run" / "workspace"
+        workspaces = {key: Jail(folder) for key, folder in folders.items() if folder.is_dir()}
+        with self.db.transaction() as conn:
+            return tools.prune_versions(conn, workspaces, self.clock.now())
 
     # --- deciding ---
 

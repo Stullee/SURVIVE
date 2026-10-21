@@ -255,6 +255,10 @@ def _backup(conn: sqlite3.Connection, backup_dir: Path, current_version: int) ->
     dest = sqlite3.connect(target)
     try:
         conn.backup(dest)
+    except sqlite3.Error:
+        dest.close()
+        target.unlink(missing_ok=True)  # 0.41.0 (analysis-0.40.1 codebase, 6.2 disk): a copy a full disk cut short
+        raise
     finally:
         dest.close()
     backups = sorted(backup_dir.glob("ember-schema*.db"))

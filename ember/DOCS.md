@@ -3542,4 +3542,14 @@ folders, and the same two folders for dry
 run under `dry_run` (started fresh with every dry-run session). Home Assistant backups include
 it. The app is stopped briefly while a backup is taken so the database is copied
 in a consistent state. Before a database upgrade, Ember also keeps a copy in
-`/data/backups`.
+`/data/backups` (the newest 10). Home Assistant's backups leave these copies
+out: each backup holds the database itself, and the backup Home Assistant
+offers before an app update holds it as it was before the upgrade.
+
+Ember keeps 1 GB free on the disk that holds `/data`, for its database: a file
+the agent writes in its workspace, or a workshop run's file, that would leave
+less is refused, and the agent is told to delete files it no longer needs or to
+ask you. The dashboard (System) shows the free space and warns below 1 GB. The
+text a workspace file held before the agent overwrote or deleted it is kept for
+`restore`: a deleted file's for 14 days, and all of them together take at most
+50 MB.

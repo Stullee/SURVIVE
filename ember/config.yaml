@@ -28,6 +28,14 @@ host_network: false
 # Stop the app while Home Assistant takes a backup, so the SQLite database in
 # /data is copied in a consistent state.
 backup: cold
+# Left out of Home Assistant's backups: only the copies of the database Ember
+# makes in /data/backups before each upgrade (the newest 10, each as large as
+# the database). Every backup holds the database itself, and the one Home
+# Assistant offers before an app update holds it as it was before. The
+# Supervisor matches a pattern against the end of each file's path; the
+# workspace can't hold a .db file.
+backup_exclude:
+  - "backups/ember-schema*.db"
 
 watchdog: "http://[HOST]:[PORT:8099]/api/health"
 

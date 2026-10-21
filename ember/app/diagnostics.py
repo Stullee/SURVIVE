@@ -32,12 +32,12 @@ from datetime import UTC, datetime
 from importlib import metadata
 from typing import TYPE_CHECKING, Any
 
-from . import privacy
+from . import paths, privacy
 from .agent import library, plan, ventures
 from .agent.context import RESEARCH_HEADING
 from .agent.sandbox import kind_of
 from .agent.tools import LIBRARY_TOOLS
-from .db import utcnow
+from .db import MAX_BACKUPS, utcnow
 from .economy.clock import to_iso
 from .economy.costs import micros_to_usd
 from .economy.ledger import Scope
@@ -537,8 +537,8 @@ def _versions(names: tuple[str, ...]) -> dict[str, str]:
 
 def _database(state: AppState) -> str:
     if state.db_error:
-        return f"unavailable: {state.db_error}"
-    lines = [f"file: {state.db.path} ({_size(state.db.path)})"]
+        return f"unavailable: {state.db_error}\n{_disk()}"
+    lines = [f"file: {state.db.path} ({_size(state.db.path)})", _disk()]
     with state.db.connection() as conn:
         lines.append(f"schema version: {conn.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0]}")
         for table in TABLES:
@@ -550,6 +550,33 @@ def _database(state: AppState) -> str:
         integrity = conn.execute("PRAGMA quick_check").fetchone()[0]
     lines.append(f"quick_check: {integrity}")
     return "\n".join(lines)
+
+
+def _disk() -> str:
+    """0.41.0 (analysis-0.40.1 codebase, 6.2 disk): the free space on the data folder's disk against the floor that
+    refuses workspace writes and workshop files, and the database's copies kept before its upgrades."""
+    disk = paths.storage()
+    if disk["free_bytes"] is None:
+        line = f"disk: free space unknown ({disk['error']})"
+    else:
+        low = "; LOW: workspace writes and workshop files are refused" if disk["low"] else ""
+        line = (
+            f"disk: {paths.size_text(disk['free_bytes'])} free on the data folder's disk (Ember keeps "
+            f"{paths.size_text(disk['floor_bytes'])} free{low})"
+        )
+    copies = sorted(paths.backups_dir().glob("ember-schema*.db"))
+    size = sum(_bytes(copy) for copy in copies)
+    return (
+        f"{line}\nbackups: {len(copies)} copies from before upgrades, {size / 1024:.0f} KB (the newest {MAX_BACKUPS}"
+        " are kept)"
+    )
+
+
+def _bytes(path: Any) -> int:
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return 0
 
 
 def _size(path: Any) -> str:

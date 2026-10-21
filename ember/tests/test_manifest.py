@@ -46,6 +46,7 @@ ALLOWED_KEYS = {
     "hassio_api",
     "host_network",
     "backup",
+    "backup_exclude",  # 0.41.0: only the database's copies from before its upgrades (tests/test_disk_space.py)
     "watchdog",
     "options",
     "schema",
@@ -63,6 +64,8 @@ def test_least_privilege() -> None:
     assert MANIFEST["init"] is False  # s6-overlay v3 must be PID 1
     assert MANIFEST.get("panel_admin", True) is True  # only admins get the control panel
     assert MANIFEST["backup"] == "cold"  # a consistent copy of the SQLite database
+    # 0.41.0: never the database, the options, the tokens or the workspace (what tests/test_disk_space.py checks)
+    assert MANIFEST.get("backup_exclude", []) == ["backups/ember-schema*.db"]
 
 
 def test_no_build_yaml_and_local_build() -> None:

@@ -806,6 +806,10 @@
     if (arr(sys.config_corrections).length) {
       list.push({ kind: "error", icon: "✕", title: "Some app options don't fit together, so " + name + " corrected them until you fix them in the app's Configuration tab.", items: sys.config_corrections });
     }
+    // 0.41.0 (analysis-0.40.1 codebase, 6.2 disk)
+    if (isObject(sys.storage) && sys.storage.low) {
+      list.push({ kind: "warning", icon: "!", title: "The device is low on space (" + byteSize(sys.storage.free_bytes) + " free on /data). " + name + " keeps " + byteSize(sys.storage.floor_bytes) + " free for its database, so it refuses new workspace files and workshop output until there is room: free space on the device, or ask " + name + " in the Inbox to delete files it no longer needs." });
+    }
     if (arr(sys.price_warnings).length) {
       list.push({ kind: "warning", icon: "!", title: "Some prices in the app options look too low, so costs would be under-counted. Check the price table in the app's Configuration tab.", items: sys.price_warnings });
     }
@@ -1011,7 +1015,7 @@
     setBadge("badge-roadmap", c.overdue, "▲", "overdue milestones");
     setBadge("badge-roadmap-proposals", c.proposals, "◔", "proposed dates waiting for your decision");
     var sys = d.system;
-    setBadge("badge-system", arr(sys.config_errors).length + arr(sys.config_corrections).length + (isObject(sys.database) && sys.database.ok === false ? 1 : 0) + (sys.economy_broken ? 1 : 0), "!", "need attention");
+    setBadge("badge-system", arr(sys.config_errors).length + arr(sys.config_corrections).length + (isObject(sys.database) && sys.database.ok === false ? 1 : 0) + (sys.economy_broken ? 1 : 0) + (isObject(sys.storage) && sys.storage.low ? 1 : 0), "!", "need attention");
   }
 
   function isUnread(m) { return isObject(m) && m.sender === "agent" && !m.read_at; }
@@ -4503,12 +4507,21 @@
       isObject(d.models) ? [h("dt", { text: "Models" }), h("dd", { text: modelsText(d.models) })] : null,
       h("dt", { text: "API key" }), h("dd", { text: options.anthropic_api_key_set ? "Set (hidden)" : "Not set" }),
       h("dt", { text: "Database" }), h("dd", { text: db.ok ? "OK, schema version " + db.schema_version : "Error: " + db.error }),
+      isObject(s.storage) ? [h("dt", { text: "Storage" }), h("dd", { text: storageText(s.storage) })] : null,
       h("dt", { text: "Economy" }), h("dd", { text: s.economy_error ? "Not available: " + s.economy_error
         : s.economy_broken ? "Spending stopped until the app restarts: " + s.economy_broken : d.agent ? "OK" : "Not available" }),
       h("dt", { text: "Sensor URL" }), h("dd", null, h("code", { text: s.sensor_url }),
         h("span", { class: "muted small", text: " for a Home Assistant REST sensor (see the app's Documentation tab)" })),
     ]);
     replace($("options"), optionsTable(options));
+  }
+
+  // 0.41.0 (analysis-0.40.1 codebase, 6.2 disk): the free space on /data, against the floor Ember keeps for its database
+  function storageText(st) {
+    if (typeof st.free_bytes !== "number") return "Free space unknown" + (st.error ? " (" + st.error + ")" : "");
+    var text = byteSize(st.free_bytes) + " free on /data";
+    return st.low ? text + ": under the " + byteSize(st.floor_bytes) + " Ember keeps free for its database, so it refuses new workspace files and workshop output"
+      : text + " (Ember keeps " + byteSize(st.floor_bytes) + " free for its database)";
   }
 
   // 0.12.0: which model does what, and the research model's check (its first questions go to both models)

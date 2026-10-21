@@ -9,9 +9,10 @@ file outside the workspace, such as the database, is refused), and FIFOs or
 devices are never opened for reading. Writes go to a temporary file created
 with ``O_EXCL`` next to the target, are flushed to disk, and replace the old
 file atomically, so a crash never leaves a half-written file. Size, file-count
-and total quotas are checked before a write. A name is used exactly as given
-(nothing is trimmed, no control characters), so no other name on disk can pass
-for a valid one, and listings leave any other name out.
+and total quotas are checked before a write, and (0.41.0) so is the device's
+free space: a write never leaves less than ``paths.FREE_FLOOR_BYTES``. A name is
+used exactly as given (nothing is trimmed, no control characters), so no other
+name on disk can pass for a valid one, and listings leave any other name out.
 
 The agent works while the owner reads: listings skip an entry deleted between
 reading its folder and looking at it, a file replaced while it is opened reads
@@ -37,10 +38,12 @@ import os
 import re
 import secrets
 import stat
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
+
+from .. import paths
 
 NAME_CHARS = 64  # a file or folder name (0.12.0: the workshop is told it)
 NAME = re.compile(
@@ -129,9 +132,20 @@ class Usage(NamedTuple):
 class Jail:
     """File access below one root folder."""
 
-    def __init__(self, root: Path, limits: Limits | None = None) -> None:
+    def __init__(
+        self,
+        root: Path,
+        limits: Limits | None = None,
+        *,
+        floor: int = paths.FREE_FLOOR_BYTES,
+        free: Callable[[Path], int] | None = None,
+    ) -> None:
         self.root = root
         self.limits = limits or Limits()
+        # 0.41.0 (analysis-0.40.1 codebase, 6.2 disk): the bytes a write leaves free on the device at least (0: none),
+        # and how the free bytes are read (paths.free_bytes, looked up at each write; a test gives its own)
+        self.floor = floor
+        self.free = free
         # 0.26.0: while a tool call runs, the files it wrote or deleted ("write" or "delete", path), so Ember's code
         # records which project they were for (agent/workfiles.py). None: nobody watches.
         self.noticed: list[tuple[str, str]] | None = None
@@ -379,6 +393,7 @@ class Jail:
                     f"text files take at most {self.limits.max_total_bytes // (1024 * 1024)} MB in the workspace; "
                     "delete old ones first"
                 )
+            self.room_on_disk(len(data))
             _replace(folder, name, data)
         self._notice("write", [*folders, name])
         return len(data)
@@ -403,9 +418,20 @@ class Jail:
                     f"products take at most {limits.max_product_total_bytes // (1024 * 1024)} MB in the workspace; "
                     "delete old ones first"
                 )
+            self.room_on_disk(len(data))
             _replace(folder, name, bytes(data))
         self._notice("write", [*folders, name])
         return len(data)
+
+    def room_on_disk(self, size: int) -> None:
+        """0.41.0 (analysis-0.40.1 codebase, 6.2 disk): refuse a write of ``size`` bytes that would leave less than
+        the floor free on the device. The quotas above are blind to it: 2 GB of products fill a small card, and then
+        the database can't grow. The new file is written whole before the old one goes, so all of it counts."""
+        if self.floor <= 0:
+            return
+        free = (self.free or paths.free_bytes)(self.root)
+        if free - size < self.floor:
+            raise QuotaError(paths.disk_full_text(free, self.floor))
 
     def _room_for_folders(self, folders: list[str]) -> None:
         """Refuse a path whose new folders would be more than the workspace may hold."""
