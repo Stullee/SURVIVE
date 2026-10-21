@@ -27,7 +27,9 @@ the next day, one whose own requests are on their way waits on them (``candidate
 needs a request of the owner's gets a step to propose it again (``_again``). 0.37.9: a step whose work one of the
 owner's limits would refuse waits on it (``limits``: a pin or a post while the publishing queue is full, a report once
 the day's messages are sent; 0.38.1 a listing, a change of one or a product while the sell requests that may wait
-for the owner wait), and a promise to report weighs as a report (``_kind``).
+for the owner wait), and a promise to report weighs as a report (``_kind``). 0.41.0: each of those rules, and KDP's
+week and a first listing's demand note, is the tool's own precondition (preconditions.py), which the plan asks for
+the tool a step's work needs: the step waits with the tool's words (``_limited``).
 """
 
 from __future__ import annotations
@@ -36,13 +38,27 @@ import json
 import re
 import sqlite3
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from typing import Any
 
 from ..economy.clock import from_iso, local_date, to_iso
 from ..integrations import publish_queue
-from . import critic, demand, desk, metrics, obligations, policy, reach, roadmap, store, templates, ventures, weights
+from . import (
+    critic,
+    demand,
+    desk,
+    metrics,
+    obligations,
+    policy,
+    preconditions,
+    reach,
+    roadmap,
+    store,
+    templates,
+    ventures,
+    weights,
+)
 from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope, canonical, sha256
 
 SEQUENTIAL = (
@@ -1334,6 +1350,7 @@ def _owner_candidates(
                 "owner",
                 reason,
                 stale is not None,
+                _words(facts, step, capped, reason),
             )
         )
     return found
@@ -2233,12 +2250,14 @@ class Candidate:
     step: weights.Step
     stage: str
     # why it can't be taken now ('owner', 'channel', 'upgrade', 'step', 'hold'; 0.37.6 'approved', 'tried'; 0.37.9 a
-    # limit of the owner's, ``limits``: 'queue', 'messages'; 0.38.1 'sales'; 0.39.6 'views'; 0.40.3 'unread'), None:
-    # ready
+    # limit of the owner's, ``limits``: 'queue', 'messages'; 0.38.1 'sales'; 0.39.6 'views'; 0.40.3 'unread'; 0.41.0
+    # 'blocked', another precondition of its tool's), None: ready
     waiting: str | None
     # 0.37.6: a cycle took it, and nothing its check reads moved since (it waits 'tried' while that was today; ready
     # again the next day for a try, it doesn't cut a cycle's sleep: busy)
     tried: bool = False
+    # 0.41.0: the words its tool would refuse it with, while it waits on one of the tools' preconditions (REFUSED)
+    refused: str | None = None
 
 
 def _waiting(row: Mapping[str, Any], channels: Mapping[str, bool]) -> str | None:
@@ -2385,9 +2404,10 @@ def candidates(
     blog post while the publishing queue takes no more ('queue'), a report to the owner once the day's messages that
     answer none of theirs are sent ('messages'; ``day_start``: when the owner's day began, their clock's); 0.38.1 a
     listing, a change of one, a product or a book proposed while the sell requests that may wait for the owner wait
-    ('sales')."""
+    ('sales'). 0.41.0: each the tool's own precondition, and so is any other of its tool's ('blocked': KDP's week, a
+    first listing's demand note), with the tool's words (Candidate.refused)."""
     facts = Facts(conn, scope, now)
-    capped = limits(conn, scope, day_start or _midnight(today))
+    capped = limits(conn, scope, day_start or _midnight(today), now)
     factors = _channel_factors(conn, scope, now)
     missed = _missed(conn, scope, today)
     worked = _worked(conn, scope)
@@ -2503,6 +2523,7 @@ def candidates(
                     str(stage["stage"]),
                     reasons[step["id"]],
                     stale[step["id"]] is not None,
+                    _words(facts, step, capped, reasons[step["id"]]),
                 )
             )
         for stage, step in owed:
@@ -2531,6 +2552,7 @@ def candidates(
                     str(stage["stage"]),
                     reason,
                     tried is not None,
+                    _words(facts, step, capped, reason),
                 )
             )
     found += _owner_candidates(facts, today, channels, lately, picks, capped)  # 0.37.0: what is owed of no product
@@ -2785,7 +2807,7 @@ def _owners(facts: Facts, row: Mapping[str, Any], line: int | None) -> str:
     return "owner" if flying else "step"
 
 
-# --- the owner's limits (0.37.9) ---
+# --- the owner's limits (0.37.9), and the tools' other preconditions (0.41.0) ---
 
 # 0.37.9: two limits of the owner's that only the tools enforced (analysis-0.37.8, 6.3 and 6.4): the publish requests
 # that may wait for them (store.PENDING_CAPS, and since 0.37.8 a channel's pins or posts waiting for them or their slot,
@@ -2793,7 +2815,30 @@ def _owners(facts: Facts, row: Mapping[str, Any], line: int | None) -> str:
 # cycles #192 to #221, 9 took a pin, a post or a blog post while the queue was full ($2.57) and 7 a report to the owner
 # after the day's messages were sent ($1.55; five in a row, #193 to #197): each step looked ready, cut the sleep to the
 # owner's shortest and paid for a plan whose request the tool then refused. Now such a step waits on the limit
-# ('queue', 'messages', ``candidates``) and cuts no sleep (``busy``).
+# ('queue', 'messages', ``candidates``) and cuts no sleep (``busy``). 0.41.0 (analysis-0.40.1 codebase, 6.2.1): the
+# plan copied each rule (0.38.1 the sell requests, 0.40.3 the unread messages) and knew neither KDP's week nor a first
+# listing's demand note: it asks the tools' own preconditions now (preconditions.py), one rule each, for the tool a
+# step's work needs (``_calls``), and the step waits with the tool's words ('blocked' for a rule that is no limit of
+# the owner's).
+
+# 0.41.0: the tool that makes each kind of request a step's check counts, by its executor (PUBLISHES: by its channel)
+CALLED = {
+    "pinterest_pin": "propose_pin",
+    "bluesky_post": "propose_bluesky_post",
+    "site_post": "propose_blog_post",
+    "site_links": "propose_link_page",
+    "reddit_link": "propose_reddit_post",
+    "etsy_listing": "propose_etsy_listing",
+    "etsy_edit": "propose_etsy_edit",
+    "printify_product": "propose_printify_product",
+    "printify_edit": "propose_printify_edit",
+    "kdp_package": "propose_kdp_book",
+    "email": "propose_email",
+}
+PUBLISHES = {channel: CALLED[executor] for channel, executor in CHANNEL_EXECUTORS.items()}
+_CHECKED_BOOK = re.compile(r"KDP would take this (ebook|paperback) ")  # a propose_kdp_book check's result
+# the waits the tools' preconditions set: each carries the tool's words (Candidate.refused)
+REFUSED = frozenset(rule.wait for rules in preconditions.TOOLS.values() for rule in rules)
 
 
 @dataclass(frozen=True)
@@ -2803,72 +2848,65 @@ class OwnerLimits:
     waiting for the owner or for their slot, the messages of the owner's day that answered none of theirs, and
     whether a message of theirs waits for an answer (one that answers them is no message of that kind: it can carry
     a report). 0.38.1: and the sell requests waiting for the owner (a listing, a change of one, a Printify product, a
-    KDP book). 0.40.3 (analysis-0.40.1 codebase, PL3): and Ember's messages the owner hasn't read yet."""
+    KDP book). 0.40.3 (analysis-0.40.1 codebase, PL3): and Ember's messages the owner hasn't read yet. 0.41.0
+    (analysis-0.40.1 codebase, 6.2.1): read by the tools' own preconditions (``facts``: preconditions.Facts without a
+    call's), not by counts compared with copies of their limits; and the tools' other rules a step can run into (KDP's
+    week, a first listing's demand note), each asked once a keep or a pick (``refusal``)."""
 
-    publish: int = 0
-    queued: Mapping[str, int] = field(default_factory=dict)
-    messages: int = 0
-    asked: bool = False
-    sell: int = 0
-    # 0.39.6: what each queue channel's approved requests waiting for their slot link (publish_queue.slotted's keys)
-    slotted: Mapping[str, frozenset[str]] = field(default_factory=dict)
-    unread: int = 0  # 0.40.3: Ember's messages the owner hasn't read (store.unread_messages)
+    facts: preconditions.Facts
+    asked: bool = False  # a message of the owner's waits for an answer
+    seen: dict[tuple[Any, ...], tuple[preconditions.Rule, str] | None] = field(
+        default_factory=dict, compare=False, repr=False
+    )
+
+    def refusal(self, tool: str, **call: Any) -> tuple[preconditions.Rule, str] | None:
+        """What ``tool`` would refuse now by a rule the plan can know, with the rule (preconditions.refusal), for a call
+        about ``call`` (preconditions.Facts' fields)."""
+        key = (tool, *sorted(call.items()))
+        if key not in self.seen:
+            self.seen[key] = preconditions.refusal(tool, replace(self.facts, **call))
+        return self.seen[key]
 
     def full(self, channel: str | None) -> bool:
         """Whether a request to publish on ``channel`` (a queue channel, else the blog or the link page) would be
         refused now: as many publish requests as may wait for the owner wait, or as many of the channel's pins or
         posts as may wait for the owner or their slot."""
-        if self.publish >= store.PENDING_CAPS["publish"]:
-            return True
-        return channel is not None and self.queued.get(channel, 0) >= publish_queue.WAITING
-
-    @property
-    def told(self) -> bool:
-        """Whether a message that answers none of the owner's would be refused today (unless it reports a promise:
-        ``_let_through``)."""
-        return self.messages >= store.MESSAGES_PER_DAY and not self.asked
-
-    @property
-    def unread_full(self) -> bool:
-        """0.40.3 (analysis-0.40.1 codebase, PL3): whether every message would be refused now, a report or an answer
-        too: as many of Ember's as may be unread are (store.MAX_UNREAD_MESSAGES). Live in the audit, a promise to
-        report stayed ready, urgent and YOUR STEP: a cycle a day that ended in the refusal."""
-        return self.unread >= store.MAX_UNREAD_MESSAGES
+        return self.refusal(PUBLISHES.get(channel or "", "propose_link_page"), channel=channel) is not None
 
     @property
     def sales_full(self) -> bool:
         """0.38.1: whether a sell request (a listing, a change of one, a Printify product, a KDP book) would be refused
         now: as many as may wait for the owner wait."""
-        return self.sell >= store.PENDING_CAPS["sell"]
+        return preconditions.SELL.check(self.facts) is not None
 
     def text(self) -> str:
         """The limits in words, for the diagnostics."""
+        conn, scope = self.facts.conn, self.facts.scope
         queued = ", ".join(
-            f"{publish_queue.THINGS[c][1]} {self.queued.get(c, 0)} of {publish_queue.WAITING}"
+            f"{publish_queue.THINGS[c][1]} {len(publish_queue.waiting(conn, scope, c))} of {publish_queue.WAITING}"
             for c in publish_queue.CHANNELS
         )
         return (
-            f"publish requests waiting for the owner {self.publish} of {store.PENDING_CAPS['publish']}; waiting for"
-            f" the owner or their slot: {queued}; sell requests waiting for the owner {self.sell} of"
-            f" {store.PENDING_CAPS['sell']}; messages today that answer none of the owner's {self.messages} of"
+            f"publish requests waiting for the owner {store.pending_of_type(conn, scope, 'publish')} of"
+            f" {store.PENDING_CAPS['publish']}; waiting for the owner or their slot: {queued}; sell requests waiting"
+            f" for the owner {store.pending_of_type(conn, scope, 'sell')} of {store.PENDING_CAPS['sell']}; messages"
+            f" today that answer none of the owner's {store.unasked_since(conn, scope, self.facts.day_start)} of"
             f" {store.MESSAGES_PER_DAY}"
             + ("; a message of the owner's waits for an answer" if self.asked else "")
-            + (f"; all {store.MAX_UNREAD_MESSAGES} of Ember's last messages are unread" if self.unread_full else "")
+            + (
+                f"; all {store.MAX_UNREAD_MESSAGES} of Ember's last messages are unread"
+                if preconditions.UNREAD.check(self.facts)
+                else ""
+            )
         )
 
 
-def limits(conn: sqlite3.Connection, scope: AgentScope, day_start: str) -> OwnerLimits:
+def limits(conn: sqlite3.Connection, scope: AgentScope, day_start: str, now: str | None = None) -> OwnerLimits:
     """The owner's limits (OwnerLimits) now; ``day_start``: when the owner's day began (their clock's day_start), from
-    which message_owner counts the day's messages (tools._unasked_today)."""
-    return OwnerLimits(
-        store.pending_of_type(conn, scope, "publish"),
-        {c: len(publish_queue.waiting(conn, scope, c)) for c in publish_queue.CHANNELS},
-        store.unasked_since(conn, scope, day_start),
-        obligations.messages_waiting(conn, scope) > 0,
-        sell=store.pending_of_type(conn, scope, "sell"),  # 0.38.1
-        slotted={c: frozenset(publish_queue.slotted(conn, scope, c)) for c in publish_queue.CHANNELS},  # 0.39.6
-        unread=store.unread_messages(conn, scope),  # 0.40.3: what message_owner reads
-    )
+    which message_owner counts the day's messages. 0.41.0: ``now``, for KDP's week and a demand note's age (the day's
+    start without it: the counts alone, as the diagnostics show them)."""
+    facts = preconditions.Facts(conn, scope, from_iso(now or day_start), day_start)
+    return OwnerLimits(facts, obligations.messages_waiting(conn, scope) > 0)
 
 
 def _midnight(today: date) -> str:
@@ -2878,40 +2916,85 @@ def _midnight(today: date) -> str:
 
 
 def _limited(facts: Facts, row: Mapping[str, Any], found: OwnerLimits) -> str | None:
-    """Which of the owner's limits a step waits on, None for none: 'queue' when its work is a request to publish (a pin,
-    a post, a blog post, a promise of them: ``_markets``) and its channel takes no more requests (OwnerLimits.full);
-    0.38.1 'sales' when its work is a sell request (``_sells``) and as many as may wait for the owner wait;
-    'messages' when its work is a report to the owner (``_reports``) and today's messages that answer none of theirs
-    are sent, unless a report of it would go through all the same (``_let_through``); 0.40.3 'unread' when its work is
-    a report and the owner hasn't read as many of Ember's messages as may be unread (OwnerLimits.unread_full: no
-    message goes through). Ready again once the owner decides a request or one goes out, the next day, when the owner
-    writes, or (0.40.3) reads."""
-    if _markets(row) and found.full(row["channel"]):
-        return "queue"
-    if _markets(row) and row["channel"] in found.slotted and row["project_id"] is not None:
-        # 0.39.6: each of its line's live listings has a pin (or post) waiting for its slot: the tool refuses another
-        funnel = facts.funnel(int(row["project_id"]))
-        listings = funnel.listings if funnel else []
-        if listings and all(f"listing {n}" in found.slotted[row["channel"]] for n in listings):
-            return "queue"
-    if found.sales_full and _sells(row):
-        return "sales"
-    if found.told and _reports(row) and not _let_through(facts, row):
-        return "messages"
-    if found.unread_full and _reports(row):  # 0.40.3 (PL3): message_owner refuses every message, a report too
-        return "unread"
-    return None
+    """Which of the tools' preconditions a step waits on (preconditions.Rule.wait), None for none: 'queue' when its
+    work is a request to publish (a pin, a post, a blog post, a promise of them) and its channel takes no more requests
+    (0.39.6: or each of its line's live listings has one waiting for its slot); 0.38.1 'sales' when its work is a sell
+    request and as many as may wait for the owner wait; 'messages' when its work is a report to the owner and today's
+    messages that answer none of theirs are sent, unless a report of it would go through all the same
+    (``_let_through``); 0.40.3 'unread' when its work is a report and the owner hasn't read as many of Ember's
+    messages as may be unread (no message goes through). 0.41.0 (analysis-0.40.1 codebase, 6.2.1): the rule the tool
+    itself refuses by (``_refused``), and 'blocked' for one that is no limit of the owner's: a book in a week KDP
+    holds full, a first listing without a demand note of the last 14 days. Ready again once the owner decides a
+    request or one goes out, the next day (KDP's next week), when the owner writes, or (0.40.3) reads, or once a note
+    is written."""
+    refused = _refused(facts, row, found)
+    return refused[0].wait if refused is not None else None
 
 
-def _sells(row: Mapping[str, Any]) -> bool:
-    """0.38.1: whether a step of Ember's has a sell request for its work: each request its check counts is one
-    (store.EXECUTOR_TYPES): "Propose the listing" (the product, the book), proposing one again (``_again``), the
-    critic's fixes (a change of the listing). None of a step whose check counts no request (files, a demand note) or
-    that is the owner's (approving a listing, publishing the book)."""
+def _words(facts: Facts, row: Mapping[str, Any], found: OwnerLimits, reason: str | None) -> str | None:
+    """0.41.0: the words of the refusal a step waits on (Candidate.refused), None while it waits on none."""
+    refused = _refused(facts, row, found) if reason in REFUSED else None
+    return refused[1] if refused is not None else None
+
+
+def _refused(facts: Facts, row: Mapping[str, Any], found: OwnerLimits) -> tuple[preconditions.Rule, str] | None:
+    """0.41.0: what the tool a step's work needs would refuse now by a rule the plan can know (preconditions.TOOLS),
+    with the rule; None while one way to do it goes through (``_calls``)."""
+    ways = [found.refusal(tool, **call) for tool, call in _calls(facts, row, found)]
+    return ways[0] if ways and all(ways) else None
+
+
+def _calls(facts: Facts, row: Mapping[str, Any], found: OwnerLimits) -> list[tuple[str, dict[str, Any]]]:
+    """0.41.0 (analysis-0.40.1 codebase, 6.2.1): the tool calls that would do a step's work, each with what it is about
+    (preconditions.Facts): message_owner for a report (``_reports``: one the day's limit lets through while a message
+    of the owner's waits for the answer that can carry it, or ``_let_through``); for a promise of pins, a post or a
+    blog post its channel's tool; else the tool of each request its check counts (CALLED; none for a step that is the
+    owner's, makes files or writes a note): a pin or a post of any of its line's live listings, a book of its line's
+    format (``_book_format``), a listing of its line."""
     if row["kind"] == templates.OWNER_KIND:
-        return False
-    executors = _executors(row["check_kind"], _spec(row))
-    return bool(executors) and all(store.EXECUTOR_TYPES.get(e) == "sell" for e in executors)
+        return []
+    if _reports(row):
+        return [("message_owner", {"answers": found.asked or _let_through(facts, row)})]
+    if row["kind"] == "promise":
+        tools = [PUBLISHES[row["channel"]]] if row["channel"] in PUBLISHES else []
+    else:
+        tools = [CALLED[e] for e in _executors(row["check_kind"], _spec(row)) if e in CALLED]
+    line = int(row["project_id"]) if row["project_id"] is not None else None
+    calls: list[tuple[str, dict[str, Any]]] = []
+    for tool in tools:
+        channel = next((c for c, t in PUBLISHES.items() if t == tool), None)
+        if channel in publish_queue.CHANNELS:
+            funnel = facts.funnel(line) if line is not None else None
+            links = [(f"listing {n}",) for n in funnel.listings] if funnel is not None and funnel.listings else [()]
+            calls += [(tool, {"channel": channel, "links": these}) for these in links]
+        elif tool == "propose_kdp_book":
+            calls.append((tool, {"line": line, "form": _book_format(facts, line) if line is not None else None}))
+        else:
+            calls.append((tool, {"line": line}))
+    return calls
+
+
+def _book_format(facts: Facts, line: int) -> str | None:
+    """0.41.0: the format of a KDP line's book, as Ember's records say it (KDP counts its week by format): its newest
+    passing package check's ("KDP would take this paperback"), else its newest request's; None: not known."""
+    checked = facts.conn.execute(
+        "SELECT t.result FROM tool_calls t JOIN cycles c ON c.id = t.cycle_id WHERE c.project_id = ? AND c.session = ?"
+        " AND c.simulated = ? AND t.tool = 'propose_kdp_book' AND t.status = 'ok'"
+        " AND json_extract(t.input, '$.check') = 1 ORDER BY t.id DESC LIMIT 1",
+        (line, facts.scope.session, 1 if facts.scope.simulated else 0),
+    ).fetchone()
+    found = _CHECKED_BOOK.search(str(checked["result"] or "")) if checked is not None else None
+    if found:
+        return found[1]
+    where, params = facts.scope.where("a")
+    asked = facts.conn.execute(
+        "SELECT a.action FROM approvals a LEFT JOIN cycles y ON y.id = a.cycle_id"
+        f" WHERE {where} AND COALESCE(a.project_id, y.project_id) = ? AND a.executor = 'kdp_package'"
+        " ORDER BY a.id DESC LIMIT 1",
+        (*params, line),
+    ).fetchone()
+    form = json.loads(asked["action"] or "{}").get("format") if asked is not None else None
+    return str(form) if form else None
 
 
 def _reports(row: Mapping[str, Any]) -> bool:
@@ -2923,18 +3006,12 @@ def _reports(row: Mapping[str, Any]) -> bool:
 
 
 def _let_through(facts: Facts, row: Mapping[str, Any]) -> bool:
-    """Whether a message reporting on a promise goes through the day's limit (tools._reports_promise): one naming it,
-    while it is open and Ember hasn't written to the owner since the message that made it."""
+    """Whether a message reporting on a promise goes through the day's limit: one naming it, while it is open and Ember
+    hasn't written to the owner since the message that made it (0.41.0: preconditions.untold, as message_owner reads
+    it)."""
     if row["kind"] != "promise" or row["obligation_id"] is None:
         return False
-    owed = facts.conn.execute(
-        "SELECT message_id, status FROM obligations WHERE id = ? AND kind = 'promise'", (row["obligation_id"],)
-    ).fetchone()
-    return (
-        owed is not None
-        and owed["status"] == "open"
-        and not obligations.told_since(facts.conn, facts.scope, owed["message_id"])
-    )
+    return preconditions.untold(facts.conn, facts.scope, int(row["obligation_id"]))
 
 
 def busy(conn: sqlite3.Connection, scope: AgentScope, steered: Steer, now: str, cycle_id: int | None = None) -> bool:
@@ -2951,7 +3028,7 @@ def busy(conn: sqlite3.Connection, scope: AgentScope, steered: Steer, now: str, 
     tried = {c.step.id for c in steered.found if c.tried}
     own = steered.step.id if steered.step is not None else None
     facts = Facts(conn, scope, now)
-    found = limits(conn, scope, steered.day_start or _midnight(from_iso(now).date()))
+    found = limits(conn, scope, steered.day_start or _midnight(from_iso(now).date()), now)
     for step, parts in steered.pick.ranked:
         row = node(conn, scope, step.id)
         if not _works(parts, venture=row is not None and row["template"] in VENTURE_TEMPLATES):
@@ -3221,6 +3298,8 @@ WAITS = {
     "messages": "tomorrow, or your owner's next message (today's messages that answer none of theirs are sent)",
     # 0.40.3 (analysis-0.40.1 codebase, PL3): message_owner refuses every message while that many are unread
     "unread": f"your owner to read your messages (your last {store.MAX_UNREAD_MESSAGES} are unread: none goes through)",
+    # 0.41.0 (analysis-0.40.1 codebase, 6.2.1): another rule its tool refuses by (preconditions.py), in its words
+    "blocked": "what its tool would refuse now",
 }
 QUESTIONS = "This week's questions (keep them in mind; not steps to take):"
 NEW_PRODUCT = "Start a new product (project_create): Ember's code lays it out with its stages and steps."
@@ -3320,7 +3399,9 @@ def step_text(
         waiting: dict[str, int] = {}
         for c in steered.found:
             if c.waiting is not None and c.stage != "venture":  # YOUR PLAN's Ventures line says what they wait on
-                waiting[c.waiting] = waiting.get(c.waiting, 0) + 1
+                # 0.41.0: a tool's other refusal in its words (one group each)
+                why = f"{WAITS['blocked']} ({c.refused})" if c.waiting == "blocked" and c.refused else c.waiting
+                waiting[why] = waiting.get(why, 0) + 1
         said = ", ".join(f"{n} on {WAITS.get(why, why)}" for why, n in sorted(waiting.items(), key=lambda w: -w[1]))
         lines.append(f"No step of your plan is ready{f' ({said})' if said else ''}.")
         held = new_things_held(conn, scope) if explore else None
@@ -4436,6 +4517,7 @@ def _channels_view(
                     "due": row["due"],
                     "closed_at": row["closed_at"],
                     "waiting": candidate.waiting if candidate else None,
+                    "refused": candidate.refused if candidate else None,  # 0.41.0
                     "weight": round(weight.total, 2) if weight else None,
                 }
             )
@@ -4511,6 +4593,7 @@ def _product_view(
                     "channel": step["channel"],
                     "status": step["status"],
                     "waiting": candidate.waiting if candidate else None,
+                    "refused": candidate.refused if candidate else None,  # 0.41.0: its tool's words ('blocked')
                     "due": step["due"],
                     "source": step["source"],
                     "template": step["template"],  # 0.35.0: decide/owner is the owner's keep-or-drop
@@ -4626,6 +4709,7 @@ def _step_brief(
         "title": candidate.step.title,
         "stage": candidate.stage,
         "waiting": candidate.waiting,
+        "refused": candidate.refused,  # 0.41.0
         "weight": round(parts.total, 2) if parts else None,
         "why": parts.text(titles.get(parts.carried_from or 0)) if parts else None,
         **_venture_named(places, candidate.step.id),

@@ -1250,12 +1250,18 @@ def _agent(state: AppState, full: bool = True) -> str:
             + _rows(ranking, ["step", "line", "weight", "title", "why"])
         )
         waiting = [
-            {"step": c.step.id, "line": c.step.product, "waiting": c.waiting, "title": c.step.title}
+            {
+                "step": c.step.id,
+                "line": c.step.product,
+                "waiting": f"blocked ({c.refused})" if c.waiting == "blocked" else c.waiting,  # 0.41.0: in its words
+                "title": c.step.title,
+            }
             for c in found
             if c.waiting not in (None, "step")
         ]
         with state.db.connection() as conn:
-            limits = plan.limits(conn, scope, to_iso(agent.clock.day_start(agent.clock.today())))
+            day_start = to_iso(agent.clock.day_start(agent.clock.today()))
+            limits = plan.limits(conn, scope, day_start, to_iso(agent.clock.now()))
         out.append(
             "-- plan tree: steps that wait (on the owner, a channel, an upgrade, a hold; 0.36.0: the Explore step"
             " also on its date, the burn mode or an owner's message first, an empty READY; 0.37.6: 'tried', taken"
@@ -1264,7 +1270,8 @@ def _agent(state: AppState, full: bool = True) -> str:
             " day's message limit would refuse; 0.38.1: 'sales', a listing, a change of one, a Printify product or"
             " a KDP book the sell requests waiting for the owner would refuse; 0.39.8: 'listing', a weekly pin or"
             " post of a line with no listing of its own, and 'floor', one of a channel at its floor; every one,"
-            f" 0.39.8: the first 15 left the KDP book's 'tried' out. Now: {limits.text()})\n"
+            " 0.39.8: the first 15 left the KDP book's 'tried' out; 0.41.0: 'blocked', what its tool would refuse"
+            f" now by another rule of its own, in the tool's words. Now: {limits.text()})\n"
             + _rows(waiting, ["step", "line", "waiting", "title"])
         )
     except Exception as exc:  # noqa: BLE001 - the report goes on without it

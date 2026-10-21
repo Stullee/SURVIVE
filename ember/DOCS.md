@@ -1328,7 +1328,14 @@ as may wait for you wait"): "Propose the listing" (the product, the book),
 proposing one again, and the critic's fixes, which are a change of the listing.
 Since 0.40.3 a report also waits while five of Ember's messages are unread, when
 she can't write to you at all ("5 of Ember's messages to you are unread"), until
-you read them.
+you read them. Since 0.41.0 each of these rules is written once, and both the
+tool and the plan read it; two more rules of Ember's tools are read the same way:
+KDP's limit of 2 new titles of a format a week, and the demand note a line's
+first listing needs. A step whose tool would refuse it for one of them waits
+too, and cuts no sleep ("Ember's tool would refuse it now", with the tool's
+words), until the next KDP week or a new note. The platforms' daily limits (a
+day's listings, pins, posts, emails) aren't among them: Ember may propose more,
+and what you approve goes out the next day.
 The limits themselves stay as they are. The [diagnostics](#diagnostics) report
 lists each step's wait with the limits as they stand ('queue', 'messages',
 'sales'). Since 0.39.1 the agent's STATUS lists the day's messages that count

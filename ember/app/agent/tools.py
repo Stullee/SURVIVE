@@ -86,6 +86,7 @@ from . import (
     obligations,
     plan,
     policy,
+    preconditions,
     predictions,
     roadmap,
     stages,
@@ -123,7 +124,7 @@ READ_DEFAULT_CHARS = 3_000
 READ_MAX_CHARS = 3_500
 READ_ROOM = 200  # a read's header and data marks without its path (twice in them) and what it says of a made file
 MAX_TOOL_CALLS_PER_TURN = 4  # a reply's tool calls that run (write_journal besides them); the rest are skipped
-MAX_UNREAD_MESSAGES = store.MAX_UNREAD_MESSAGES  # 0.40.3 (PL3): the plan reads it too (plan.limits)
+MAX_UNREAD_MESSAGES = store.MAX_UNREAD_MESSAGES  # 0.40.3 (PL3); 0.41.0: refused by preconditions.UNREAD
 MAX_NEW_UPGRADES = 5
 SANDBOX_STRIKES = 3
 INBOX_SIZE = 15
@@ -3709,13 +3710,24 @@ def _own_tool(ctx: ToolContext, args: dict[str, Any]) -> str:
 
 
 def _room_for_request(ctx: ToolContext, conn: Any, kind: str) -> None:
-    """0.12.0: a cap per type of request (one cap of 10 for all let waiting listings block an email reply)."""
-    cap = store.PENDING_CAPS[kind]
-    if store.pending_of_type(conn, ctx.scope, kind) >= cap:
-        raise ToolError(
-            f"{cap} {kind} requests are already waiting for your owner: withdraw one that is outdated "
-            "(withdraw_request), or wait for their decision"
-        )
+    """0.12.0: a cap per type of request (preconditions.ROOM; one cap of 10 for all let waiting listings block an email
+    reply)."""
+    _refuse(ctx, conn, preconditions.ROOM[kind])
+
+
+def _facts(ctx: ToolContext, conn: Any, **call: Any) -> preconditions.Facts:
+    """0.41.0: what a precondition reads of this call (preconditions.Facts), on the tool's clock."""
+    day_start = to_iso(ctx.clock.day_start(ctx.clock.today()))
+    return preconditions.Facts(conn, ctx.scope, ctx.clock.now(), day_start, ctx.clock.tz, **call)
+
+
+def _refuse(ctx: ToolContext, conn: Any, rule: preconditions.Rule, **call: Any) -> None:
+    """0.41.0 (analysis-0.40.1 codebase, 6.2.1): a refusal by a rule the plan can know before a cycle is the tool's
+    precondition (preconditions.py), which the plan reads too: a step of the tool waits on it with these words, and
+    takes no cycle that would end in the refusal. ``call``: what the call is about (preconditions.Facts)."""
+    said = rule.check(_facts(ctx, conn, **call))
+    if said:
+        raise ToolError(said)
 
 
 def _withdraw_request(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
@@ -3735,9 +3747,7 @@ def _withdraw_request(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
 
 
 def _message_owner(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
-    unread = store.unread_messages(conn, ctx.scope)  # 0.40.3: as the plan counts them
-    if unread >= MAX_UNREAD_MESSAGES:
-        raise ToolError(f"your owner hasn't read your last {MAX_UNREAD_MESSAGES} messages yet")
+    _refuse(ctx, conn, preconditions.UNREAD)  # 0.40.3: the plan reads it too
     named = list(dict.fromkeys(int(n) for n in re.findall(r"\d{1,9}", args.get("answers") or "")))[:20]
     promised = _promise(ctx, args)
     about = _promised_line(ctx, conn, args.get("project_id"), promised is not None)
@@ -3746,15 +3756,8 @@ def _message_owner(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
     if promised is None:  # 0.33.0
         _unrecorded_promise(ctx, conn, args["text"])
     # 0.12.0: at most MESSAGES_PER_DAY a day that answer none of the owner's (the prompt's "once a day" was prose)
-    if (
-        not store.answerable(conn, ctx.scope, named)
-        and not (promised is None and _reports_promise(ctx, conn, args["text"]))
-        and _unasked_today(ctx, conn) >= MESSAGES_PER_DAY
-    ):
-        raise ToolError(
-            f"you sent your owner {MESSAGES_PER_DAY} messages today that answer none of theirs: batch the rest into "
-            "tomorrow's, or into your answer when they write"
-        )
+    reports = promised is None and _reports_promise(ctx, conn, args["text"])
+    _refuse(ctx, conn, preconditions.MESSAGES, answers=store.answerable(conn, ctx.scope, named) or reports)
     message_id = store.insert_message(conn, ctx.scope, ctx.cycle_id, args["text"].strip(), ctx.now())
     answered = store.mark_answered(conn, ctx.scope, named, message_id)
     text = f"Message #{message_id} is in your owner's inbox."
@@ -3855,23 +3858,11 @@ def _promise(ctx: ToolContext, args: dict[str, Any]) -> tuple[str, str] | None:
 
 
 def _reports_promise(ctx: ToolContext, conn: Any, text: str) -> bool:
-    """0.15.0: whether the message names an open promise (#n) that the owner hasn't heard about since it was made: the
-    daily cap lets it through, so obligation_done can close it (live: the cap refused the very message obligation_done
-    asked for). Only a message that makes no promise itself, so one report can't open the way for the next."""
-    where, params = ctx.scope.where()
-    for number in dict.fromkeys(int(n) for n in re.findall(r"#(\d{1,9})", text)):
-        row = conn.execute(
-            f"SELECT message_id FROM obligations WHERE id = ? AND {where} AND kind = 'promise' AND status = 'open'",
-            (number, *params),
-        ).fetchone()
-        if row is not None and not obligations.told_since(conn, ctx.scope, row["message_id"]):
-            return True
-    return False
-
-
-def _unasked_today(ctx: ToolContext, conn: Any) -> int:
-    """The agent's messages of the owner's today that answered none of theirs (0.37.9: the plan counts them too)."""
-    return store.unasked_since(conn, ctx.scope, to_iso(ctx.clock.day_start(ctx.clock.today())))
+    """0.15.0: whether the message names an open promise (#n) that the owner hasn't heard about since it was made
+    (preconditions.untold, which the plan reads of a step keeping one): the daily cap lets it through. Only a message
+    that makes no promise itself, so one report can't open the way for the next."""
+    numbers = dict.fromkeys(int(n) for n in re.findall(r"#(\d{1,9})", text))
+    return any(preconditions.untold(conn, ctx.scope, number) for number in numbers)
 
 
 def _obligation_done(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
@@ -4591,11 +4582,7 @@ def _propose_etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
     reason = args["reason"].strip()
     # 0.12.0: a listing belongs to a product line (a project), and a product line's first listing needs a demand note.
     project_id = _product_line(ctx, conn, args, "listing")
-    if demand.needs_note(conn, project_id, ctx.now()):  # 0.40.3: the plan reads the same rule
-        raise ToolError(
-            f"project #{project_id} has no listing yet, and a new product line needs a demand note from the last "
-            f"{demand.DAYS} days first (demand_note: the keywords buyers search and what shows they buy)"
-        )
+    _refuse(ctx, conn, preconditions.DEMAND, line=project_id)  # 0.40.3: the plan reads the same rule
     joined = ventures.adopt(conn, ctx.scope, project_id, "etsy", ctx.now())  # 0.15.0
     made = _new_request(
         ctx,
@@ -5030,25 +5017,12 @@ def _slot_words(ctx: ToolContext, conn: Any, channel: str, per_day: int, approva
 
 def _room_in_queue(ctx: ToolContext, conn: Any, channel: str, replaced: list[int], links: tuple[str, ...] = ()) -> None:
     """0.37.8: a channel takes no more of the agent's requests while publish_queue.WAITING of them wait for the owner or
-    for their slot (what a day of it holds): a long queue would publish days later what was planned for now. 0.39.6:
-    approved ones of one listing count once there, and a request for a listing (``links``, the queue's keys) that has
-    an approved one waiting for its slot is refused: it would only go out LINK_DAYS after that one."""
-    held = publish_queue.slotted(conn, ctx.scope, channel)
-    taken = sorted({held[k] for k in links if k in held and held[k] not in replaced})
-    if taken:
-        one, many = publish_queue.THINGS[channel]
-        raise ToolError(
-            f"your approved {one} (request {_numbers(taken)}) for that listing or page waits for its slot, and a"
-            f" listing gets one {one} in {publish_queue.LINK_DAYS} days: make the next {one} for a listing with none"
-            f" waiting (approved {many} of one listing count once toward the {publish_queue.WAITING} that may wait)"
-        )
-    found = [n for n in publish_queue.waiting(conn, ctx.scope, channel) if n not in replaced]
-    if len(found) >= publish_queue.WAITING:
-        one, many = publish_queue.THINGS[channel]
-        raise ToolError(
-            f"{len(found)} {many} of yours already wait for your owner or for their slot (request {_numbers(found)}):"
-            f" propose the next {one} once one of them is out"
-        )
+    for their slot (preconditions.QUEUE). 0.39.6: approved ones of one listing count once there, and a request for a
+    listing (``links``, the queue's keys) that has an approved one waiting for its slot is refused
+    (preconditions.SLOT)."""
+    call = {"channel": channel, "links": tuple(links), "replaced": tuple(replaced)}
+    _refuse(ctx, conn, preconditions.SLOT, **call)
+    _refuse(ctx, conn, preconditions.QUEUE, **call)
 
 
 def _same_pin(pin: pinterest.Pin, other: pinterest.Pin) -> str:
@@ -5386,11 +5360,7 @@ def _propose_printify_product(ctx: ToolContext, args: dict[str, Any], conn: Any)
     except etsy.EtsyError as exc:
         raise ToolError(str(exc)) from None
     project_id = _product_line(ctx, conn, args, "product")
-    if demand.needs_note(conn, project_id, ctx.now()):  # 0.40.3: the plan reads the same rule
-        raise ToolError(
-            f"project #{project_id} has no listing yet, and a new product line needs a demand note from the last "
-            f"{demand.DAYS} days first (demand_note: the keywords buyers search and what shows they buy)"
-        )
+    _refuse(ctx, conn, preconditions.DEMAND, line=project_id)  # 0.40.3: the plan reads the same rule
     # 0.15.0: what making costs, when printify_catalog read it: a price that keeps too little costs no approval
     costs = printify_publisher.costs_of(conn, ctx.scope.mode, blueprint_id, provider_id, ctx.clock.now())
     low, currency = [], access.currency
@@ -5851,19 +5821,6 @@ def _book(ctx: ToolContext, spec: dict[str, Any], cover_path: str) -> tuple[kdp.
         raise ToolError(str(exc)) from None
 
 
-def _weekly_titles(ctx: ToolContext, conn: Any, form: str) -> int:
-    """0.25.0: the books of this format proposed in KDP's week (0.40.2: since its last Sunday at 00:00 UTC; until
-    then the last 7 days, kdp.week_start) that KDP may still count (not rejected, withdrawn, expired or failed)."""
-    where, params = ctx.scope.where()
-    since = to_iso(kdp.week_start(ctx.clock.now()))
-    rows = conn.execute(
-        f"SELECT action FROM approvals WHERE {where} AND executor = 'kdp_package' AND created_at >= ?"
-        " AND status NOT IN ('rejected', 'withdrawn', 'expired', 'failed')",
-        (*params, since),
-    ).fetchall()
-    return sum(1 for r in rows if json.loads(r["action"] or "{}").get("format") == form)
-
-
 def _propose_kdp_book(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     """0.25.0: a book for Amazon KDP from the agent's .json spec: Ember's code makes its cover, checks the package and
     (without check) asks the owner, who publishes it at kdp.amazon.com from their own account (Amazon has no API for
@@ -5898,13 +5855,7 @@ def _propose_kdp_book(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     page_check = _page_check(ctx, book, args.get("qa")) if book.format == "paperback" else ""
     with ctx.db.transaction() as conn:
         project_id = _product_line(ctx, conn, spec, "book")
-        proposed = _weekly_titles(ctx, conn, book.format)
-        if proposed >= kdp.WEEKLY_TITLES:
-            raise ToolError(
-                f"you proposed {proposed} {book.format}s this week (KDP's, from Sunday 00:00 UTC), and KDP lets an"
-                f" account create at most {kdp.WEEKLY_TITLES} new {book.format}s a week: propose the next one from"
-                f" {kdp.next_week(ctx.clock.now(), ctx.clock.tz)}"
-            )
+        _refuse(ctx, conn, preconditions.KDP_WEEK, form=book.format)  # 0.25.0; 0.41.0: the plan waits on it too
         made_request = _new_request(
             ctx,
             conn,

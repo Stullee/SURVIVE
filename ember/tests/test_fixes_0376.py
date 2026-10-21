@@ -487,6 +487,7 @@ def test_a_product_whose_listing_request_ended_gets_a_step_to_propose_it_again(d
     agent, _ = lined(data_dir, titles=("Planner",))
     tracker = project(agent, *TRACKER)
     keep(agent)
+    noted(agent, tracker)  # 0.41.0: or the tool refuses its first listing, and the step waits on that (DEMAND)
     first = request(agent, tracker, "etsy_listing")
     keep(agent)  # pending: create and "Propose the listing" close (done is final)
     assert waits(agent, "You approve it, and it goes live", tracker) == "owner"

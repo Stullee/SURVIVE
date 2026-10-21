@@ -10200,7 +10200,15 @@
     // 0.39.8: a weekly pin or post of a product with no listing of its own, and a channel that brings next to nothing
     listing: "it has no listing of its own: it waits until Ember moves one to it (project_update)",
     floor: "its channel brings next to nothing (at its floor): it waits unless you pin it",
+    // 0.41.0: another rule Ember's tool refuses by (KDP's week, a first listing's demand note), in the tool's words
+    blocked: "Ember's tool would refuse it now",
   };
+
+  // A step's wait in words, with the tool's own words when its tool would refuse it (0.41.0)
+  function planWait(st) {
+    var said = PLAN_WAIT[st.waiting] || st.waiting;
+    return st.waiting === "blocked" && st.refused ? said + ": " + st.refused : said;
+  }
   var PLAN_DECIDED = {
     pin: "you pinned it", promise: "a promise to you or your decision (first, until 0.36.0)",
     venture: "a venture cycle (the venture share, until 0.35.3)",
@@ -10743,7 +10751,7 @@
   function planStepState(st) {
     if (st.status !== "open") return st.status;
     if (st.kind === "promise") return st.waiting === "hold" ? "promised · on hold" : "promised";  // 0.39.3: the owner's hold holds it
-    return st.waiting ? PLAN_WAIT[st.waiting] || st.waiting : "ready";
+    return st.waiting ? planWait(st) : "ready";
   }
 
   function planStepRow(st, q) {
@@ -10879,7 +10887,7 @@
           return h("li", null, "#" + q.id + " " + q.title, h("span", { class: "muted" }, " · ", timeEl(q.at, fmtDateTime(q.at)), q.line ? " · " + planLine(q.line) : "", q.why ? " · " + q.why : ""));
         })) : null,
         open.length ? h("ul", { class: "pl-list" }, open.map(function (st) {
-          return h("li", null, st.title, h("span", { class: "muted", text: " · " + planLine(st.line) + (st.due ? " · due " + fmtDay(st.due) : "") + (st.waiting ? " · " + (PLAN_WAIT[st.waiting] || st.waiting) : "") }));
+          return h("li", null, st.title, h("span", { class: "muted", text: " · " + planLine(st.line) + (st.due ? " · due " + fmtDay(st.due) : "") + (st.waiting ? " · " + planWait(st) : "") }));
         })) : h("p", { class: "muted", text: "Nothing to do now." }),
         done.length ? h("p", { class: "muted", text: plural(done.length, "step") + " done in the last 14 days." }) : null);
     })));
