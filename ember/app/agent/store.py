@@ -96,9 +96,14 @@ def start_tool_call(
     parent_id: int | None = None,
     project_id: int | None = None,
 ) -> int:
-    text = canonical(tool_input)
-    if len(text) > 20_000:
-        text = canonical({"truncated": text[:19_000]})
+    text = whole = canonical(tool_input)
+    # 0.40.3 (analysis-0.40.1 codebase, T4): cut until it fits encoded again: each quote, backslash or line break of
+    # the cut text takes two characters there, and an input of 23,100 characters of HTML broke the column's 20,000
+    # (the IntegrityError ended the cycle without its reflection)
+    keep = 19_000
+    while len(text) > 20_000:
+        text = canonical({"truncated": whole[:keep]})
+        keep -= max(len(text) - 20_000, 1)
     cursor = conn.execute(
         "INSERT INTO tool_calls (cycle_id, llm_call_id, parent_id, seq, phase, origin, tool, tool_use_id, project_id,"
         " input, status, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'started', ?)",

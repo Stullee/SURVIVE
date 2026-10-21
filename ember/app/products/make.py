@@ -30,7 +30,7 @@ import re
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from ..agent.sandbox import Jail
+from ..agent.sandbox import MAX_PATH_BYTES, NAME_CHARS, Jail
 from ..integrations import kdp
 from . import checks, images, markup, pdf, sheets, statement, tables, word
 
@@ -68,10 +68,27 @@ class Made:
         return [path for path, _ in self.files]
 
 
-def _base(output: str, suffix: str, what: str) -> str:
+def _base(output: str, suffix: str, what: str, beside: str = "") -> str:
+    """``output`` without its ``suffix``. 0.40.3 (analysis-0.40.1 codebase, T5): ``beside``, the longest ending of
+    the files made next to it ('-page160.png'), must fit the jail's names too: a valid name of 59 characters and
+    '.pdf' had its PDF and Word file written, then its first page picture refused as "not allowed" (a strike), and
+    the agent was told nothing was made."""
     if not output.lower().endswith(suffix) or len(output) <= len(suffix):
         raise ProductError(f"{what} must be a path ending in {suffix}, e.g. 'shop/planner{suffix}'")
-    return output[: -len(suffix)]
+    base = output[: -len(suffix)]
+    name = output.rsplit("/", 1)[-1]
+    most = NAME_CHARS - len(beside) + len(suffix)
+    if beside and len(name) > most:
+        raise ProductError(
+            f"{name} is too long: at most {most} characters, as the files made next to it end in '{beside}' and a "
+            f"name has at most {NAME_CHARS}"
+        )
+    if beside and len(f"{base}{beside}".encode()) > MAX_PATH_BYTES:
+        raise ProductError(
+            f"{output} is too long: at most {MAX_PATH_BYTES - len(beside) + len(suffix)} characters, as the files made "
+            f"next to it end in '{beside}' and a path has at most {MAX_PATH_BYTES}"
+        )
+    return base
 
 
 def _size(count: int) -> str:
@@ -94,7 +111,7 @@ def document(
 ) -> Made:
     """Make ``output`` (a PDF) from the Markdown file ``source``, with a Word copy and page pictures next to it: of
     its first pages, or (0.39.1) of the ``pages`` named ('6, 7, 83')."""
-    base = _base(output, ".pdf", "output")
+    base = _base(output, ".pdf", "output", f"-page{pdf.BOOK_PAGES}.png")
     if not source.lower().endswith((".md", ".txt")):
         raise ProductError("source must be the .md (or .txt) file you wrote the document in")
     chosen = _preview_pages(pages)
@@ -184,7 +201,7 @@ def _preview_pages(text: str) -> list[int]:
 
 def spreadsheet(jail: Jail, source: str, output: str) -> Made:
     """Make ``output`` (an Excel file) from the JSON spec ``source``, and a picture of each table (0.15.0)."""
-    base = _base(output, ".xlsx", "output")
+    base = _base(output, ".xlsx", "output", "-preview.png")
     if not source.lower().endswith(".json"):
         raise ProductError("source must be the .json file you wrote the spreadsheet spec in")
     text = jail.read(source)
@@ -414,7 +431,7 @@ def cost_statement(jail: Jail, source: str, output: str) -> Made:
     """Make ``output`` (an Excel file) of a Nebenkostenabrechnung from the JSON spec ``source``, and its cover picture
     next to it (``-cover.png``). Upgrade request #7 built in: the workshop script that drew the cover's table apart
     from the file's formulas (open-shop-nebenkostenabrechnung-de-16.py), without a run."""
-    base = _base(output, ".xlsx", "output")
+    base = _base(output, ".xlsx", "output", "-cover.png")
     if not source.lower().endswith(".json"):
         raise ProductError("source must be the .json file you wrote the statement in")
     try:
@@ -457,7 +474,8 @@ def kdp_cover(
     picture ``front``, the paperback's sized from its ``interior`` (a PDF at a KDP trim: its pages make the spine) and
     its ``paper``, with ``back_text`` on the back and ``spine_text`` on the spine."""
     paperback = output.lower().endswith(".pdf")
-    _base(output, ".pdf" if paperback else ".jpg", "output (a .jpg: an ebook's cover; a .pdf: a paperback's)")
+    what = "output (a .jpg: an ebook's cover; a .pdf: a paperback's)"
+    _base(output, ".pdf" if paperback else ".jpg", what, "-preview.png" if paperback else "")  # 0.40.3 (T5)
     if not front.lower().endswith((".png", ".jpg")):
         raise ProductError("front must be your front cover picture, a .png or .jpg in your workspace")
     if background is not None and not _COLOR.fullmatch(background):

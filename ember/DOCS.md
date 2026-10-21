@@ -598,7 +598,8 @@ agent's workspace:
   planner's 48 weekly tables). Ember's code also keeps the text a file held
   before the agent overwrote, edited or deleted it (its newest 5), and `restore`
   brings it back: live, an overwrite left a book's 24 KB interior as its
-  671-byte header.
+  671-byte header. Since 0.40.3 that includes a text a draft overwrote or a
+  workshop run's file of the same name replaced.
 - **Listing photos** (`make_image`): up to three pages, sheets or pictures (or a
   zoomed-in region of one), fanned out next to a title, a subtitle and a badge,
   in Etsy's 4:3 size (3000 x 2250) or square or portrait; or a photo of words

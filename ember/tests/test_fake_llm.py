@@ -973,6 +973,12 @@ def test_chaos_produces_every_kind_of_misbehaviour() -> None:
         fake.send(prompts.consolidate_request(SETTINGS, f"1. Ask people first, take {seed}.\n2. Tags matter."))
         fake.send(prompts.critic_request(SETTINGS, f"Venture #1: A shop for planners, take {seed}."))  # 0.13.0
         notes |= {note for _, _, note in fake.trace}
+    # 0.40.3: and a work step, one of eleven misbehaviours 2 times in 5: the corpus missed one once workspace_read's
+    # definition changed
+    for seed in range(200):
+        fake = FakeTransport(seed=seed, scenario="chaos", clock=Clock())
+        fake.send(prompts.work_request(SETTINGS, f"A brief for step {seed}.", []))
+        notes |= {note for _, _, note in fake.trace}
     assert {f"chaos: {c}" for kinds in CHAOS.values() for c in kinds} <= notes
     inputs = [(name, args, ok) for sim in sims for _, name, args, ok in sim.tool_log]
     assert any(".." in json.dumps(args) and not ok for _, args, ok in inputs)

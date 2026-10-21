@@ -102,6 +102,9 @@ from .store import MESSAGES_PER_DAY, OPEN_STATUSES, AgentScope
 log = logging.getLogger(__name__)
 
 MAX_RESULT_CHARS = 4_000
+# 0.40.3 (analysis-0.40.1 codebase, T7): the largest whole number a field takes, maximum or not: an id beyond what
+# SQLite holds (2^63) failed some 15 tools with OverflowError, and no reason
+WHOLE_MAX = 2**62
 RESULT_CHARS = {"memory_read": 4_400}  # 0.12.0: a memory file whole (lessons: 4,000 bytes) with its heading
 # A work reply's length (prompts takes it from here). JSON specs and German text take about 1.7 characters a token in
 # it, so a text that can't be written in parts gets at most ONE_REPLY_CHARS: what fits in one reply beside its call's
@@ -114,7 +117,11 @@ CALL_CHARS = int(WORK_MAX_TOKENS * 1.7) - 400  # 3,000
 WRITE_CHARS = ONE_REPLY_CHARS
 DESCRIPTION_CHARS = min(etsy.DESCRIPTION_CHARS, ONE_REPLY_CHARS - 500)  # a listing's other fields come with it
 READ_DEFAULT_CHARS = 3_000
-READ_MAX_CHARS = 6_000
+# 0.40.3 (analysis-0.40.1 codebase, T3): what fits in a result (MAX_RESULT_CHARS) beside the header, the data marks
+# and the "More from offset" line. At 6,000 the result was cut near 3,870 with that line, and the header still said
+# "characters 0–6,000": the agent believed it read 2,100 characters it never saw.
+READ_MAX_CHARS = 3_500
+READ_ROOM = 200  # a read's header and data marks without its path (twice in them) and what it says of a made file
 MAX_TOOL_CALLS_PER_TURN = 4  # a reply's tool calls that run (write_journal besides them); the rest are skipped
 MAX_UNREAD_MESSAGES = 5
 MAX_NEW_UPGRADES = 5
@@ -307,6 +314,7 @@ class Field:
     cut: bool = False  # too long: cut to max_len with a note instead of refusing (for notes, not content)
     remedy: str = ""  # 0.15.0: what to do when it is too long, said in the refusal
     items: tuple[tuple[str, Field], ...] = ()  # an array's objects: their fields, in order
+    exact: bool = False  # 0.40.3: its spaces and line breaks are its text (an edit's find and content), even alone
 
 
 @dataclass(frozen=True)
@@ -392,12 +400,16 @@ SPECS: dict[str, Spec] = {
                     required=False,
                     max_len=WRITE_CHARS,
                     remedy="create with the first part, then append the rest, one part per call",
+                    exact=True,
                 ),
                 # 0.32.0: live, a fix of two formulas meant rewriting both 4 KB specs in parts of 2,500 characters,
                 # and the cycle's writes ran out halfway: both files were left cut off, unreadable to make_spreadsheet.
                 # No maxLength of its own (the fixed prompt's room): a call's texts together hold CALL_CHARS.
                 "find": Field(
-                    "string", "For edit: text there once (or count times); content replaces it.", required=False
+                    "string",
+                    "For edit: text there once (or count times); content replaces it.",
+                    required=False,
+                    exact=True,
                 ),
                 # 0.33.0: live, a book's 48 weekly tables needed 7 more rows each: 48 edits, or none at all
                 "count": _i("", required=False, minimum=2),
@@ -1878,6 +1890,10 @@ _CLOSING = re.compile(r"(?:\s*</[a-z_:]{1,40}>)+\s*$", re.IGNORECASE)
 # name="file">lessons', with "content" and "mode" given as if they were this call's. Live, two reflections lost their
 # journal to it ("unknown field 'content'", "unknown field 'next_step'"), with the lessons or the project update in it.
 _INVOKE = re.compile(r'</invoke>\s*<invoke name="([a-z_]{1,40})">', re.IGNORECASE)
+# 0.40.3 (analysis-0.40.1 codebase, T1): a closing tag inside a field's text (its own closes it, at its end), and one
+# that ends a text (searched in its last 43 characters: _CLOSING searched in a long text takes its length squared)
+_CLOSED = re.compile(r"</[a-z_:]{1,40}>", re.IGNORECASE)
+_CLOSED_END = re.compile(r"</[a-z_:]{1,40}>\Z", re.IGNORECASE)
 # 0.39.4: why a call taken out of a journal that doesn't only read isn't run (run). The model can tell its own call from
 # words it quoted; Ember's code can't.
 TAKEN_OUT = (
@@ -1888,11 +1904,12 @@ TAKEN_OUT = (
 
 def unleaked(spec: Spec, raw: Any, notes: list[str], leaked: list[tuple[str, dict[str, Any]]] | None = None) -> Any:
     """The journal's input with each text field another one's markup holds moved to its own field (unless that field
-    is given), when every such mark names another text field of the journal; what was moved is noted. 0.24.0: with
-    ``leaked`` (a list), a call of another tool written inside a text is taken out of it, with the fields it was
-    given beside this call's, and added to ``leaked`` (run says whether it runs). 0.39.4: in the journal only, whose
-    texts are the model's own words: any other tool's text can quote someone else word for word (a buyer's email saved
-    to notes, a passage quoted to the owner), and markup in it is part of the quote, left as it is."""
+    is given), when every such mark names another text field of the journal (0.40.3: and is the model's own slip, not
+    a quote: _slipped); what was moved is noted. 0.24.0: with ``leaked`` (a list), a call of another tool written
+    inside a text is taken out of it, with the fields it was given beside this call's, and added to ``leaked`` (run
+    says whether it runs). 0.39.4: in the journal only, whose texts are the model's own words: any other tool's text
+    can quote someone else word for word (a buyer's email saved to notes, a passage quoted to the owner), and markup in
+    it is part of the quote, left as it is."""
     if not isinstance(raw, dict) or spec.name != "write_journal":
         return raw
     fixed = dict(raw)
@@ -1903,8 +1920,10 @@ def unleaked(spec: Spec, raw: Any, notes: list[str], leaked: list[tuple[str, dic
         if field is None or field.type != "string" or not isinstance(value, str):
             continue
         marks = list(_LEAKED.finditer(value))
-        if not marks or any(
-            m[1] == name or m[1] not in spec.fields or spec.fields[m[1]].type != "string" for m in marks
+        if (
+            not marks
+            or any(m[1] == name or m[1] not in spec.fields or spec.fields[m[1]].type != "string" for m in marks)
+            or not _slipped(value, marks)
         ):
             continue
         fixed[name] = _CLOSING.sub("", value[: marks[0].start()]).rstrip()
@@ -1915,6 +1934,31 @@ def unleaked(spec: Spec, raw: Any, notes: list[str], leaked: list[tuple[str, dic
                 fixed[mark[1]] = text
                 notes.append(f"Ember's code moved the {mark[1]} you wrote inside {name} to {mark[1]}")
     return fixed
+
+
+def _slipped(value: str, marks: list[re.Match[str]]) -> bool:
+    """0.40.3 (analysis-0.40.1 codebase, T1): whether the marks in a journal's text are the model's own slip at the top
+    level ("...</entry>\\n<parameter name="next">..."): each right after a closing tag and outside any quotation or
+    code block, each one's text holding no closing tag but at its end. 0.19.2 moved any mark: a buyer's email quoted
+    word for word in the entry, holding '<parameter name="next">', became the handoff the next plan reads in Ember's
+    own voice. Quoted markup stays in the text, as in every other tool's since 0.39.4."""
+    for mark, after in zip(marks, [*marks[1:], None], strict=True):
+        before = value[: mark.start()].rstrip()
+        if not _CLOSED_END.search(before[-43:]) or _inside(before):
+            return False
+        if _CLOSED.search(_CLOSING.sub("", value[mark.end() : after.start() if after else len(value)])):
+            return False
+    return True
+
+
+def _inside(text: str) -> bool:
+    """0.40.3 (T1): whether the end of ``text`` lies inside a quotation or a code block (opened and not closed)."""
+    return (
+        text.count('"') % 2 == 1
+        or sum(text.count(c) for c in "„“”") % 2 == 1
+        or text.count("«") != text.count("»")
+        or text.count("```") % 2 == 1
+    )
 
 
 def _take_out(
@@ -1989,7 +2033,10 @@ def _checked(fields: dict[str, Field], raw: Any, notes: list[str] | None, where:
     args: dict[str, Any] = {}
     for name, f in fields.items():
         value = raw.get(name)
-        if value is None or (f.type == "string" and value == "" and not f.required):
+        # 0.40.3 (analysis-0.40.1 codebase, T7): a blank optional text is left out like an empty one (project_update's
+        # hypothesis " " failed the tool with an IntegrityError, and no reason)
+        blank = isinstance(value, str) and not (value if f.exact else value.strip())
+        if value is None or (f.type == "string" and blank and not f.required):
             if f.required:
                 raise ToolError(f"{name} is required")
             continue
@@ -2027,6 +2074,8 @@ def _checked(fields: dict[str, Field], raw: Any, notes: list[str] | None, where:
                 raise ToolError(f"{name} must be at least {f.minimum}")
             if f.maximum is not None and value > f.maximum:
                 raise ToolError(f"{name} must be at most {f.maximum}")
+            if abs(value) > WHOLE_MAX:  # 0.40.3 (analysis-0.40.1 codebase, T7)
+                raise ToolError(f"{name} must be between {-WHOLE_MAX:,} and {WHOLE_MAX:,}")
         args[name] = value
     return args
 
@@ -2107,7 +2156,9 @@ def _workspace_read(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     else:
         text = ctx.workspace.read(args["path"])
     offset = args.get("offset", 0)
-    size = args.get("max_chars", READ_DEFAULT_CHARS)
+    size = min(
+        args.get("max_chars", READ_DEFAULT_CHARS), MAX_RESULT_CHARS - READ_ROOM - 2 * len(args["path"]) - len(what)
+    )
     part = text[offset : offset + size]
     end = offset + len(part)
     more = f"\nMore from offset {end}." if end < len(text) else ""
@@ -2184,13 +2235,22 @@ def _keep_version(ctx: ToolContext, conn: Any, path: str, reason: str) -> bool:
     """0.33.0: the text a workspace file holds, kept before workspace_write changes it (``reason``: overwrite, edit,
     copy, delete or restore), so restore can bring it back; the newest VERSIONS_KEPT of each file. False when there is
     nothing to keep (no such text file yet, or a change that loses nothing: create, append)."""
-    if reason not in (*CHANGES, "restore") or kind_of(path) != "text" or not ctx.workspace.exists(path):
+    return keep_version(conn, ctx.scope, ctx.workspace, path, reason, ctx.cycle_id, ctx.now())
+
+
+def keep_version(
+    conn: Any, scope: AgentScope, jail: Jail, path: str, reason: str, cycle_id: int | None, now: str
+) -> bool:
+    """_keep_version for any writer of the workspace. 0.40.3 (analysis-0.40.1 codebase, T2): draft's overwrite and
+    a workshop run's file of an existing text's name replace it too, and kept nothing: a cut-off 14-byte draft
+    replaced a 22 KB manuscript, and restore had nothing to bring back (cycle #134's loss, through another tool)."""
+    if reason not in (*CHANGES, "restore") or kind_of(path) != "text" or not jail.exists(path):
         return False
-    where, params = ctx.scope.where()
+    where, params = scope.where()
     conn.execute(
         "INSERT INTO workspace_versions (mode, session, path, content, reason, cycle_id, created_at)"
         " VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (*params, path, ctx.workspace.read(path), reason, ctx.cycle_id or None, ctx.now()),
+        (*params, path, jail.read(path), reason, cycle_id or None, now),
     )
     conn.execute(
         f"DELETE FROM workspace_versions WHERE {where} AND path = ? AND id NOT IN (SELECT id FROM workspace_versions"
@@ -2212,7 +2272,10 @@ def _restore(ctx: ToolContext, conn: Any, path: str) -> Outcome:
         f"SELECT * FROM workspace_versions WHERE {where} AND path = ? ORDER BY id DESC LIMIT 1", (*params, path)
     ).fetchone()
     if row is None:
-        raise ToolError(f"no earlier text of {path} is kept: only what workspace_write overwrote, edited or deleted")
+        raise ToolError(
+            f"no earlier text of {path} is kept: only what workspace_write overwrote, edited or deleted, or what draft"
+            " or a workshop run replaced"  # 0.40.3 (analysis-0.40.1 codebase, T2)
+        )
     _keep_version(ctx, conn, path, "restore")
     size = ctx.workspace.write(path, row["content"])
     when = str(row["created_at"])[:16].replace("T", " ")
@@ -3033,7 +3096,10 @@ def _draft(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
         # 0.15.0: a paid draft longer than the file's room is kept in a file of its own, not thrown away
         path, mode, moved = _free_name(ctx.workspace, path), "create", f" It didn't fit in {path} ({limit // 1024} KB)."
     try:
-        size = ctx.workspace.write(path, drafted.text, append=mode == "append", create_only=mode == "create")
+        # 0.40.3 (analysis-0.40.1 codebase, T2): the text an overwrite replaces is kept, as workspace_write's is
+        with ctx.db.transaction() as conn:
+            kept = mode == "overwrite" and _keep_version(ctx, conn, path, "overwrite")
+            size = ctx.workspace.write(path, drafted.text, append=mode == "append", create_only=mode == "create")
     except SandboxError as exc:
         return Outcome(False, f"Error: the draft was written but can't be saved ({exc}). {cost}", "refused", paid=True)
     go_on = "with mode append and" if limit - size >= DRAFT_BYTES else "into a new file, with"
@@ -3046,7 +3112,7 @@ def _draft(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     return Outcome(
         True,
         f"{'Appended to' if mode == 'append' else 'Wrote'} {path}: {len(drafted.text):,} characters, now {size:,} "
-        f"bytes.{moved}{cut} Read it with workspace_read before you use it. {cost}",
+        f"bytes.{moved}{_restorable(kept)}{cut} Read it with workspace_read before you use it. {cost}",
         f"draft {path}",
     )
 
