@@ -83,7 +83,8 @@ def test_a_book_as_the_owner_asked_for_it_is_measured_page_by_page() -> None:
     said = "\n".join(checked.measures())
     assert "Kinds of page (by their ruled lines): A 1-2 (no ruled lines); B 3 (" in said
     assert "Rows to write in: the lowest 7." in said and "too low" not in said
-    assert "White space over a quarter of a page between what it prints: pages 2 (" in said  # the title, the AI page
+    # the title, the AI page
+    assert "White space over a quarter of a page between what it prints or under it: pages 2 (" in said
     assert "Calendar: 3 weeks (1-3), each its calendar week; 6 dates, each real, each weekday its date's." in said
     assert "AI line: page 2; page 2 has 15 words: little else." in said
 
@@ -142,7 +143,11 @@ def test_rows_too_low_to_write_in_are_named_and_rows_with_words_are_none() -> No
             ["page 1: 31.02.2027 doesn't exist", "page 1: 29.02. doesn't exist in 2027"],
         ),
         (["2027\nPreis 1.462,50 € und 3.99. Version 0.39.8"], "German", []),  # prices and versions are no dates
-        (["2027\nKW 2\nMo 11.01.\nDi 12.01.\nMi 13.01."], "German", []),  # a week's days one by one
+        (  # a week's days one by one (0.40.3: all 7 of them; Monday to Wednesday alone is named)
+            ["2027\nKW 2\nMo 11.01.\nDi 12.01.\nMi 13.01.\nDo 14.01.\nFr 15.01.\nSa 16.01.\nSo 17.01."],
+            "German",
+            [],
+        ),
         (
             ["2027\nKW 2\nMo 04.01.\nDi 05.01."],
             "German",

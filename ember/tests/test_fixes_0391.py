@@ -294,6 +294,10 @@ def test_a_triage_names_the_other_ideas_waiting_and_a_ventures_step_waits_for_it
     assert not product.ok and f"step #{demand} isn't a step of your ventures" in product.text
     done = call(ctx, "plan_step", {"action": "done", "why": "x"})
     assert not done.ok and "action must be one of wait" in done.text  # a venture cycle's plan_step waits only
+    pinned = call(ctx, "plan_step", {"action": "wait", "on": "date", "until": day, "why": "after the freeze"})
+    assert not pinned.ok and f"your owner pinned step #{step}" in pinned.text  # 0.40.3: the owner's pin holds
+    with agent.db.transaction() as conn:
+        plan.pin(conn, agent.scope(), step, False, "Owner", now(agent))
     own = call(ctx, "plan_step", {"action": "wait", "on": "date", "until": day, "why": "after the freeze"})
     assert own.ok and own.text == f"Step #{step} waits on {day} (2 of {plan.WAITS_A_DAY} waits today)."  # YOUR STEP
     agent.clock.advance(days=5)

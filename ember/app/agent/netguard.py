@@ -1,15 +1,23 @@
 """No network, no other programs: enforced while the agent's code runs.
 
 A Python audit hook (``sys.addaudithook``, which can't be removed once added)
-refuses sockets, name lookups, subprocesses, ``os.system``/``exec``/``fork``/
-``spawn``, loading native libraries and starting threads, but only in threads
-that are *sealed*. The wake-cycle thread is sealed while it works in dry run,
-so a bug in a tool handler (or anything it calls) can't reach the network or
-start another program. The web server, the database and the rest of the app
-are not affected.
+refuses sockets, sends to an address, name lookups, subprocesses,
+``os.system``/``exec``/``fork``/``spawn``, loading native libraries with
+ctypes and starting threads, but only in threads that are *sealed*. The
+wake-cycle thread is sealed while it works in dry run, so a bug in a tool
+handler (or anything it calls) can't reach the network or start another
+program. The web server, the database and the rest of the app are not
+affected.
 
 In live mode the model transport needs the network, so only the tool
-handlers are sealed there (tools.run seals them in both modes).
+handlers are sealed there (tools.run seals them in both modes), but not those
+of the tools that call a model (tools.CALLING_TOOLS).
+
+0.40.3 (analysis-0.40.1 codebase, T6): what raises no audit event stays
+possible in a sealed thread: ``send``/``sendall`` on a socket connected
+before the seal, ``_posixsubprocess.fork_exec`` called directly, work handed
+to a thread already running, and importing a native module not yet loaded.
+No tool handler holds a socket or a thread pool (analysis-0.40.1, 3.3).
 """
 
 from __future__ import annotations
@@ -28,6 +36,10 @@ BLOCKED_EVENTS = frozenset(
         "socket.getaddrinfo",
         "socket.gethostbyname",
         "socket.gethostbyaddr",
+        # 0.40.3 (analysis-0.40.1 codebase, T6): a send on a socket opened before the seal (a datagram, or any
+        # sendmsg); send and sendall on a connected socket raise no audit event, so they stay possible there
+        "socket.sendto",
+        "socket.sendmsg",
         "subprocess.Popen",
         "os.system",
         "os.exec",

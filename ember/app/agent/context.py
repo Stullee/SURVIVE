@@ -57,6 +57,7 @@ RESEARCH_CHARS = 200  # of each question and digest
 # Ember's mailbox (only when it has one): its address and the newest unread emails, sender and subject quoted.
 MAIL_BUDGET = 600
 MAIL_SHOWN = 3
+MAIL_HELD = 2  # 0.40.3 (analysis-0.40.1 codebase, M1): approved emails held by an unread reply, named in MAIL
 # The owner's rulebook (0.36.0, in place of the standing instructions, 1,500 characters in one text): their rules, at
 # most 1,500 characters together, one a line with its number, JSON-quoted, in every plan and work step.
 RULES_HEADING = "YOUR OWNER'S RULEBOOK"
@@ -162,6 +163,10 @@ LINE_FOCUS_BUDGET = 1_000
 STRATEGY_BRIEF_BUDGET = 1_200
 # 0.12.0: the brief's copy of OBLIGATIONS (the plan's is never cut), on top of the brief's budget like the owner's.
 OBLIGATIONS_BRIEF_BUDGET = 1_000
+# 0.40.3 (analysis-0.40.1 codebase, C2): the brief's copy of YOUR SOFTWARE, on top of the brief's budget too: the part
+# of the release notes the plan shows, whole (news.changelog_part cuts it to this), so what an ordinary cycle marks seen
+# its work steps saw as the plan did
+SOFTWARE_BRIEF_BUDGET = CHANGELOG_LIMIT
 # 0.12.0: the lessons the owner pinned come first in LESSONS, on top of its budget (at most memory.MAX_PINS of them).
 PINS_BUDGET = 2_000
 PLAYBOOK_SHARE = 0.6  # 0.18.0: of LESSONS' budget, the most the playbook takes
@@ -176,7 +181,8 @@ BRIEF_MAX = (
     + KNOWLEDGE_BUDGET
     + OBLIGATIONS_BRIEF_BUDGET
     + PINS_BUDGET
-    + 330
+    + SOFTWARE_BRIEF_BUDGET  # 0.40.3 (analysis-0.40.1 codebase, C2)
+    + 360
 )
 WILL_BUDGET = 4_500 + OWNER_BUDGET + 100  # the largest will context: the LAST_WILL profile is measured on it
 _QUOTED = re.compile(r'"(?:[^"\\]|\\.)*"')  # a JSON string: how the owner's and the agent's texts are quoted
@@ -231,6 +237,7 @@ class MailView:
     address: str
     unread: int = 0
     newest: tuple[tuple[int, str, str], ...] = ()
+    held: tuple[tuple[int, str, int], ...] = ()  # 0.40.3: (request, recipient, email) of mailstore.held
 
 
 @dataclass
@@ -350,7 +357,8 @@ def snapshot(
     mail = None
     if mail_address is not None:
         unread, newest = mailstore.unread(conn, scope, MAIL_SHOWN)
-        mail = MailView(mail_address, unread, tuple((r["id"], r["from_addr"], r["subject"]) for r in newest))
+        held = tuple(mailstore.held(conn, scope, mail_address))  # 0.40.3 (M1)
+        mail = MailView(mail_address, unread, tuple((r["id"], r["from_addr"], r["subject"]) for r in newest), held)
     money: dict[int, tuple[int, int]] = {}
     for p in projects:
         spent = conn.execute(
@@ -851,10 +859,17 @@ def mail_text(s: Snapshot) -> str:
         return ""
     m = s.mail
     head = f"Your address: {m.address}. " + (f"{m.unread} unread; newest:" if m.unread else "No unread email.")
+    # 0.40.3 (analysis-0.40.1 codebase, M1): first, so a cut never takes them: an approved email waits for the agent to
+    # read its recipient's newer email (executor.REPLIED)
+    held = [
+        f"Your approved email of request #{request} to {_quote(_start(to, 80))} waits until you read email #{email}"
+        " (email_read): if it asks not to be emailed, mark_opt_out."
+        for request, to, email in m.held[:MAIL_HELD]
+    ]
     lines = [
         f"#{i} from {_quote(_start(sender, 80))} {_quote(_start(subject, 100))}" for i, sender, subject in m.newest
     ]
-    return "\n".join([head, *lines])
+    return "\n".join([head, *held, *lines])
 
 
 def mail_section(s: Snapshot) -> list[tuple[str, str]]:
@@ -1105,12 +1120,16 @@ def brief(
     learned = [(KNOWLEDGE_HEADING, cut(knowledge, KNOWLEDGE_BUDGET))] if knowledge else []
     owing = obligations.for_line(s.obligations, line) if line is not None else s.obligations  # 0.28.0
     owed = [(obligations.HEADING, cut(owing, OBLIGATIONS_BRIEF_BUDGET))] if s.obligations else []
+    # 0.40.3 (analysis-0.40.1 codebase, C2): the release notes the plan shows: they reached the planner alone, and the
+    # work steps meant to act on what they say (0.40.1's book) never saw them
+    software = [("YOUR SOFTWARE", cut(s.news.changelog, SOFTWARE_BRIEF_BUDGET))] if s.news.changelog else []
     parts = [
         *head,
         *standing,
         *owners,
         *mailed,
         *owed,  # 0.12.0: what the agent owes, with the numbers obligation_done closes
+        *software,
         *([("VENTURE CYCLE", _venture_brief(s))] if s.venture else []),
         *([("MARKETING CYCLE", MARKETING_BRIEF)] if s.marketing else []),  # 0.28.0
         *learned,  # before the FOCUS: a brief over its budget loses its end, and this section's room is its own
@@ -1126,7 +1145,7 @@ def brief(
             "the goal is reached.",
         ),
     ]
-    on_top = [*owed, *standing, *owners, *mailed, *researched, *learned]
+    on_top = [*owed, *standing, *owners, *mailed, *researched, *learned, *software]
     room = sum(json_bytes(f"\n\n== {title} ==\n{body}") - 2 for title, body in on_top)  # - 2: its own JSON quotes
     room += json_bytes(f"{pins_text(s)}\n\n") - 2 if s.pins else 0  # 0.12.0: the owner's pins are on top too
     text = cut(_sections(parts), BRIEF_BUDGET + room)

@@ -149,7 +149,7 @@ def test_the_spine_and_the_cover_follow_kdp_s_formula() -> None:
 
 
 def test_a_price_must_cover_printing_and_stay_in_kdp_s_bands() -> None:
-    assert kdp.printing_cost(110, "white", "6x9") == Decimal("2.30")  # flat up to 110 pages
+    assert kdp.printing_cost(108, "white", "6x9") == Decimal("2.30")  # flat up to 108 pages (0.40.3)
     assert kdp.printing_cost(120, "white", "6x9") == Decimal("2.44")
     assert kdp.printing_cost(120, "white", "8.5x11") == Decimal("3.04")  # a large trim
     assert kdp.least_price(120, "white", "6x9") == Decimal("4.88")  # 50% below 9.99 USD

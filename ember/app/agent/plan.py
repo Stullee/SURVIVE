@@ -40,9 +40,9 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
 
-from ..economy.clock import from_iso, to_iso
+from ..economy.clock import from_iso, local_date, to_iso
 from ..integrations import publish_queue
-from . import critic, desk, metrics, obligations, policy, reach, roadmap, store, templates, ventures, weights
+from . import critic, demand, desk, metrics, obligations, policy, reach, roadmap, store, templates, ventures, weights
 from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope, canonical, sha256
 
 SEQUENTIAL = (
@@ -514,6 +514,13 @@ class Facts:
     _lowest: dict[int, int | None] = field(default_factory=dict)
     _stuck: dict[int, bool] = field(default_factory=dict)  # 0.39.1
     _requests: list[dict[str, Any]] | None = None
+    _factors: dict[str, float] | None = None  # 0.40.3
+
+    def factors(self) -> dict[str, float]:
+        """0.40.3: how well each channel works (``_channel_factors``), once a keep: a launch's floor (``_launched``)."""
+        if self._factors is None:
+            self._factors = _channel_factors(self.conn, self.scope, self.now)
+        return self._factors
 
     def requests(self) -> list[dict[str, Any]]:
         """0.37.6: every request to the owner, oldest first, with the product line it carries on
@@ -666,8 +673,9 @@ def keep(
             laid.add(product_id)
             said.append(f"Plan tree: line #{project['id']} laid out as a product (#{product_id}).")
         elif product is not None and product["status"] == "open" and project["status"] in CLOSED_STATUSES:
-            _close_product(conn, scope, product, project, now)
-            said.append(f"Plan tree: product #{product['id']} closed with line #{project['id']}.")
+            owed = _close_product(conn, scope, product, project, now)
+            closed = f" What was owed on it closed with it: obligation {_ids(owed)}." if owed else ""  # 0.40.3
+            said.append(f"Plan tree: product #{product['id']} closed with line #{project['id']}.{closed}")
     said += move(conn, scope, now)  # once: the milestones the tree takes the place of (migration 0088)
     said += _link_promises(conn, scope)
     decided = _decided(conn, scope)
@@ -690,6 +698,7 @@ def keep(
         said += _promises(facts, product, now)
         said += _decisions(facts, product, decided.get(int(product["project_id"]), []), now)
         said += _again(facts, product, now)  # 0.37.6: a request its stage still needs, proposed again
+        said += _fresh_demand(facts, product, now)  # 0.40.3: and a new demand note before a first listing's
         said += _recurring(facts, product, now, today, channels)
         said += _decide_by(facts, product, now, today)
     said += _ventures(conn, scope, now)  # 0.37.0: each venture a node, its next decision a step
@@ -1085,13 +1094,28 @@ def _close_product(
     project: Mapping[str, Any],
     now: str,
     by: str = "code",
-) -> None:
-    """A product whose line closed, with everything under it and its own milestone (its unlocks end with it)."""
+) -> list[int]:
+    """A product whose line closed, with everything under it and its own milestone (its unlocks end with it). 0.40.3
+    (analysis-0.40.1 codebase, PL6): and what was owed on it, its promises and the owner's decisions whose steps close
+    here (obligations.close_one, by Ember's code): a closed step is final and an obligation gets one step, so it stayed
+    open, and no plan laid it out again. Returns the obligations closed."""
     ended = "done" if project["status"] == "succeeded" else "dropped"
-    for row in _descendants(conn, scope, product["id"]):
+    rows = _descendants(conn, scope, product["id"])
+    under = {int(r["id"]) for r in rows}
+    # 0.40.3: a promise's or a decision's step stays open under a stage done before it (it closes with its obligation)
+    kept = "level = 'step' AND status = 'open' AND obligation_id IS NOT NULL AND project_id = ?"
+    rows += [r for r in nodes(conn, scope, kept, (product["project_id"],)) if int(r["id"]) not in under]
+    owed: list[int] = []
+    why = "line closed by your owner" if by == "owner" else f"its line closed ({project['status']})"
+    for row in rows:
         _close(conn, row["id"], now, ended, f"its line closed: {project['status']}")
+        if row["obligation_id"] is not None and obligations.close_one(
+            conn, int(row["obligation_id"]), why, "code", None, now
+        ):
+            owed.append(int(row["obligation_id"]))
     _close(conn, product["id"], now, ended, f"its line closed: {project['status']}", by=by)
     _close_milestone(conn, product["id"], now, f"Its product (line #{project['id']}) closed.")
+    return owed
 
 
 def _descendants(conn: sqlite3.Connection, scope: AgentScope, node_id: int) -> list[Any]:
@@ -1443,6 +1467,62 @@ def _again(facts: Facts, product: Mapping[str, Any], now: str) -> list[str]:
         change(conn, scope, step, None, "code", "add", f"{why}: none waits for your owner", now)
         return [f"Plan tree: line #{line}'s {stage['stage']} stage needs a request to your owner: {_quoted(title)}."]
     return []
+
+
+FRESH_DEMAND = "demand/fresh"  # 0.40.3: a new demand note before a line's first listing is proposed (_fresh_demand)
+
+
+def _fresh_demand(facts: Facts, product: Mapping[str, Any], now: str) -> list[str]:
+    """0.40.3 (analysis-0.40.1 codebase, PL4): a step of the current stage that proposes the line's first listing
+    (its check asks for an Etsy listing's or a Printify product's request: "Propose the listing", or proposing it again,
+    ``_again``) gets a step for a new demand note in front of it while the line's newest is older than demand.DAYS
+    (demand.needs_note, the rule propose_etsy_listing and propose_printify_product refuse it by): the research stage's
+    note closes that stage once, for good (a line with no note yet has the research stage's step for it). In the
+    audit, "Propose the listing again" was urgent (0.40.1: until it is proposed) 16 days after the note, and the tool
+    refused it at once. In a stage of steps one after another, the proposal waits behind the note and lends it its
+    weight."""
+    conn, scope = facts.conn, facts.scope
+    stage = current_stage(conn, scope, product["id"])
+    if stage is None or stage["stage"] == "maintain":
+        return []
+    steps = [s for s in _steps(conn, scope, stage["id"]) if s["status"] == "open" and s["obligation_id"] is None]
+    proposing = [
+        s
+        for s in steps
+        if s["kind"] != templates.OWNER_KIND and set(_asks(s["check_kind"], _spec(s))) & set(demand.FIRST_LISTING)
+    ]
+    line = int(product["project_id"])
+    if not proposing or any(s["check_kind"] == "demand" for s in steps) or not demand.needs_note(conn, line, now):
+        return []
+    where, params = scope.where()
+    newest = conn.execute(
+        f"SELECT MAX(created_at) FROM demand_notes WHERE {where} AND project_id = ?", (*params, line)
+    ).fetchone()[0]
+    if newest is None:
+        return []  # its research stage's step writes the first one
+    of = f"the newest is of {local_date(str(newest))}"
+    title = f"Write a new demand note: a first listing needs one from the last {demand.DAYS} days ({of})"
+    seq = int(proposing[0]["seq"])
+    _make_room(conn, stage["id"], seq, 1, now)
+    step = _insert(
+        conn,
+        scope,
+        now,
+        parent_id=stage["id"],
+        level="step",
+        project_id=line,
+        template=FRESH_DEMAND,
+        stage=stage["stage"],
+        kind="create",
+        title=_cut(title, 160),
+        check_kind="demand",
+        check_spec=json.dumps({"days": demand.DAYS}),
+        seq=seq,
+        source="code",
+    )
+    why = f"step #{proposing[0]['id']} proposes the line's first listing, which needs a demand note from the last"
+    change(conn, scope, step, None, "code", "add", f"{why} {demand.DAYS} days ({of})", now)
+    return [f"Plan tree: line #{line} needs a new demand note before its first listing is proposed: step #{step}."]
 
 
 def _rework(facts: Facts, step: Mapping[str, Any], line: int) -> bool:
@@ -2015,8 +2095,11 @@ def _at_floor(step: Mapping[str, Any], factors: Mapping[str, float]) -> bool:
     """0.39.8 (analysis-0.39.6, 3.4): whether a recurring marketing step's channel is worth less than
     weights.CHANNEL_WORKS (twice its floor) and the owner didn't pin it: it waits ('floor'). Live, the code's weekly
     Bluesky post of each line and the blog's monthly posts took 9 of 12 cycles on 10-16, while the agent's own strategy
-    allowed one Bluesky post a week and no blog work, and couldn't drop them (no replacing, 2 waits a day)."""
-    if not _recurring_market(step) or step["pinned"] or not step["channel"]:
+    allowed one Bluesky post a week and no blog work, and couldn't drop them (no replacing, 2 waits a day). 0.40.3
+    (analysis-0.40.1 codebase, PL1): a launch's marketing too ("Post it twice on Bluesky", "A German blog post"): it
+    was ready, took the launch's urgency, became YOUR STEP and cut the sleep, on a channel that brings nothing."""
+    launch = step["kind"] == "market" and step["stage"] == "launch" and step["obligation_id"] is None
+    if not (_recurring_market(step) or launch) or step["pinned"] or not step["channel"]:
         return False
     return factors.get(str(step["channel"]), 1.0) < weights.CHANNEL_WORKS
 
@@ -2032,6 +2115,7 @@ def _launched(
     stages: list[Any],
     maintain_id: int,
     channels: Mapping[str, bool],
+    factors: Mapping[str, float],
 ) -> bool:
     """Whether a product's recurring marketing is due: every stage before its maintain stage done (its launch, or a
     template's last before it). 0.39.3 (analysis-0.39.1, 4.5): a launch counts once its first marketing is out, its
@@ -2040,7 +2124,9 @@ def _launched(
     after their first pins and posts the live products had no marketing step at all, and the day-7 and day-14 pushes
     pushed nothing; and a launch step waiting on a channel that is off kept the weekly steps from the channels that
     are on. Once launched, a product stays launched, as when only its stages said so (they never reopen): a channel
-    set up later, or a step added to its launch, doesn't stop its weekly marketing."""
+    set up later, or a step added to its launch, doesn't stop its weekly marketing. 0.40.3 (analysis-0.40.1 codebase,
+    PL1): nor does a step of a channel at its floor (``_at_floor``: it waits, unless the owner pins it): a new product's
+    Bluesky and blog launch steps kept its weekly pin, on the channel that works, from being laid out."""
     duties = "parent_id = ? AND level = 'step' AND template LIKE 'recurring/%' AND template <> 'recurring/critic'"
     if nodes(conn, scope, duties, (maintain_id,)):
         return True  # laid out only once it was launched
@@ -2052,6 +2138,8 @@ def _launched(
         for step in _steps(conn, scope, stage["id"]):
             if step["status"] != "open" or step["kind"] != "market" or step["obligation_id"] is not None:
                 continue
+            if _at_floor(step, factors):
+                continue  # 0.40.3: it waits on its channel's floor, as one whose channel is off waits on the channel
             if not step["channel"] or channels.get(step["channel"], False):
                 return False  # its first marketing isn't out yet
     return True
@@ -2070,7 +2158,7 @@ def _recurring(
         return []
     said: list[str] = []
     title = str(product["title"])
-    launched = _launched(conn, scope, stages, int(maintain["id"]), channels)
+    launched = _launched(conn, scope, stages, int(maintain["id"]), channels, facts.factors())
     kind = templates.by_key(product["template"]).name
     if kind == CHANNEL_TEMPLATE:  # 0.39.1: a channel's line has no listing for a pin or a post of its own
         return _channel_duties(conn, scope, product, int(maintain["id"]), now)
@@ -2145,7 +2233,8 @@ class Candidate:
     step: weights.Step
     stage: str
     # why it can't be taken now ('owner', 'channel', 'upgrade', 'step', 'hold'; 0.37.6 'approved', 'tried'; 0.37.9 a
-    # limit of the owner's, ``limits``: 'queue', 'messages'; 0.38.1 'sales'; 0.39.6 'views'), None: ready
+    # limit of the owner's, ``limits``: 'queue', 'messages'; 0.38.1 'sales'; 0.39.6 'views'; 0.40.3 'unread'), None:
+    # ready
     waiting: str | None
     # 0.37.6: a cycle took it, and nothing its check reads moved since (it waits 'tried' while that was today; ready
     # again the next day for a try, it doesn't cut a cycle's sleep: busy)
@@ -2180,8 +2269,8 @@ def _channel_factors(conn: sqlite3.Connection, scope: AgentScope, now: str) -> d
         factors["pinterest"] = round(
             min(weights.CHANNEL_MAX, max(weights.CHANNEL_MIN, pins["clicks"] / pins["n"] / CLICKS_PER_PIN)), 2
         )
-    posts = [
-        (str(r["finished_at"])[:10], f"{r['link'] or ''} {r['second_link'] or ''}")
+    posts = [  # 0.40.3 (analysis-0.40.1 codebase, PL2): the owner's days, as the observations' and the blog's are
+        (local_date(str(r["finished_at"])), f"{r['link'] or ''} {r['second_link'] or ''}")
         for r in conn.execute(
             f"SELECT finished_at, link, second_link FROM bluesky_posts WHERE {where} AND status = 'active'"
             " AND sent = 1 AND finished_at <= ?",
@@ -2193,7 +2282,7 @@ def _channel_factors(conn: sqlite3.Connection, scope: AgentScope, now: str) -> d
         for r in conn.execute(
             f"SELECT b.day, a.payload FROM blog_posts b LEFT JOIN approvals a ON a.id = b.approval_id"
             f" WHERE {scope.where('b')[0]} AND b.day <= ?",
-            (*scope.where("b")[1], settled[:10]),
+            (*scope.where("b")[1], local_date(settled)),
         )
     ]
     for channel, items in (("bluesky", posts), ("blog", blog)):
@@ -2714,7 +2803,7 @@ class OwnerLimits:
     waiting for the owner or for their slot, the messages of the owner's day that answered none of theirs, and
     whether a message of theirs waits for an answer (one that answers them is no message of that kind: it can carry
     a report). 0.38.1: and the sell requests waiting for the owner (a listing, a change of one, a Printify product, a
-    KDP book)."""
+    KDP book). 0.40.3 (analysis-0.40.1 codebase, PL3): and Ember's messages the owner hasn't read yet."""
 
     publish: int = 0
     queued: Mapping[str, int] = field(default_factory=dict)
@@ -2723,6 +2812,7 @@ class OwnerLimits:
     sell: int = 0
     # 0.39.6: what each queue channel's approved requests waiting for their slot link (publish_queue.slotted's keys)
     slotted: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    unread: int = 0  # 0.40.3: Ember's messages the owner hasn't read (store.unread_messages)
 
     def full(self, channel: str | None) -> bool:
         """Whether a request to publish on ``channel`` (a queue channel, else the blog or the link page) would be
@@ -2737,6 +2827,13 @@ class OwnerLimits:
         """Whether a message that answers none of the owner's would be refused today (unless it reports a promise:
         ``_let_through``)."""
         return self.messages >= store.MESSAGES_PER_DAY and not self.asked
+
+    @property
+    def unread_full(self) -> bool:
+        """0.40.3 (analysis-0.40.1 codebase, PL3): whether every message would be refused now, a report or an answer
+        too: as many of Ember's as may be unread are (store.MAX_UNREAD_MESSAGES). Live in the audit, a promise to
+        report stayed ready, urgent and YOUR STEP: a cycle a day that ended in the refusal."""
+        return self.unread >= store.MAX_UNREAD_MESSAGES
 
     @property
     def sales_full(self) -> bool:
@@ -2754,7 +2851,9 @@ class OwnerLimits:
             f"publish requests waiting for the owner {self.publish} of {store.PENDING_CAPS['publish']}; waiting for"
             f" the owner or their slot: {queued}; sell requests waiting for the owner {self.sell} of"
             f" {store.PENDING_CAPS['sell']}; messages today that answer none of the owner's {self.messages} of"
-            f" {store.MESSAGES_PER_DAY}" + ("; a message of the owner's waits for an answer" if self.asked else "")
+            f" {store.MESSAGES_PER_DAY}"
+            + ("; a message of the owner's waits for an answer" if self.asked else "")
+            + (f"; all {store.MAX_UNREAD_MESSAGES} of Ember's last messages are unread" if self.unread_full else "")
         )
 
 
@@ -2768,6 +2867,7 @@ def limits(conn: sqlite3.Connection, scope: AgentScope, day_start: str) -> Owner
         obligations.messages_waiting(conn, scope) > 0,
         sell=store.pending_of_type(conn, scope, "sell"),  # 0.38.1
         slotted={c: frozenset(publish_queue.slotted(conn, scope, c)) for c in publish_queue.CHANNELS},  # 0.39.6
+        unread=store.unread_messages(conn, scope),  # 0.40.3: what message_owner reads
     )
 
 
@@ -2782,8 +2882,10 @@ def _limited(facts: Facts, row: Mapping[str, Any], found: OwnerLimits) -> str | 
     a post, a blog post, a promise of them: ``_markets``) and its channel takes no more requests (OwnerLimits.full);
     0.38.1 'sales' when its work is a sell request (``_sells``) and as many as may wait for the owner wait;
     'messages' when its work is a report to the owner (``_reports``) and today's messages that answer none of theirs
-    are sent, unless a report of it would go through all the same (``_let_through``). Ready again once the owner
-    decides a request or one goes out, the next day, or when the owner writes."""
+    are sent, unless a report of it would go through all the same (``_let_through``); 0.40.3 'unread' when its work is
+    a report and the owner hasn't read as many of Ember's messages as may be unread (OwnerLimits.unread_full: no
+    message goes through). Ready again once the owner decides a request or one goes out, the next day, when the owner
+    writes, or (0.40.3) reads."""
     if _markets(row) and found.full(row["channel"]):
         return "queue"
     if _markets(row) and row["channel"] in found.slotted and row["project_id"] is not None:
@@ -2796,6 +2898,8 @@ def _limited(facts: Facts, row: Mapping[str, Any], found: OwnerLimits) -> str | 
         return "sales"
     if found.told and _reports(row) and not _let_through(facts, row):
         return "messages"
+    if found.unread_full and _reports(row):  # 0.40.3 (PL3): message_owner refuses every message, a report too
+        return "unread"
     return None
 
 
@@ -3115,6 +3219,8 @@ WAITS = {
     "queue": "room in the publishing queue (your owner decides a request, or one goes out)",
     "sales": "room for a sell request (your owner decides a listing, a change or a product that waits for them)",
     "messages": "tomorrow, or your owner's next message (today's messages that answer none of theirs are sent)",
+    # 0.40.3 (analysis-0.40.1 codebase, PL3): message_owner refuses every message while that many are unread
+    "unread": f"your owner to read your messages (your last {store.MAX_UNREAD_MESSAGES} are unread: none goes through)",
 }
 QUESTIONS = "This week's questions (keep them in mind; not steps to take):"
 NEW_PRODUCT = "Start a new product (project_create): Ember's code lays it out with its stages and steps."
@@ -3806,22 +3912,31 @@ def wait_step(
     cycle_id: int | None,
     now: str,
     today: date,
+    *,
+    day_start: str | None = None,
 ) -> str:
     """A step that waits on a block Ember's code can check: a request to the owner still waiting, an upgrade request
     not released or declined, another open step, or a day at most WAIT_DAYS ahead (WAITS_A_DAY a day). Its age stops
     meanwhile, and the code takes it up again once the block is gone (``_lift_waits``). 0.39.1: with no ``line``, a
     venture cycle's step of its ventures (a triage, a brainstorm): live, an idea "paused until 10-20" came back the next
     day, as nothing could make it wait. 0.40.1 (analysis-0.40.0, 3.4): a promise's step on a date, PROMISE_NEAR_DAYS
-    before the promise is due at the latest (_promise_waits); a decision's and the owner's own steps stay theirs."""
+    before the promise is due at the latest (_promise_waits); a decision's and the owner's own steps stay theirs.
+
+    0.40.3 (analysis-0.40.1 codebase, PL5): not a step the owner pinned (hold and skip refused one; a wait voided the
+    pin silently), and not on a step that waits on it (``_waits_on``): only its closing lifts such a wait, so the two
+    waited for each other for good ("Propose the listing" on "You approve it", 30 days in the audit). The owner can
+    lift a wait (``owner_unwait``). PL2: the day's waits count from when the owner's day began (``day_start``, their
+    clock's), not from the UTC date's start: waits said at 22:30 were counted against the next day's first."""
     row = _line_step(conn, scope, step_id, line)
     latest = _promise_waits(conn, row, on, today)
     if (row["obligation_id"] is not None and latest is None) or row["kind"] == templates.OWNER_KIND:
         raise PlanError("step_id", f"step #{row['id']} is your owner's: what blocks it goes in your message to them")
+    if row["pinned"]:
+        raise PlanError("step_id", f"your owner pinned step #{row['id']}: they want it done, not put off")
     where, params = scope.where()
     waited = conn.execute(
-        f"SELECT COUNT(*) FROM plan_changes WHERE {where} AND actor = 'agent' AND action = 'wait'"
-        " AND substr(created_at, 1, 10) = ?",
-        (*params, now[:10]),
+        f"SELECT COUNT(*) FROM plan_changes WHERE {where} AND actor = 'agent' AND action = 'wait' AND created_at >= ?",
+        (*params, day_start or _midnight(today)),
     ).fetchone()[0]
     if waited >= WAITS_A_DAY:
         raise PlanError("action", f"{WAITS_A_DAY} steps were said to wait today already: do what you can of this one")
@@ -3842,6 +3957,9 @@ def wait_step(
             raise PlanError("ref", f"step #{ref} can't wait on itself: ref names the other step it waits on")
         if other is None or other["level"] != "step" or other["status"] != "open":
             raise PlanError("ref", f"#{ref} isn't another open step")
+        loop = _waits_on(conn, scope, row, other)
+        if loop:
+            raise PlanError("ref", f"{loop}, so the wait would never lift: take #{row['id']} first, or wait on a day")
         blocked = f"step #{ref}, until it is closed"
     elif on == "date":
         try:
@@ -3867,6 +3985,39 @@ def wait_step(
     )
     change(conn, scope, row["id"], cycle_id, "agent", "wait", f"on {blocked}: {why}", now)
     return f"Step #{row['id']} waits on {blocked} ({waited + 1} of {WAITS_A_DAY} waits today)."
+
+
+def _waits_on(conn: sqlite3.Connection, scope: AgentScope, row: Mapping[str, Any], other: Mapping[str, Any]) -> str:
+    """0.40.3 (analysis-0.40.1 codebase, PL5): how step ``other`` waits on step ``row``, in words, "" when it doesn't:
+    it is ``row`` at the end of a chain of waits on steps (each closes only once the one it waits on does); or it, or a
+    step along that chain, is the owner's step for the request ``row`` makes ("You approve it" waits for "Propose the
+    listing"), or a step of a later stage of the same product (it waits until ``row``'s stage is done; maintain's go
+    side by side with launch's)."""
+    makes = set(_executors(row["check_kind"], _spec(row)))
+    stage = str(row["stage"] or "")
+    seen: set[int] = set()
+    step: Mapping[str, Any] | None = other
+    while step is not None and step["id"] not in seen:
+        seen.add(int(step["id"]))
+        who = f"step #{other['id']}" + (f" waits on step #{step['id']}, which" if step["id"] != other["id"] else "")
+        if step["id"] == row["id"]:
+            return f"step #{other['id']} waits on step #{row['id']}"
+        if step["kind"] == templates.OWNER_KIND and makes & set(_executors(step["check_kind"], _spec(step))):
+            return f"{who} is your owner's and waits for the request step #{row['id']} makes"
+        later = str(step["stage"] or "")
+        if (
+            step["project_id"] == row["project_id"]
+            and step["obligation_id"] is None
+            and stage in templates.STAGES
+            and later in templates.STAGES
+            and later != "maintain"
+            and templates.STAGES.index(later) > templates.STAGES.index(stage)
+        ):
+            return f"{who} comes in the {later} stage, which waits until the {stage} stage is done"
+        if step["waiting"] != "step" or step["wait_ref"] is None:
+            break
+        step = node(conn, scope, int(step["wait_ref"]))
+    return ""
 
 
 def _promise_waits(conn: sqlite3.Connection, row: Mapping[str, Any], on: str | None, today: date) -> date | None:
@@ -3959,6 +4110,29 @@ def _lift_waits(conn: sqlite3.Connection, scope: AgentScope, now: str, today: da
             change(conn, scope, row["id"], None, "code", "unwait", gone, now)
             said.append(f"Plan tree: step #{row['id']} is ready again ({gone}).")
     return said
+
+
+def owner_unwait(conn: sqlite3.Connection, scope: AgentScope, node_id: int, who: str | None, now: str) -> int | None:
+    """0.40.3 (analysis-0.40.1 codebase, PL5): the owner lifts a wait Ember said for a step (plan_step wait): it is
+    weighed again at once. Only Ember's code lifted one (``_lift_waits``, once its block was gone), so a wait said by
+    mistake held its step until then, and neither the owner nor Ember could undo it; their pin keeps Ember from saying
+    it again. Returns the step's line (None: a step of no product line)."""
+    row = node(conn, scope, node_id)
+    if row is None or row["level"] != "step":
+        raise PlanError("id", "no such step", 404)
+    if row["status"] != "open":
+        raise PlanError("id", "this step is closed", 409)
+    if not said_wait(row):
+        raise PlanError("id", "Ember said no wait for this step", 409)
+    _update(conn, row["id"], now, waiting=None, wait_ref=None, wait_until=None, wait_why=None)
+    change(conn, scope, row["id"], None, "owner", "unwait", f"{(who or 'your owner')[:60]} lifted the wait", now)
+    return int(row["project_id"]) if row["project_id"] is not None else None
+
+
+def said_wait(row: Mapping[str, Any]) -> bool:
+    """0.40.3 (PL5): whether a step waits on a block Ember said (plan_step wait: its number or its day; a template's
+    wait on an upgrade nobody asked for has neither), which the owner may lift (``owner_unwait``)."""
+    return bool(row["waiting"]) and (row["wait_ref"] is not None or row["wait_until"] is not None)
 
 
 # --- the owner's word on a product (0.35.0) ---
@@ -4124,7 +4298,7 @@ def owner_keep(conn: sqlite3.Connection, scope: AgentScope, node_id: int, why: s
     return line
 
 
-CLOSED_WORDS = {"close": "closed", "drop": "dropped", "resume": "resumed"}
+CLOSED_WORDS = {"close": "closed", "drop": "dropped", "resume": "resumed", "unwait": "lifted the wait of"}  # 0.40.3
 
 
 def owner_words(conn: sqlite3.Connection, scope: AgentScope, since: str | None) -> list[str]:
@@ -4201,7 +4375,7 @@ def view(
         ][:3],
         "waiting": waiting_owner,
         "picks": _picks(conn, scope, places),
-        "changes": _changes_today(conn, scope, today),
+        "changes": _changes_today(conn, scope, day_start or _midnight(today)),
         "channels": _channels_view(conn, scope, by_id, parts, now),
         "upgrades": _upgrades_view(conn, scope, by_id),
         "ventures": ventures_view(conn, scope, found, parts, today),  # 0.36.0
@@ -4210,10 +4384,11 @@ def view(
     }
 
 
-def _changes_today(conn: sqlite3.Connection, scope: AgentScope, today: date) -> list[dict[str, Any]]:
+def _changes_today(conn: sqlite3.Connection, scope: AgentScope, day_start: str) -> list[dict[str, Any]]:
     """0.35.0: the changes to the tree today that weren't a check passing: Ember's (a step added, split, replaced,
     done or waiting, a product held or resumed), Ember's code's (an owner's decision as a step, a wait lifted, a
-    decide-by date) and the owner's, the newest first."""
+    decide-by date) and the owner's, the newest first. 0.40.3 (analysis-0.40.1 codebase, PL2): today from when the
+    owner's day began (``day_start``), not the UTC date: from their midnight to 01:00 or 02:00 it showed yesterday's."""
     where, params = scope.where("c")
     return [
         {
@@ -4227,8 +4402,8 @@ def _changes_today(conn: sqlite3.Connection, scope: AgentScope, today: date) -> 
         }
         for r in conn.execute(
             f"SELECT c.*, n.title, n.project_id FROM plan_changes c JOIN plan_nodes n ON n.id = c.node_id WHERE {where}"
-            " AND substr(c.created_at, 1, 10) = ? ORDER BY c.id DESC LIMIT 40",
-            (*params, today.isoformat()),
+            " AND c.created_at >= ? ORDER BY c.id DESC LIMIT 40",
+            (*params, day_start),
         )
     ]
 
@@ -4340,6 +4515,7 @@ def _product_view(
                     "source": step["source"],
                     "template": step["template"],  # 0.35.0: decide/owner is the owner's keep-or-drop
                     "pinned": bool(step["pinned"]),
+                    "unwait": step["status"] == "open" and said_wait(step),  # 0.40.3: the owner may lift it
                     "check": templates.CHECKS.get(step["check_kind"] or "", ""),
                     "result": step["result"],
                     "weight": round(weight.total, 2) if weight else None,

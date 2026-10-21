@@ -115,7 +115,7 @@ into sub-goals, this month's milestones and this week's steps; every milestone
 shows how far it got (by its metric, or by the steps that lead to it) and
 whether it keeps its pace, on the Roadmap tab's goal tree and in every plan. Until
 you set one, the money goal Ember's code keeps stands in for it. See the
-[Roadmap section of the docs](ember/DOCS.md#roadmap).
+[Plan section of the docs](ember/DOCS.md#plan) (the Roadmap tab became the Plan tab in 0.35.0).
 
 0.30.0 gives Ember a plan she keeps and a playbook that grows. The list her plans
 take a line from put the line worked on longest ago first, so nearly every cycle
@@ -493,6 +493,25 @@ column was 12 mm. A line with an Etsy listing is no longer made a KDP book by a
 check run in one of its cycles, you can add a book's Amazon link to a request
 marked done without it, and the diagnostics show the books' sources.
 
+0.40.3: the fixes from the codebase analysis of 0.40.1 (a full audit of the code,
+[analysis-0.40.1/ember-analysis-0.40.1.md](analysis-0.40.1/ember-analysis-0.40.1.md)).
+A test that would have failed from 10-28 on is fixed, and CI also runs weekly. The
+workshop's PDF check and the document parser no longer take exponential or cubic
+time on hostile text (one PDF could freeze the app for days). An unknown field in
+the API's usage can no longer make Ember critical, with its last will written, on
+money that is there, and a refund of the charges that made it critical ends that
+state. An approved email waits while its recipient's newer email is unread, and
+the stop check reads more phrasings, HTML-only stops and wrong charsets. Quoted
+text in a journal entry no longer becomes the next cycle's handoff, `draft` and
+the workshop keep what they overwrite, and `workspace_read` shows what it says it
+shows. The plan counts your days from your midnight (not UTC), launch posts at a
+channel's floor wait, and you can lift a wait Ember set (**Lift the wait** on the
+Plan tab). Raising the daily cap ends the wait for midnight at once, and the
+release notes reach the cycle that works on them. A planner's Word copy no longer
+has 52 blank pages. The shareable report no longer holds the database (it took 24
+seconds with a full mailbox) and also hides phone numbers, IBANs, the KDP author
+and the SFTP login; the website's download counts only once the zip is saved.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
@@ -519,9 +538,9 @@ Both the planner and the worker default to `claude-sonnet-5`. For better
 business decisions, plan with `claude-opus-5-5` and keep the worker on Sonnet 5
 (see [Choosing models](ember/DOCS.md#choosing-models)). The spec suggested
 Haiku 4.5 as a cheaper worker; to use it (or any other model), add its prices to
-the price table and set `worker_model`. Haiku 4.5 is not deprecated as of
-2026-09-27: Anthropic lists its retirement as "not sooner than 2026-10-15" and
-gives at least 60 days' notice before retiring a model.
+the price table and set `worker_model`. Check Anthropic's model deprecations page
+before relying on any model: Anthropic gives at least 60 days' notice before it
+retires one.
 
 ## Home Assistant sensors
 
@@ -547,9 +566,15 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   rewrites `/data/options.json` from the options you saved.
 - **The agent's reach.** Its file tools work inside its own folders only
   (`ember/app/agent/sandbox.py`: no links, no absolute paths, size quotas). Its
-  tool handlers run with sockets, subprocesses and native libraries blocked by
-  an audit hook (`ember/app/agent/netguard.py`); in dry run the whole wake cycle
-  runs that way. The live transport only reaches `https://api.anthropic.com`
+  tool handlers, but those of the six tools that call a model (research,
+  workshop, draft, brainstorm, demand_note, printify_catalog), run with new
+  sockets, sends to an address, name lookups, subprocesses, threads and native
+  libraries loaded through ctypes blocked by an audit hook
+  (`ember/app/agent/netguard.py`); in dry run the whole wake cycle runs that way.
+  What raises no audit event stays possible even there (a send on a socket
+  connected before, `_posixsubprocess.fork_exec` called directly, work handed to
+  a thread already running, importing a native module not yet loaded), and no
+  tool handler holds a socket or a thread pool. The live transport only reaches `https://api.anthropic.com`
   and ignores proxy variables (`ember/app/economy/anthropic_transport.py`).
   The container talks to `api.anthropic.com` and, if the owner sets up Ember's
   mailbox, to the configured IMAP and SMTP hosts, over verified TLS, from
@@ -571,7 +596,10 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   it and within a daily limit, and (0.37.3) only after Ember's code read its
   mailbox since the approval, so a "stop" waiting there is seen first (0.39.5:
   also one written below the quote, or sent with a photo; 0.39.7: below a long
-  thread too); a send is recorded before it starts and never retried
+  thread too). 0.40.3: while the recipient has written again since the request
+  and the agent hasn't read that email yet, the email waits until it has, and an
+  approved email not sent within 7 days of its approval isn't sent at all. A send
+  is recorded before it starts and never retried
   (`ember/app/integrations/executor.py`). The kill switch stops whatever
   Ember's code hasn't begun, also in the middle of a round (0.37.3). A Reddit
   post becomes a link the owner opens and posts from their own account; a KDP

@@ -35,8 +35,10 @@ KDP_PAGES = (
     "5x8", "5.06x7.81", "5.25x8", "5.5x8.5", "6x9", "6.14x9.21", "6.69x9.61", "7x10", "7.44x9.69", "7.5x9.25", "8x10",
     "8.25x6", "8.25x8.25", "8.5x8.5", "8.5x11", "8.27x11.69",
 )  # fmt: skip
-_DIRECTIVE = re.compile(r"^:::\s*(.*?)\s*$")
-_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+# 0.40.3 (analysis-0.40.1 codebase, PR2): the text after ':::' and after a heading's '#'s is stripped in Python (of
+# white space, and a heading's closing '#'s): a heading with 2,000 spaces inside took 12 s to match, holding the app
+_DIRECTIVE = re.compile(r"^:::(.*)$")
+_HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 _RULE = re.compile(r"^(?:-{3,}|\*{3,}|_{3,})$")
 _BULLET = re.compile(r"^([-*+])\s+(.*)$")
 _NUMBER = re.compile(r"^(\d{1,3})[.)]\s+(.*)$")
@@ -335,19 +337,25 @@ def inline(text: str) -> list[Run]:
     if pos < len(text):
         items.append(text[pos:])
     openers: list[_Mark] = []
+    # 0.40.3 (analysis-0.40.1 codebase, found with PR2): where each character's openers are in openers, so a closer
+    # finds its own at once (it looked through the others: a paragraph of '*a_ ' 16,000 times took 7 s)
+    places: dict[str, list[int]] = {"*": [], "_": []}
     for item in items:
         if not isinstance(item, _Mark):
             continue
-        if item.can_close:
-            at = next((k for k in range(len(openers) - 1, -1, -1) if openers[k].char == item.char), None)
-            if at is not None:
-                opener = openers[at]
-                used = min(opener.length, item.length)
-                opener.role, opener.used = "open", used
-                item.role, item.used = "close", used
-                del openers[at:]
-                continue
+        if item.can_close and places[item.char]:
+            at = places[item.char][-1]
+            opener = openers[at]
+            used = min(opener.length, item.length)
+            opener.role, opener.used = "open", used
+            item.role, item.used = "close", used
+            del openers[at:]
+            for kept in places.values():
+                while kept and kept[-1] >= at:
+                    kept.pop()
+            continue
         if item.can_open:
+            places[item.char].append(len(openers))
             openers.append(item)
     runs: list[Run] = []
     bold = italic = 0
@@ -446,13 +454,13 @@ class _Parser:
                 continue
             directive = _DIRECTIVE.match(stripped)
             if directive:
-                self._directive(directive[1], number)
+                self._directive(directive[1].strip(), number)
                 i += 1
             elif heading := _HEADING.match(stripped):
                 level = len(heading[1])
                 if level > 3:
                     self.warnings.append(f"line {number}: headings go down to ###; '{heading[1]}' is shown as ###")
-                self._emit(Heading(min(level, 3), inline(heading[2])), number)
+                self._emit(Heading(min(level, 3), inline(heading[2].rstrip().rstrip("#").rstrip())), number)
                 i += 1
             elif _RULE.match(stripped):
                 self._emit(Divider(), number)
@@ -547,6 +555,14 @@ class _Parser:
             self._emit(Space(_at(number, lambda: _number("space", rest or "5", 0, MAX_SPACE_MM))), number)
             return
         if name == "pagebreak":
+            # 0.40.3 (analysis-0.40.1 codebase, PR5): a box is drawn on one page, its background measured first, so a
+            # break inside it put the box's rest on the next page while the page went on below the box: two layers
+            # of text where the main text reached that page
+            if any(frame.kind == "box" for frame in self.stack):
+                raise DocumentError(
+                    f"line {number}: '::: pagebreak' starts a new page, and a box is never split across pages, so it "
+                    "belongs outside the box: end the box with ':::' before it (or make two boxes)"
+                )
             self._emit(PageBreak(), number)
             return
         raise DocumentError(
@@ -735,12 +751,22 @@ def _runs_with_breaks(text: str) -> list[Run]:
     return runs
 
 
-_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]")
+# 0.40.3 (analysis-0.40.1 codebase, PR8): code points no XML file holds (U+FFFE, U+FFFF, halves of surrogate pairs) are
+# left out too, and the first line that held one is named: the Word copy failed on them with "the tool failed
+# (ValueError)", naming no line
+_NOT_XML = re.compile(r"[\ud800-\udfff\ufffe\uffff]")
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069\ud800-\udfff\ufffe\uffff]")
 
 
 def parse(source: str) -> Document:
     """The document tree of a source text, or a DocumentError naming the line to fix."""
-    text = _CONTROL.sub("", source.replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff"))
+    text = source.replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff")
+    notes = []
+    if junk := _NOT_XML.search(text):
+        number, count = text.count("\n", 0, junk.start()) + 1, len(_NOT_XML.findall(text))
+        more = f", with {count - 1} more like it" if count > 1 else ""
+        notes.append(f"line {number}: U+{ord(junk[0]):04X} is no character a Word file can hold; left out{more}")
+    text = _CONTROL.sub("", text)
     lines = text.split("\n")
     settings = Settings()
     first = 1
@@ -757,4 +783,5 @@ def parse(source: str) -> Document:
     document = _Parser(lines, first, settings).parse()
     if not document.main and not document.sidebar:
         raise DocumentError("the document is empty: write its text below the settings")
+    document.warnings[:0] = notes
     return document

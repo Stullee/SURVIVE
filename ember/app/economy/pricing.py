@@ -71,7 +71,8 @@ LAST_WILL = CallProfile(input_tokens=6_600, max_tokens=1_000)  # 0.18.0: the con
 # and the library's learnings (0.12.0: and the Etsy renewals, mark_opt_out, and the milestones' metrics, budgets, waits
 # and milestone_plan; the OBLIGATIONS and obligation_done; the reflection with the most tool calls its cycle didn't
 # do; the rules without what Ember's code enforces or another text already says; draft; the lessons the owner pinned;
-# demand_note and a listing's project_id; 0.13.0: a milestone's odds).
+# demand_note and a listing's project_id; 0.13.0: a milestone's odds). 0.40.3 (analysis-0.40.1 codebase, C2): and the
+# brief's YOUR SOFTWARE (context.SOFTWARE_BRIEF_BUDGET), which the profiles' margin holds.
 WORK = CallProfile(input_tokens=36_500, max_tokens=2_000, cache_ttls=("5m",))
 REFLECT = CallProfile(input_tokens=48_200, max_tokens=2_000, cache_ttls=("5m",))
 # The daily review (0.7.1), measured the same way: the constitution, the knowledge, the review rules (with the
@@ -87,12 +88,36 @@ WORKSHOP_RUN = CallProfile(input_tokens=5_200, max_tokens=3_000, cache_ttls=("5m
 # Models that always think (Anthropic's adaptive thinking can't be switched off for them, e.g. Claude Opus 5.5):
 # their requests get adaptive thinking and this much more room for output, so the thinking can't crowd out the
 # answer. Every other model is asked not to think.
-ALWAYS_THINKING = ("claude-opus-5-5", "claude-fable", "claude-mythos")
+# 0.40.3 (analysis-0.40.1 codebase, C4): the thinking settings each model takes (Anthropic's docs), by the start of its
+# name: "disabled" (no thinking), "between_tools" (no extended thinking, only short notes between tool calls: Claude
+# Sonnet 5.5's lowest setting, which refuses "disabled" with a 400) and "adaptive". The request builder asks each model
+# for the first of THINKING_OFF it takes (prompts._thinking), and the dry run's fake model refuses what the model
+# doesn't take (fake_llm.validate_request), so a dry run catches it too: every plan on Sonnet 5.5 failed, a dry run
+# passed. Claude Haiku 5.5 and Opus 5 take "disabled" only at effort "high" or below, which the owner's options never
+# exceed (Settings.worker_effort).
+THINKING_MODES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("claude-sonnet-5-5", ("between_tools", "adaptive")),
+    ("claude-opus-5-5", ("adaptive",)),
+    ("claude-fable", ("adaptive",)),
+    ("claude-mythos", ("adaptive",)),
+)
+OTHER_THINKING_MODES = ("disabled", "adaptive")  # every other model's (Claude Sonnet 5, Haiku 4.5, ...)
+THINKING_OFF = ("disabled", "between_tools")  # the settings without extended thinking, in this order
 THINKING_ROOM = 4_000
 
 
+def thinking_modes(model: str) -> tuple[str, ...]:
+    """0.40.3 (analysis-0.40.1 codebase, C4): the thinking settings ``model`` takes."""
+    return next((modes for prefix, modes in THINKING_MODES if model.startswith(prefix)), OTHER_THINKING_MODES)
+
+
+def thinking_off(model: str) -> str | None:
+    """0.40.3 (analysis-0.40.1 codebase, C4): the setting that keeps ``model`` from thinking; None: it always thinks."""
+    return next((mode for mode in THINKING_OFF if mode in thinking_modes(model)), None)
+
+
 def always_thinks(model: str) -> bool:
-    return model.startswith(ALWAYS_THINKING)
+    return thinking_off(model) is None
 
 
 def with_room(profile: CallProfile, model: str) -> CallProfile:

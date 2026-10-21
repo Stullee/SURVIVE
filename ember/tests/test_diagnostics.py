@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Iterator
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,12 +15,15 @@ from app.agent import plan as plan_tree
 from app.agent import ventures, weights
 from app.agent.store import canonical
 from app.config import LoadedSettings, Settings
+from app.economy import clock
 from tests.economy_helpers import ScriptedTransport
 from tests.test_agent import plan, reply, text, tools
 from tests.test_owner_api import post
 
 QUESTION = "Printable meal-planning templates sounds like a good idea, will you create them by image generation"
-NOW = "2026-09-28T01:00:00Z"
+# 0.40.3 (analysis-0.40.1 codebase, 7): the app runs on the real clock here and prunes texts older than 30 days at its
+# first round, so rows stamped 2026-09-28 lost their texts from 10-28 on and the size cap was never reached.
+NOW = clock.to_iso(clock.utc_now() - timedelta(hours=1))
 TIMESTAMP = r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ"
 PROJECT = {
     "title": "Printable meal-planning templates",
@@ -174,8 +178,8 @@ def big_cycles(client: TestClient, count: int, calls: int, content: str, result:
             ).lastrowid
             call = conn.execute(
                 "INSERT INTO llm_calls (boot_id, cycle_id, purpose, model, simulated, status, ts, local_day)"
-                " VALUES ('test', ?, 'work', 'scripted', 1, 'ok', ?, '2026-09-28')",
-                (cycle, NOW),
+                " VALUES ('test', ?, 'work', 'scripted', 1, 'ok', ?, ?)",
+                (cycle, NOW, NOW[:10]),
             ).lastrowid
             for seq in range(1, calls + 1):
                 conn.execute(

@@ -147,7 +147,12 @@ def test_maintenance_runs_one_small_cycle_a_day(data_dir: Path, monkeypatch: pyt
     agent, ends = run(data_dir, FakeTransport(script=[plan(steps=[])]), settings=VENTURING)
     assert ends[0].status == "idle"
     assert rows(agent, "SELECT cap_micros, venture FROM cycles") == [{"cap_micros": 400_000, "venture": 0}]
-    assert agent.db.get_meta(agent._key("next_wake_reason")) == "the burn mode is maintenance: one cycle a day"
+    # 0.40.3 (analysis-0.40.1 codebase, C1): a hold decide works out (and the dashboard shows), not a kept wake
+    assert (
+        agent.decide().reason
+        == agent.agent_fields()["next_wake_reason"]
+        == "the burn mode is maintenance: one cycle a day"
+    )
     status_text = planner_texts(agent.transport)[0]  # type: ignore[arg-type]
     assert "Burn mode, set by Ember's code: maintenance (net runway: " in status_text
     assert agent.economy.dashboard()["agent"]["burn_mode"] == "maintenance"

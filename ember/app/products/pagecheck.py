@@ -15,10 +15,11 @@ pages itself, free, every time, and a paperback is proposed only after a check o
 * the rows to write in (``rows``): blank rows between ruled lines, two or more of one height in a row, as a table's
   empty rows or writing lines are; a row lower than WRITE_LEAST is too low to write in (2.2 mm rows, 0.39.1);
 * white space (``blank``): the tallest band with nothing printed between a page's first and last mark (its footer
-  included), named when it is more than BLANK_SHARE of the page (note lines alone on a page of their own, 0.39.6);
+  included), or (0.40.3) under its last mark down to its text area's bottom, named when it is more than BLANK_SHARE
+  of the page (note lines alone on a page of their own, 0.39.6);
 * the calendar (``calendar``): the dates the pages print, read from their text: a date that doesn't exist, a weekday
-  that isn't its date's, a week whose label (KW 1, Week 1) or days aren't that calendar week's, a week missing
-  between the first and the last;
+  that isn't its date's, a week whose label (KW 1, Week 1) or days aren't that calendar week's (0.40.3: its 7 days,
+  each once), a week missing between the first and the last;
 * the AI line (``ai_pages``): the pages that say AI made the book, and how many words share its page;
 * placeholders (``placeholders``, 0.40.2): words in square brackets ([Verlag/Herausgeber], [Name]), "Lorem ipsum",
   TODO: text no one filled in, which a paperback may not print (tools: propose_kdp_book refuses it).
@@ -76,7 +77,7 @@ class Page:
     height: float  # mm
     rules: tuple[float, ...]  # its ruled lines, mm from its top
     rows: tuple[float, int] | None  # its lowest blank rows to write in: height in mm, how many of them
-    blank: tuple[float, float]  # its tallest blank band between printed marks: from (mm down), height (mm)
+    blank: tuple[float, float]  # its tallest blank band between printed marks or under them: from (mm down), height
     text: str
     words: int
 
@@ -151,9 +152,13 @@ class Check:
             named = ", ".join(f"{p.number} ({_mm(p.blank[1])} from {_mm(p.blank[0])} down)" for p in blank[:SHOWN])
             rest = [p.number for p in blank[SHOWN:]]
             more = f"; also {_numbers(rest)}" if rest else ""
-            lines.append(f"White space over a quarter of a page between what it prints: pages {named}{more}.")
+            lines.append(
+                f"White space over a quarter of a page between what it prints or under it: pages {named}{more}."
+            )
         else:
-            lines.append("White space: no page has a blank band over a quarter of it between what it prints.")
+            lines.append(
+                "White space: no page has a blank band over a quarter of it between what it prints or under it."
+            )
         if not self.readable:
             lines.append("Calendar, AI line: its pages hold no text Ember's code can read; check them on the pictures.")
             return lines
@@ -323,13 +328,22 @@ def _empty(ink: Image.Image, top: float, bottom: float) -> bool:
 
 def _blank(ink: Image.Image) -> tuple[float, float]:
     """The tallest band with nothing printed between the page's first and last printed pixel rows: from, height (mm).
-    The footer's page number is printed, so the white space above it counts."""
-    _, rows = ink.getprojection()
+    The footer's page number is printed, so the white space above it counts. 0.40.3 (analysis-0.40.1 codebase, PR4):
+    so does the white space under the last mark down to the text area's bottom, the page's height less its margin
+    (Ember's are the same on every side: the nearest anything printed comes to the top or a side edge). Without a
+    footer, a page with a 3-row table and 157 mm of nothing under it read as fine; a page with nothing on it too."""
+    columns, rows = ink.getprojection()
     inked = [y for y, on in enumerate(rows) if on]
+    if not inked:
+        return 0.0, len(rows) * MM_PER_PIXEL
     best = (0, 0)
     for above, below in zip(inked, inked[1:], strict=False):
         if below - above > best[1]:
             best = (above + 1, below - above - 1)
+    across = [x for x, on in enumerate(columns) if on]
+    bottom = len(rows) - min(inked[0], across[0], len(columns) - 1 - across[-1])
+    if bottom - inked[-1] - 1 > best[1]:  # a footer is printed under the text area: then there is none
+        best = (inked[-1] + 1, bottom - inked[-1] - 1)
     return best[0] * MM_PER_PIXEL, best[1] * MM_PER_PIXEL
 
 
@@ -510,21 +524,22 @@ def _systems(english: bool) -> tuple[Callable[[date], int], ...]:
 def read_calendar(texts: list[str], language: str = "") -> Calendar:
     """The dates the pages print, checked against the calendar: each exists, the weekday printed before it is its own,
     a week's label (KW 3, Week 3) is the calendar week of the days it names (ISO's, Monday to Sunday; for an English
-    book a US week from Sunday counts too), a range of 7 days is a calendar week, and no week is missing between the
-    first and the last. A date without its year is read in the year the book prints most."""
+    book a US week from Sunday counts too) and (0.40.3) names each of its 7 days once, a range of 7 days is a calendar
+    week, and no week is missing between the first and the last. A date without its year is read in the year the book
+    prints most."""
     english = language.lower() == "english"
     years = Counter(int(y) for text in texts for y in _YEARS.findall(text))
     book_year = years.most_common(1)[0][0] if years else None
     findings: list[str] = []
     labels: list[int] = []
     count = 0
-    for number, text in enumerate(texts, 1):
-        lines = text.replace("\r\n", "\n").split("\n")
-        page_dates = [(line, _dates(line)) for line in lines]
+    pages = [[(line, _dates(line)) for line in text.replace("\r\n", "\n").split("\n")] for text in texts]
+    for number, page_dates in enumerate(pages, 1):
         count += sum(len(found) for _, found in page_dates)
         for _, found in page_dates:
             findings += _day_findings(number, found, book_year)
-        findings += _week_findings(number, page_dates, book_year, english, labels)
+        following = _leading(pages[number]) if number < len(pages) else []
+        findings += _week_findings(number, page_dates, book_year, english, labels, following)
     if len(labels) >= WEEKS_LEAST:
         seen = set(labels)
         missing = [n for n in range(min(seen), max(seen) + 1) if n not in seen]
@@ -553,10 +568,16 @@ def _day_findings(number: int, found: list[_Date], book_year: int | None) -> lis
 
 
 def _week_findings(
-    number: int, page: list[tuple[str, list[_Date]]], book_year: int | None, english: bool, labels: list[int]
+    number: int,
+    page: list[tuple[str, list[_Date]]],
+    book_year: int | None,
+    english: bool,
+    labels: list[int],
+    following: list[_Date],
 ) -> list[str]:
     """A page's weeks: each label with the days it names (a range after it on its line, or the days that follow it one
-    by one), and each range of 7 days."""
+    by one, 0.40.3: on to the next page's dates before its first label, ``following``, as a week over two pages), and
+    each range of 7 days."""
     findings = []
     flat = [(index, d) for index, (_, found) in enumerate(page) for d in found]
     for index, (line, found) in enumerate(page):
@@ -568,14 +589,14 @@ def _week_findings(
             after = [r for r in ranges if r[0].start >= match.end()]
             if after:
                 days = list(after[0])
-            else:  # its days one by one on the lines below, until the next label: consecutive days
+            else:  # its days one by one on the lines below
                 below = [d for i, d in flat if i > index or (i == index and d.start >= match.end())]
-                days = _consecutive(below, book_year)
+                days = _listed([*below, *following], book_year)
             if not days:
                 continue
             labels.append(week)
             name = f"{match['label']} {week}"
-            wrong = _week_wrong(days, week, book_year, english)
+            wrong = _week_wrong(days, week, book_year, english, listed=not after)
             if wrong:
                 findings.append(f"page {number}: {name} ({_shown(days)}) {wrong}")
         for first, last in ranges:
@@ -610,33 +631,79 @@ def _spans(first: _Date, last: _Date, book_year: int | None) -> list[tuple[date,
     ]
 
 
-def _consecutive(dates: list[_Date], book_year: int | None) -> list[_Date]:
-    """The first dates of a list that follow one another day by day (a week's days, Mo 04.01. Di 05.01. ...), 2 to 7;
-    [] when the first two don't."""
+def _leading(page: list[tuple[str, list[_Date]]]) -> list[_Date]:
+    """0.40.3: a page's dates before its first week label."""
+    found: list[_Date] = []
+    for line, dates in page:
+        label = _WEEK.search(line)
+        if label:
+            return found + [d for d in dates if d.end <= label.start()]
+        found += dates
+    return found
+
+
+def _listed(dates: list[_Date], book_year: int | None) -> list[_Date]:
+    """A week's days one by one (Mo 04.01. Di 05.01. ...): the dates from the first on within 6 days of it, until 7
+    different days (a day printed twice too); [] unless the first two follow one another. 0.40.3 (analysis-0.40.1
+    codebase, PR4): the dates that followed one another day by day, so a week with Saturday twice and no Sunday ended
+    at its first Saturday, and one of Monday to Friday, read as their calendar week."""
     run: list[_Date] = []
-    for d in dates[:7]:
-        if run and not any((b - a).days == 1 for a in run[-1].candidates(book_year) for b in d.candidates(book_year)):
+    days: set[int] = set()
+    for d in dates:
+        apart = [(b - a).days for a in dates[0].candidates(book_year) for b in d.candidates(book_year)]
+        within = [n for n in apart if 0 <= n <= 6]
+        if not within or (len(run) == 1 and 1 not in within) or len(days) == 7:
             break
         run.append(d)
+        days.add(min(within))
     return run if len(run) >= 2 else []
 
 
-def _week_wrong(days: list[_Date], week: int, book_year: int | None, english: bool) -> str:
-    """What is wrong with week ``week``'s days ("" when they are that calendar week's)."""
+def _week_wrong(days: list[_Date], week: int, book_year: int | None, english: bool, listed: bool = False) -> str:
+    """What is wrong with week ``week``'s days ("" when they are that calendar week's); 0.40.3: and each of its 7 days
+    once (``listed``: the days printed one by one, else a range's first and last)."""
     first, last = days[0], days[-1]
     spans = _spans(first, last, book_year)
     if not spans:
         return ""  # a day that doesn't exist, or no year to read it in: named with the day
     if all((b - a).days > 6 for a, b in spans):
         return f"spans {(spans[0][1] - spans[0][0]).days + 1} days"
-    if any(number(a) == week == number(b) for a, b in spans for number in _systems(english)):
-        return ""
+    found = [(a, b, n) for a, b in spans for n in _systems(english) if n(a) == week == n(b)]
+    if found:
+        return min((_days_wrong(days, a, b, n is _iso_week, book_year, listed) for a, b, n in found), key=len)
     year = book_year or spans[0][0].year
     weeks = date(year, 12, 28).isocalendar().week  # 52, or 53 in a long year
     if week > weeks:
         return f"isn't a week: {year} has {weeks}"
     monday = date.fromisocalendar(year, week, 1)
     return f"isn't week {week}: week {week} of {year} is Mon {monday.isoformat()} to Sun {monday + timedelta(days=6)}"
+
+
+def _days_wrong(days: list[_Date], a: date, b: date, iso: bool, book_year: int | None, listed: bool) -> str:
+    """0.40.3 (PR4): the days a calendar week (from Monday, else from Sunday) prints twice or lacks, its days printed
+    from ``a`` to ``b`` (``listed``: each of ``days``): "" when it has each of its 7 once. A day of another year than
+    the book's isn't missing: a week across the new year may stop at it."""
+    start = a - timedelta(days=(a.weekday() - (0 if iso else 6)) % 7)
+    week = [start + timedelta(days=n) for n in range(7)]
+    if listed:
+        printed = [next((c for c in d.candidates(book_year) if start <= c <= week[-1]), None) for d in days]
+    else:
+        printed = [a + timedelta(days=n) for n in range((b - a).days + 1)]
+    count = Counter(printed)
+    twice = [d for d in week if count[d] > 1]
+    missing = [d for d in week if not count[d] and d.year == (book_year or d.year)]
+    said = []
+    if twice:
+        said.append(f"prints {_days(twice, 'and')} twice")
+    if missing:
+        said.append(f"has no {_days(missing, 'or')}")
+    return " and ".join(said)
+
+
+def _days(days: list[date], last: str) -> str:
+    """'Saturday 2027-01-09', 'Saturday 2027-01-09 or Sunday 2027-01-10'."""
+    named = [f"{DAY_NAMES[d.weekday()]} {d.isoformat()}" for d in days]
+    return named[0] if len(named) == 1 else f"{', '.join(named[:-1])} {last} {named[-1]}"
 
 
 def _shown(days: list[_Date]) -> str:

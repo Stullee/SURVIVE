@@ -782,8 +782,10 @@ def test_the_prompt_cache_is_simulated() -> None:
     third = usage_of(fake.send(step))
     assert third["cache_read_input_tokens"] == written and third["cache_creation_input_tokens"] > 0
 
-    # A different tool_choice keeps only the tools and system part.
-    final = usage_of(fake.send(prompts.work_request(SETTINGS, "A brief. " * 20, [], final=True)))
+    # A different tool_choice keeps only the tools and system part. (0.40.3, analysis-0.40.1 codebase, C3: the last
+    # work step no longer sends "none", but the fake still models it.)
+    none = {**prompts.work_request(SETTINGS, "A brief. " * 20, []), "tool_choice": {"type": "none"}}
+    final = usage_of(fake.send(none))
     assert 1_024 < final["cache_read_input_tokens"] < written
 
     clock.advance(301)  # past the 5-minute lifetime
@@ -970,6 +972,12 @@ def test_chaos_produces_every_kind_of_misbehaviour() -> None:
         fake.send(prompts.draft_request(SETTINGS, f"A guide to weekly planning, take {seed}."))  # 0.12.0
         fake.send(prompts.consolidate_request(SETTINGS, f"1. Ask people first, take {seed}.\n2. Tags matter."))
         fake.send(prompts.critic_request(SETTINGS, f"Venture #1: A shop for planners, take {seed}."))  # 0.13.0
+        notes |= {note for _, _, note in fake.trace}
+    # 0.40.3: and a work step, one of eleven misbehaviours 2 times in 5: the corpus missed one once workspace_read's
+    # definition changed
+    for seed in range(200):
+        fake = FakeTransport(seed=seed, scenario="chaos", clock=Clock())
+        fake.send(prompts.work_request(SETTINGS, f"A brief for step {seed}.", []))
         notes |= {note for _, _, note in fake.trace}
     assert {f"chaos: {c}" for kinds in CHAOS.values() for c in kinds} <= notes
     inputs = [(name, args, ok) for sim in sims for _, name, args, ok in sim.tool_log]

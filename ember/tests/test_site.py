@@ -273,6 +273,9 @@ def test_the_owner_previews_and_downloads_it(site_client: TestClient) -> None:
     assert 'attachment; filename="website.zip"' in download.headers["content-disposition"]
     with zipfile.ZipFile(io.BytesIO(download.content)) as archive:
         assert "index.html" in archive.namelist() and "Musterstraße 1" in archive.read("impressum.html").decode()
+    # 0.40.3: the dashboard records the download it saved (the GET records nothing)
+    version = {"version": download.headers["x-ember-site-version"]}
+    assert site_client.post("api/site/download", json=version, headers={"X-Ember-Request": "1"}).status_code == 200
     card = site_client.get("api/dashboard").json()["integrations"]["site"]
     assert card["status"] == "ok" and card["downloaded_at"] and card["changed"] == []
     _write(site_client, home(title="Planners, printed at home"))

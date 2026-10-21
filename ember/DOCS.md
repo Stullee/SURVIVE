@@ -361,6 +361,11 @@ daily cap** for your day until **08:00** (your time), whatever wakes Ember, and 
 scheduled wake that would need it waits until 08:00: every night from 00:07 the
 cycles spent four fifths of the cap, and your decision at 07:48 got one cycle
 before the next waited for 20:00 with $0.01 to spend.
+Since 0.40.3 these waits, the wait for the daily cap to reset (until midnight)
+and the maintenance burn mode's day are worked out again each time Ember decides
+whether to wake, and never kept as the next wake: raise the daily cap, add money
+or switch event wake-ups off, and a wait whose reason is gone ends at once
+(before, it lasted until its time, under the old reason).
 Your **Wake now**, messages and decisions are never held back. The activity
 list shows an event's cycle as *woken by an event*, and the System log shows
 what was noted.
@@ -567,7 +572,12 @@ agent's workspace:
   each column still at least as wide as its longest word), and a book names a
   column to write words in (a header word of 4 letters or more) that comes out
   under 13 mm: the Kassenbuch's "Text", where each entry is described, was 12 mm
-  wide on 48 pages, and nothing could widen it.
+  wide on 48 pages, and nothing could widen it. Since 0.40.3 a page break in
+  the Word copy starts the next paragraph's page, also beside a sidebar: a break
+  of its own ran on to a blank page after fill lines (an 83-page planner had 135
+  pages in Word), and a sidebar's Word copy had none (a 2-page CV, 1 page). A
+  `::: pagebreak` inside a box is refused (it printed two layers of text), and a
+  book's footer keeps KDP's 0.25 in from the bottom edge at any margin.
 - **Spreadsheets** (`make_spreadsheet`): a JSON description becomes an Excel
   file with formats, dropdowns, formulas, totals, a chart and a *How to use*
   sheet, plus a picture of each sheet, drawn since 0.37.5 from the file itself:
@@ -588,7 +598,8 @@ agent's workspace:
   planner's 48 weekly tables). Ember's code also keeps the text a file held
   before the agent overwrote, edited or deleted it (its newest 5), and `restore`
   brings it back: live, an overwrite left a book's 24 KB interior as its
-  671-byte header.
+  671-byte header. Since 0.40.3 that includes a text a draft overwrote or a
+  workshop run's file of the same name replaced.
 - **Listing photos** (`make_image`): up to three pages, sheets or pictures (or a
   zoomed-in region of one), fanned out next to a title, a subtitle and a badge,
   in Etsy's 4:3 size (3000 x 2250) or square or portrait; or a photo of words
@@ -1273,6 +1284,9 @@ no cycle for a day. Since 0.40.1 it stays urgent until Ember proposes it again
 (or you hold or drop the product), not for 3 days after your decision: five
 cycles in those days ran out of room before they proposed the book, and from the
 fourth day it got one try a day, weighing as much as a step of the daily review.
+Since 0.40.3, when the line has no listing yet and its newest demand note is
+older than 14 days (Ember's tool refuses a first listing then), a step for a new
+note comes before the proposal, which waits behind it.
 
 Since 0.39.8 a product's weekly pin, Bluesky post or monthly blog post waits
 (*its channel brings next to nothing*) while that channel is worth less than
@@ -1282,7 +1296,9 @@ the channel's next step for the line comes when the period ends. On 10-16 nine o
 twelve cycles went to Bluesky posts and blog posts its own strategy had stopped,
 as Ember could neither replace the code's steps nor put off more than two a day.
 A product with no listing of its own gets no weekly pin or post, and one already
-open waits (*it has no listing of its own*).
+open waits (*it has no listing of its own*). Since 0.40.3 a new product's launch
+posts and blog post on such a channel wait the same way (unless you pin them),
+and its weekly pin on the channel that works comes while they wait.
 
 **Your limits** (0.37.9). Two of your protections were enforced by Ember's tools
 alone: at most 3 publish requests (pins, Bluesky posts, blog posts, the link
@@ -1310,6 +1326,9 @@ change of one, a Printify product, a KDP book) wait for your decision at once,
 and while they do, a step whose work is one waits too ("as many sell requests
 as may wait for you wait"): "Propose the listing" (the product, the book),
 proposing one again, and the critic's fixes, which are a change of the listing.
+Since 0.40.3 a report also waits while five of Ember's messages are unread, when
+she can't write to you at all ("5 of Ember's messages to you are unread"), until
+you read them.
 The limits themselves stay as they are. The [diagnostics](#diagnostics) report
 lists each step's wait with the limits as they stand ('queue', 'messages',
 'sales'). Since 0.39.1 the agent's STATUS lists the day's messages that count
@@ -1381,7 +1400,10 @@ which can't be kept before the milestone is judged on 10-24, and each was told t
 write to you about it. Your decisions' steps can't wait, as before. Since 0.40.2
 a promise of no product line can wait the same way, in the cycle whose step it
 is: the promise to propose the Kassenbuch by 10-25, which KDP's weekly limit
-held until then, could only be tried and refused, a cycle a day.
+held until then, could only be tried and refused, a cycle a day. Since 0.40.3
+she can't make a step you pinned wait (as she can't hold or skip it), nor a step
+wait on one that waits on it (only a step's closing lifts such a wait), and her
+two waits a day count from your midnight, not from midnight UTC.
 What you, a promise or Ember's code put in the plan stays. She can **hold** a
 product to work on others, with her reason, and resume it. She can't close,
 drop or delete a project or product: only you do. Each change is kept with its
@@ -1435,8 +1457,10 @@ or kill the product's venture, no date is read.
 a product your own worth, from 0.5 to 10, in place of the one Ember's code
 computes; **Use Ember's code's** takes yours back. At a decide-by date, **Keep
 it** or **Drop it**. **Close as done** or **Drop it** ends a product (and its
-line) whenever you want. **Lift the hold** puts a product Ember held back in the
-plan. Since 0.36.0 **Hold it** holds a product yourself, with an optional
+line) whenever you want (since 0.40.3 with the promises and decisions owed on
+it: "line closed by your owner"). **Lift the hold** puts a product Ember held
+back in the plan. Since 0.40.3 **Lift the wait** takes off a wait Ember said for
+a step (pin it too, to keep her from putting it off again). Since 0.36.0 **Hold it** holds a product yourself, with an optional
 reason: its steps wait until you **Resume it**, and Ember can't lift your hold
 (her own she can). Since 0.39.3 that holds the promises Ember made you about it
 and your decisions on its requests too, as your park of its venture does: until
@@ -2018,6 +2042,16 @@ included: encrypt your backups.
   read that fails while it stores the emails (it raised past the record, so
   the card said only "waiting"), and the listings, pins, posts, products and
   uploads you approved go out meanwhile: each kind on its own.
+- Since 0.40.3 an approved email also waits while its recipient wrote again
+  after it was asked for (from their address, or in its thread) and the agent
+  hasn't opened that email yet: it may ask to stop in words Ember's code
+  misses. Its card says so, and the agent is told in its next cycle. Once the
+  agent has read it, it marks such a stop (then the email is never sent), or
+  the email goes out. An approved email that hasn't gone out 7 days after your
+  approval (Ember was paused, or it waited for money, the daily limit or an
+  email to be read) isn't sent any more: Ember closes it as not sent, with
+  why, and the agent asks again if it still fits (until 0.40.3 it went out on
+  Resume, weeks late).
 - Ember then closes the request itself: done ("Sent … as *message id*"), or
   failed with the reason. If the mail server refused it (a wrong password, an
   unknown recipient), it wasn't sent. If the connection broke while the email
@@ -2040,7 +2074,15 @@ included: encrypt your backups.
   email also covers the address Ember wrote to, if someone else answered
   (0.15.0). A newsletter's or an automatic reply's "unsubscribe" doesn't
   count, unless it answers Ember's email (0.21.0: a "stop" sent through a
-  group or a mailing list was ignored).
+  group or a mailing list was ignored). Since 0.40.3 more phrasings count
+  ("mich nicht mehr zu kontaktieren", "unterlassen Sie … jede weitere
+  Kontaktaufnahme", "sehen Sie von weiteren E-Mails ab", "do not reach out to
+  me again", "please remove"), a mail gateway's tag before the subject
+  ("[EXTERNAL] STOP") doesn't hide it, a link elsewhere in the same line no
+  longer does either (only one in the stop's own sentence marks a
+  newsletter's footer), the HTML part is read when the plain-text part is
+  empty or only stands in for it, and text in an unknown charset (or none)
+  that isn't UTF-8 is read as Windows-1252, not as replacement characters.
   An email Ember can't read (one nested deeper or with more parts than any
   real email, or one the parser fails on) is stored with its headers only, and
   a "stop" in its subject still counts (0.21.0: one such email stopped Ember
@@ -2746,7 +2788,8 @@ code builds the site from them in one fixed design:
 Ember never publishes the site: you do. **System → Website → Pages to download** on the dashboard
 shows its pages and what changed since you last downloaded it. **Preview**
 opens it in a tab of its own (where it runs nothing); **Download (zip)** gives
-you every file. Upload them to your host: any host of static files works, for
+you every file (0.40.3: the download counts once the dashboard has saved the zip, not when the address is opened).
+Upload them to your host: any host of static files works, for
 example your web hosting package. If your host adds cookies, statistics or
 anything else, the privacy page doesn't cover it: tell them apart, or ask your
 host. The agent's plan shows the pages and what you haven't published yet
@@ -2975,7 +3018,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.40.2 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.40.3 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3038,9 +3081,11 @@ own account. Ember never logs in to Amazon or reads its pages.
   same places are one kind, every week of a planner), the page with its AI line
   and its last page, at most 6, or the pages the agent names. Ember's code
   measures every page: the blank rows to write in (lower than 5 mm is too low),
-  white space over a quarter of a page between what it prints, the dates it
+  white space over a quarter of a page between what it prints (since 0.40.3,
+  without a footer, under it too, down to the bottom margin), the dates it
   prints (a date that doesn't exist, a weekday that isn't its date's, a week
-  whose label or days aren't that calendar week, Monday to Sunday by ISO, or a
+  whose label or days aren't that calendar week, each of its 7 days once since
+  0.40.3 (a Saturday twice and no Sunday passed), Monday to Sunday by ISO, or a
   US week from Sunday in an English book, and a week missing between the first
   and the last) and its AI line (where, and how little else shares its page).
   With them come a checklist (white space, rows to write in, calendar weeks,
@@ -3142,7 +3187,12 @@ masked (`[email 1]`, and `[Ember's address]`), and so are one-time codes
 (`[masked]`; in a table, only when the code word is in the same cell), the
 tokens in links (`https://example.com/verify?[…]`), the words
 you removed from your messages (`[removed]`, see below), and your Home
-Assistant name and user ID (`[the owner]`, `[the owner's user ID]`). It never contains the API key, the
+Assistant name and user ID (`[the owner]`, `[the owner's user ID]`). Since 0.40.3 so are phone numbers
+(`[phone number]`) and IBANs (`[IBAN]`), and your personal options wherever they are written (your name, address,
+email, phone, VAT ID, the KDP author, the SFTP user and folder: `[the author's name]`, `[the SFTP user]` …; a value
+of one ordinary word, such as an author named "Ember", only after its label, as in a KDP request's `Author:`).
+Street addresses and postcodes aren't masked: told apart only by their digits, every listing number and amount would
+go. It never contains the API key, the
 mailbox password, Etsy's keystring, secret or tokens, or an email's text. It
 does hold your messages and the agent's work, so read it before you share it.
 
@@ -3206,10 +3256,17 @@ showed you. Sending the same form twice records it once. An API cost decrease
 (a refund) can't be larger than the API cost recorded on its day, and it never
 adds room under that day's spending cap. Date it on the day it corrects: the
 runway counts it there, so a refund of old charges doesn't make the last week
-look cheap, and it isn't money coming in (it doesn't end a critical state).
+look cheap. It isn't money coming in for the burn modes, but since 0.40.3 a
+refund of a day up to the one a critical state began on ends that state, as
+money coming in does, once the runway is back to 4 days: the money was there.
 
 **Runway.** The runway is the balance divided by the average daily API
 spending of the last 7 active days; the life states go by it (see below).
+Since 0.40.3 an answer whose bill is uncertain counts in both at what it is
+known to cost, as it does toward the caps (at its worst case it could make
+Ember critical on money that was there); a call whose answer broke off counts
+what it was charged. A correction of the first of those days counts in the
+share of that day's charges the 7 days hold.
 Next to it, the dashboard, the agent's plans and its daily review show the
 **net runway**: the same, with the revenue and expenses recorded for those days
 counted too (Etsy's fees make it shorter, a sale longer). While Ember earns at
@@ -3236,8 +3293,9 @@ below go no lower than focus; with **conserve** they are as follows:
   decisions and events still wake it, and the next scheduled cycle comes a day
   after the last cycle of any kind);
 - **dormant**: once its last will is written and its runway is critical: no
-  model calls until money comes in (a sale or your grant); **Wake now** still
-  runs a cycle.
+  model calls until money comes in (a sale or your grant, or since 0.40.3 your
+  refund of the API costs that made it critical); **Wake now** still runs a
+  cycle.
 
 A mode moves down at once. A mode below what your stance allows (you changed
 it) moves up to it at once. Otherwise it moves up only once money came in since it moved
@@ -3337,7 +3395,7 @@ session. Each time you switch dry run on, a new session starts from scratch.
 | State | Meaning |
 |---|---|
 | alive | Running normally. |
-| critical | Less than 2 days of runway (balance divided by the average daily spending of the last 7 active days), or it couldn't afford its next planning call. It stays critical until runway is back to 4 days *and* money came in (a grant, revenue or an adjustment that adds; a refund of API costs doesn't count). The first time, it writes a last will. |
+| critical | Less than 2 days of runway (balance divided by the average daily spending of the last 7 active days), or it couldn't afford its next planning call. It stays critical until runway is back to 4 days *and* money came in (a grant, revenue or an adjustment that adds; since 0.40.3 also a refund of API costs of a day up to the one it became critical on). The first time, it writes a last will. |
 | paused | You paused it, or Ember's code did because a refund or an Etsy listing fee left it without money (the reason says so; in dry run the test balance decides). Nothing runs until you resume. |
 | unfunded | No money yet and nothing spent: grant funds to start. |
 | dead | The balance ran out, or it could no longer afford even its last will. No model calls. The dashboard shows a memorial. A grant large enough for a fresh start begins a new life (the dashboard shows the amount needed); resuming alone never revives. |
@@ -3439,7 +3497,9 @@ automation, for example:
   **Watchdog** so that happens automatically.
 - The agent's model calls go only to `https://api.anthropic.com` (any other
   address is refused inside the app, and proxy settings are ignored). Its
-  tools have no network access at all. If you set up Ember's mailbox, Ember's
+  tools have no network access of their own: the model calls of research, the
+  workshop, draft, brainstorm, demand notes and the Printify catalog go through
+  the same transport to `api.anthropic.com`. If you set up Ember's mailbox, Ember's
   own code also connects to the IMAP and SMTP servers in the options, over TLS
   with verified certificates, and to no other mail server. If you connect
   Etsy, Ember's code also talks to `https://api.etsy.com`, and nothing else

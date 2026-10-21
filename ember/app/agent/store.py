@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
-from ..economy.clock import from_iso, to_iso
+from ..economy.clock import from_iso, local_date, to_iso
 
 OPEN_STATUSES = ("idea", "active", "waiting")
 CLOSED_STATUSES = ("succeeded", "failed", "abandoned")
@@ -96,9 +96,14 @@ def start_tool_call(
     parent_id: int | None = None,
     project_id: int | None = None,
 ) -> int:
-    text = canonical(tool_input)
-    if len(text) > 20_000:
-        text = canonical({"truncated": text[:19_000]})
+    text = whole = canonical(tool_input)
+    # 0.40.3 (analysis-0.40.1 codebase, T4): cut until it fits encoded again: each quote, backslash or line break of
+    # the cut text takes two characters there, and an input of 23,100 characters of HTML broke the column's 20,000
+    # (the IntegrityError ended the cycle without its reflection)
+    keep = 19_000
+    while len(text) > 20_000:
+        text = canonical({"truncated": whole[:keep]})
+        keep -= max(len(text) - 20_000, 1)
     cursor = conn.execute(
         "INSERT INTO tool_calls (cycle_id, llm_call_id, parent_id, seq, phase, origin, tool, tool_use_id, project_id,"
         " input, status, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'started', ?)",
@@ -325,6 +330,17 @@ REQUEST_DAYS = {"contact": 7, "publish": 7, "spend_money": 14, "sell": 30, "crea
 # 0.12.0: messages to the owner a day that answer none of theirs (the rule was only prose); message_owner refuses more.
 # 0.37.9: kept here, beside PENDING_CAPS, as the plan reads both (plan.limits): a step that would need more waits.
 MESSAGES_PER_DAY = 2
+# 0.40.3 (analysis-0.40.1 codebase, PL3): the agent's messages the owner hasn't read yet, at most (message_owner refuses
+# every message, a report or an answer too, while this many are unread): kept here, as the plan reads it too
+# (plan.limits): a report waits instead of taking a cycle a day that ends in the refusal.
+MAX_UNREAD_MESSAGES = 5
+
+
+def unread_messages(conn: sqlite3.Connection, scope: AgentScope) -> int:
+    """0.40.3: the agent's messages the owner hasn't read yet (MAX_UNREAD_MESSAGES)."""
+    return count_rows(conn, "messages", scope, "sender = 'agent' AND read_at IS NULL")
+
+
 # 0.38.1: the type of the requests each executor of the agent's tools makes (their _new_request calls), so the plan
 # knows which of PENDING_CAPS a step's request would run into (plan.limits); tests/test_fixes_0381.py keeps the two
 # in step.
@@ -679,7 +695,7 @@ def rulebook_text(rows: list[sqlite3.Row], today: date | None = None) -> str:
 
 
 def _set_on(created_at: str, today: date | None) -> str:
-    day = created_at[:10]
+    day = local_date(created_at)  # 0.40.3 (analysis-0.40.1 codebase, PL2): the owner's day, as ``today`` is
     if today is None:
         return f"set {day}"
     ago = (today - date.fromisoformat(day)).days

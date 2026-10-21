@@ -7,6 +7,7 @@ plan and the dashboard can say what changed since. Ember never publishes the sit
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -90,6 +91,12 @@ def built(conn: sqlite3.Connection, scope: AgentScope, who: site.Owner) -> dict[
 def last_download(conn: sqlite3.Connection, scope: AgentScope) -> sqlite3.Row | None:
     where, params = scope.where()
     return conn.execute(f"SELECT * FROM site_downloads WHERE {where} ORDER BY id DESC LIMIT 1", params).fetchone()
+
+
+def version(files: dict[str, bytes]) -> str:
+    """0.40.3 (analysis-0.40.1, W3): which site a zip holds (its files' fingerprints, in one): the dashboard records the
+    download it saved by it, so a page changed in between isn't taken for downloaded."""
+    return hashlib.sha256(json.dumps(site.fingerprints(files), sort_keys=True).encode()).hexdigest()
 
 
 def record_download(conn: sqlite3.Connection, scope: AgentScope, files: dict[str, bytes], now: str) -> None:

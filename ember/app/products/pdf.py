@@ -65,6 +65,10 @@ LIST_INDENT = 5.0
 WRITING_LINE = 8.0  # mm between writing lines
 GAP_LINES = 2  # 0.39.6: a book's writing lines that end a page with room for this many more below them are named
 FOOTER_SPACE = 8.0
+# 0.40.3 (analysis-0.40.1 codebase, PR3): mm a book's footer keeps its descenders from the bottom edge: KDP's 0.25 in
+# (kdp.OUTSIDE_MARGIN) and the 0.02 in its interior check allows for its coarse drawing. At margin/2 + 1 mm, a 10 mm
+# margin printed "Page {page}" 5.5 mm from the edge, refused with the advice of a 10 mm margin
+KDP_FOOTER = 0.27 * 25.4
 SPLITS_SHOWN = 6  # 0.39.1: the pages a book's checks name, at most
 # 0.40.2: a book's column to write words in, narrower than this, is named (live: 'Text' 12 mm, 'Ziel' 10 mm; a
 # receipt's number fits in 14)
@@ -136,10 +140,11 @@ class Look:
 class Canvas:
     """The PDF and its pages; a new page gets its background, sidebar and footer before anything else."""
 
-    def __init__(self, theme: Theme, title: str, footer: str, max_pages: int = MAX_PAGES) -> None:
+    def __init__(self, theme: Theme, title: str, footer: str, max_pages: int = MAX_PAGES, book: bool = False) -> None:
         self.theme = theme
         self.footer = footer
         self.max_pages = max_pages
+        self.book = book  # 0.40.3: its pages are a KDP trim size
         pdf = FPDF(unit="mm", format=(theme.page_width, theme.page_height))
         pdf.set_auto_page_break(False)
         pdf.set_margins(0, 0, 0)
@@ -206,6 +211,9 @@ class Canvas:
         t = self.theme
         size = 8.0
         left, width = self.main_band()
+        baseline = t.page_height - t.margin / 2 - 1
+        if self.book:  # 0.40.3 (PR3): clear of KDP's bottom margin; FOOTER_SPACE keeps it under the text at any margin
+            baseline = min(baseline, t.page_height - KDP_FOOTER - fonts.metrics(t.font)[1] * size * MM_PER_PT)
         for number in range(1, self.pages + 1):
             self._on(number)
             text = self.footer.replace("{pages}", str(self.pages)).replace("{page}", str(number))
@@ -215,7 +223,7 @@ class Canvas:
             for piece, family in parts:
                 self.pdf.set_font(family, "", size)
                 self.pdf.set_text_color(*t.muted)
-                self.pdf.text(x, t.page_height - t.margin / 2 - 1, piece)
+                self.pdf.text(x, baseline, piece)
                 x += self.width(piece, family, "", size)
 
     def main_band(self) -> tuple[float, float]:
@@ -290,7 +298,8 @@ class Renderer:
         title = document.settings.title or next(
             (plain(b.runs) for b in document.main if isinstance(b, Heading)), "Document"
         )
-        self.canvas = Canvas(self.theme, title, document.settings.footer, max_pages(document.settings.page))
+        page = document.settings.page
+        self.canvas = Canvas(self.theme, title, document.settings.footer, max_pages(page), book=page.endswith("in"))
         self.report = Report(warnings=[*document.warnings, *theme_warnings(self.theme)])
         t = self.theme
         self.body_lh = t.size * t.line_height * MM_PER_PT

@@ -511,7 +511,7 @@ def load_settings(path: Path | None = None) -> LoadedSettings:
         raw = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(raw, dict):
             raise ValueError("options file must contain a JSON object")
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:  # 0.40.3 (analysis-0.40.1, W4): JSON nested too deep too
         return _safe_mode([f"could not read {path.name}: {exc}"], None)
     values, corrections = _corrected(raw)
     try:

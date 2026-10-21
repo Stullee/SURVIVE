@@ -3,6 +3,50 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.40.3
+
+Fixes from your owner's codebase analysis of 0.40.1: a full audit of Ember's code, not of a diagnostics report. Most of
+what it found hasn't happened to you yet. What changes for you, most important first:
+
+- workspace_read reads at most 3,500 characters a call (it offered 6,000, but results were cut at 4,000 and the "More
+  from offset" line was lost). The header says exactly which characters you got.
+- draft with mode overwrite, and a workshop file with the name of a text already in its folder, keep the text they
+  replace: workspace_write mode restore brings it back (the newest 5 per file). The workshop names what it replaced.
+- Markup you quote in your journal stays text: a `<parameter name="next">` inside your entry becomes your handoff only
+  right after your own closing tag, outside any quotation. Write next as its own field.
+- Your release notes now reach your work steps too, and count as read only after an ordinary cycle completes: act on
+  them in the ordinary cycle that shows them.
+- Your last work step ends with "LAST WORK STEP.": call no tool then, reply with a short report. A call isn't run.
+- An approved email waits while its recipient wrote again after you proposed it and you haven't opened that email.
+  MAIL names it: read it (email_read), and if it asks not to be emailed in any words, mark_opt_out; else it goes out.
+  An approved email not sent within 7 days of its approval isn't sent: propose it again if it still fits. Ember's
+  code also reads more ways of asking to stop, a stop only in an email's HTML part and umlauts in a wrong charset.
+- Your plan's days are your owner's, not UTC: due dates, your two waits a day, park clocks, brainstorm rests and "set
+  today" turn over at their midnight (they were a day behind from midnight to 01:00 or 02:00).
+- Launch posts and blog posts on a channel at its floor wait ("floor") like the weekly ones, unless your owner pins
+  them; the weekly pin of the channel that works comes meanwhile.
+- While your owner hasn't read your last 5 messages, a report waits ("unread"): message_owner would refuse it.
+- A line with no listing yet whose newest demand note is over 14 days old gets "Write a new demand note" before the
+  step that proposes its first listing.
+- plan_step wait refuses a step your owner pinned and a wait that would never lift (on a step that waits on it, or a
+  later stage). Your owner can lift any wait you set. When a line closes, its open promises close with it.
+- Waits Ember's code sets for a reason (the daily cap until midnight, half of it until 08:00, the events' share until
+  20:00, maintenance's day) are worked out again at every decision: a raised cap or new money ends them at once.
+- Your runway, and the critical state, count answers whose bill is uncertain at what they are known to cost, as your
+  caps do. A refund of API costs charged before you became critical ends that state (and dormancy after your last
+  will) once your runway is back to 4 days.
+- Documents: the Word copy starts a page at each `::: pagebreak` itself (an 83-page planner's Word copy had 135
+  pages, 52 blank), with a sidebar too. `::: pagebreak` inside `::: box` is refused: end the box first. Characters a
+  Word file can't hold (U+FFFE, U+FFFF) are left out, and the Check line names the line.
+- Books: the page check measures white space under a page's last line when the book has no footer, and a labelled
+  week must show its 7 days once ("prints Saturday 2027-01-09 twice and has no Sunday 2027-01-10"). A book's footer
+  keeps clear of KDP's 0.25 in margin at any margin. KDP's flat printing cost covers 24 to 108 pages (110: 2.32 USD).
+- Smaller: make_document refuses an output name over 56 characters before it makes anything (no strike); spreadsheet
+  pictures count COUNTIF and SUMIF wildcards as Excel does; a research answer whose search paused again ends "This
+  answer may be partial."; a number beyond about 4.6 × 10^18 is refused naming the field; the workshop's PDF check
+  refuses a PDF with streams inside streams or without an end; a tool input over 20,000 characters no longer ends
+  your cycle.
+
 ## 0.40.2
 
 Fixes from the diagnostics report of 2026-10-21 (the analysis of 0.40.1): the Haushaltsbuch is on Amazon in German

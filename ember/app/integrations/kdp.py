@@ -114,8 +114,9 @@ PAPERBACK_SHARE = Decimal("0.6")
 PAPERBACK_SHARE_LOW = Decimal("0.5")
 PAPERBACK_FULL_SHARE_FROM = Decimal("9.99")
 # Amazon.com's printing cost of a paperback (USD): a flat cost for few pages, else a fixed cost and a cost per page,
-# by ink and trim (large or not)
-FLAT_PAGES = {"white": 110, "cream": 110, "color": 40}
+# by ink and trim (large or not). 0.40.3 (analysis-0.40.1 codebase, PR9): KDP's flat band for black ink is 24 to 108
+# pages, not 110: 110 pages cost 1.00 + 110 x 0.012 = 2.32 USD
+FLAT_PAGES = {"white": 108, "cream": 108, "color": 40}
 FLAT_COST = {
     ("white", False): Decimal("2.30"),
     ("white", True): Decimal("2.84"),
@@ -482,6 +483,7 @@ def _margins(ink: Ink, size: tuple[Decimal, Decimal], inside: Decimal) -> list[s
     outside, gutter = float(OUTSIDE_MARGIN), float(inside)
     found: list[str] = []
     count = 0
+    bottom_only = True  # 0.40.3: every page found prints within its bottom margin alone
     for number, box in enumerate(ink, 1):
         if box is None:
             continue
@@ -500,12 +502,22 @@ def _margins(ink: Ink, size: tuple[Decimal, Decimal], inside: Decimal) -> list[s
         ]
         if sides:
             count += 1
+            bottom_only = bottom_only and sides == ["bottom"]
             if len(found) < 3:
                 named = ", ".join(sides[:-1]) + " and " + sides[-1] if len(sides) > 1 else sides[0]
                 found.append(f"page {number} prints within its {named} margin{'s' if len(sides) > 1 else ''}")
     if not count:
         return []
     more = f" ({count} pages in all)" if count > len(found) else ""
+    if bottom_only:
+        # 0.40.3 (analysis-0.40.1 codebase, PR3): what prints there in a book of make_document's is its footer (its
+        # text keeps a margin and the footer's space above it). At a 10 mm margin the footer printed 6.0 mm from the
+        # edge, and the advice was the 10 mm margin the book already had
+        return [
+            "; ".join(found) + more + f": without bleed KDP keeps {inches(outside)} free at the bottom edge, where "
+            "a book's footer (its page number) prints: render the book again with make_document, which keeps a book's "
+            "footer clear of it at any margin, or leave the footer out"
+        ]
     return [
         "; ".join(found) + more + f": without bleed KDP keeps {inches(outside)} free at the top, bottom and outside "
         f"edge and {inches(gutter)} at the inside edge for this many pages (make_document: a margin of at least "

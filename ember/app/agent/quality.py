@@ -25,6 +25,7 @@ import sqlite3
 from datetime import date, timedelta
 from typing import Any
 
+from ..economy.clock import local_date
 from ..integrations import etsy_publisher, printify, printify_publisher
 from ..products import images
 from . import prompts, reach, ventures
@@ -55,7 +56,8 @@ def due(conn: sqlite3.Connection, scope: AgentScope, today: date) -> tuple[int, 
             " ORDER BY id DESC",
             (*params, project_id),
         ).fetchall()
-        if rows and rows[0]["status"] == "failed" and str(rows[0]["created_at"])[:10] == today.isoformat():
+        # 0.40.3 (analysis-0.40.1 codebase, PL2): today and its checks' days are the owner's (local_date), not UTC's
+        if rows and rows[0]["status"] == "failed" and local_date(str(rows[0]["created_at"])) == today.isoformat():
             continue  # failed today: tomorrow
         for listing in funnel.listings:
             if ventures.listing_stopped(conn, scope, listing) is not None:
@@ -65,7 +67,7 @@ def due(conn: sqlite3.Connection, scope: AgentScope, today: date) -> tuple[int, 
                 candidates.append(("", project_id, listing))
                 continue
             checked = str(ok["created_at"])
-            if changed_since(conn, scope, ok) or checked[:10] <= stale:
+            if changed_since(conn, scope, ok) or local_date(checked) <= stale:
                 candidates.append((checked, project_id, listing))
     if not candidates:
         return None

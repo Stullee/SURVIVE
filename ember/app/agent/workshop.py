@@ -43,7 +43,7 @@ from ..products import checks
 from . import netguard, prompts, store
 from .sandbox import MAX_DEPTH, NAME, Jail, SandboxError, kind_of
 from .store import AgentScope
-from .tools import WORKSHOP_INPUT_MB, WORKSHOP_INPUTS
+from .tools import WORKSHOP_INPUT_MB, WORKSHOP_INPUTS, keep_version
 
 log = logging.getLogger(__name__)
 
@@ -103,6 +103,7 @@ class Run:
     failure: str | None = None
     calls: int = 0  # 0.12.0: metered calls sent (a failed one too): a run that sent one counts toward the limits
     again: list[str] = field(default_factory=list)  # 0.24.0: its script's first run's files, handed over again
+    replaced: list[str] = field(default_factory=list)  # 0.40.3: kept files that replaced a text, which restore undoes
 
 
 class Workshop:
@@ -164,7 +165,7 @@ class Workshop:
             made = _output_ids(responses)
             run.answer = _answer(responses)
             if made:
-                self._keep(made, folder, run)
+                self._keep(made, folder, run, cycle_id)
         except FilesError as exc:
             run.failure = str(exc)
         finally:
@@ -352,7 +353,7 @@ class Workshop:
                 request["container"] = container["id"]
         return responses
 
-    def _keep(self, file_ids: list[str], folder: str, run: Run) -> None:
+    def _keep(self, file_ids: list[str], folder: str, run: Run, cycle_id: int | None = None) -> None:
         limit = self.jail.limits.max_product_bytes
         latest: dict[str, tuple[str, int]] = {}  # name -> (file id, bytes): a name copied out again is its last copy
         for file_id in file_ids[:MAX_LOOKUPS]:
@@ -384,10 +385,20 @@ class Workshop:
             try:
                 with netguard.sealed():  # checking a file is decoding untrusted bytes: no network meanwhile
                     kept = checks.check(name, data)
-                    size = self.jail.write(path, kept) if isinstance(kept, str) else self.jail.write_bytes(path, kept)
+                    # 0.40.3 (analysis-0.40.1 codebase, T2): a text of the same name is kept before it is replaced (a
+                    # run with folder books and an output interior.md replaced the manuscript, and nothing was kept)
+                    with self.db.transaction() as conn:
+                        replaced = keep_version(
+                            conn, self.scope, self.jail, path, "overwrite", cycle_id, to_iso(self.clock.now())
+                        )
+                        size = (
+                            self.jail.write(path, kept) if isinstance(kept, str) else self.jail.write_bytes(path, kept)
+                        )
             except (checks.Refused, SandboxError) as exc:
                 run.refused.append((name, str(exc)))
                 continue
+            if replaced:
+                run.replaced.append(path)
             if name == "script.py":
                 run.script_path = path
             run.kept.append((path, size))
@@ -454,6 +465,9 @@ def report(run: Run, wrap: Any) -> tuple[bool, str, str]:
     if run.kept:
         kept = "; ".join(f"{path} ({size / 1024:,.0f} KB)" for path, size in run.kept)
         lines.append(f"Kept: {kept}.")
+    if run.replaced:
+        replaced = ", ".join(run.replaced)
+        lines.append(f"Replaced: {replaced} (its text before is kept: workspace_write's restore brings it back).")
     if run.again:
         lines.append(f"Handed over with the script, as its first run had them: {', '.join(run.again)}.")
     if run.script_path:

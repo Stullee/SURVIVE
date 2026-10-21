@@ -70,6 +70,13 @@ log = logging.getLogger(__name__)
 
 FIRST_WAKE_DELAY = timedelta(minutes=2)
 MAINTENANCE_REASON = "the burn mode is maintenance: one cycle a day"  # 0.15.0: why the next wake waits a day
+# 0.40.3 (analysis-0.40.1 codebase, C1): how the holds 0.40.2 and before kept as the next wake began (recover)
+KEPT_HOLDS = (
+    "waiting for the daily cap to reset",
+    "half of the daily cap is kept for your day",
+    "the rest of the daily cap is kept for event wake-ups",
+    MAINTENANCE_REASON,
+)
 BOOT_GRACE = timedelta(seconds=60)
 CRASH_LOOP = 3
 MAX_WILL_ATTEMPTS = 3
@@ -148,6 +155,10 @@ class Agent:
         self.quiet_until: datetime | None = None
         self.quiet_by: datetime | None = None  # 0.15.0: OWNER_QUIET_MAX after the first message or decision
         self.running_cycle = False
+        # 0.40.3 (analysis-0.40.1 codebase, C1): the hold the last ``decide`` worked out from a condition (the daily
+        # cap's midnight, its share for the owner's day until 08:00 or for events until 20:00, maintenance's day), for
+        # the dashboard only: next_wake_at keeps Ember's own wake, and every ``decide`` works the holds out again
+        self.hold: tuple[datetime, str] | None = None
         self._lock = threading.Lock()  # one cycle at a time in this process
         # Ember's mailbox: the fake one in dry run (its inbox grows with the session's wake cycles), the
         # configured one live, or none. Only Ember's code holds it; the tools get its address.
@@ -307,6 +318,11 @@ class Agent:
         etsy_revenue.audit(self.db, self.clock, self.settings)  # 0.12.0: the owner turned it on or off
         self.take_back_while_off()  # 0.15.0: no owner_user_ids, or safe mode
         wake = self._meta_time("next_wake_at")
+        if wake is not None and (self.db.get_meta(self._key("next_wake_reason")) or "").startswith(KEPT_HOLDS):
+            # 0.40.3 (analysis-0.40.1 codebase, C1): a hold 0.40.2 or before kept as the next wake: decide works it
+            # out again (the wake it replaced is gone, so it is due after the minute below)
+            wake = now
+            self.db.set_meta(self._key("next_wake_reason"), "a hold kept before 0.40.3, worked out again")
         if wake is not None and wake < now + BOOT_GRACE:
             # Give the owner a minute to pause after an update or restart.
             self._set_time("next_wake_at", now + BOOT_GRACE)
@@ -380,6 +396,8 @@ class Agent:
         nothing written: no event marked as having woken the agent, no next wake or burn mode kept, no wake requested.
         """
         now = now or self.clock.now()
+        if not preview:
+            self.hold = None  # 0.40.3 (analysis-0.40.1 codebase, C1): worked out again below, if one still holds
         blocked = self.blocked_reason()
         if blocked:
             return Decision(False, reason=blocked)
@@ -424,9 +442,10 @@ class Agent:
         if wake is None:
             wake, why = now + FIRST_WAKE_DELAY, "first wake-up"  # 0.15.0: the preview, which keeps nothing, says so too
             self._keep_wake(wake, why, preview)
-        held = self._maintenance_day(wake, preview) if mode == burn.MAINTENANCE else None
+        held = self._maintenance_day(wake) if mode == burn.MAINTENANCE else None
         if held is not None:
             wake, why = held, MAINTENANCE_REASON
+            self._hold(wake, why, preview)
         if now < wake:
             return Decision(False, reason=why, wait_until=wake)
         if self._crash_loop():
@@ -446,11 +465,13 @@ class Agent:
             else:
                 then = self.clock.at(self.clock.today(), EVENT_RESERVE_HOUR)  # 0.15.0: 20:00 on DST days too
                 reason = f"the rest of the daily cap is kept for event wake-ups until {EVENT_RESERVE_HOUR}:00"
-            self._keep_wake(then, reason, preview)
+            self._hold(then, reason, preview)
             return Decision(False, reason=reason[0].upper() + reason[1:], wait_until=then)
         if daily - today < needed:
-            tomorrow = self._next_local_midnight(now) + timedelta(minutes=5)
-            self._keep_wake(tomorrow, "waiting for the daily cap to reset", preview)
+            # 0.40.3 (analysis-0.40.1 codebase, C1): until midnight (00:05 before), when the day's cap resets: this hold
+            # is worked out again at every decision, so the first one of the new day finds the cap's room
+            tomorrow = self._next_local_midnight(now)
+            self._hold(tomorrow, "waiting for the daily cap to reset", preview)
             return Decision(False, reason="Waiting for the daily cap to reset", wait_until=tomorrow)
         return Decision(True, "schedule", "scheduled wake-up")
 
@@ -458,6 +479,23 @@ class Agent:
         if not preview:
             self._set_time("next_wake_at", when)
             self.db.set_meta(self._key("next_wake_reason"), reason)
+
+    def _hold(self, when: datetime, reason: str, preview: bool) -> None:
+        """0.40.3 (analysis-0.40.1 codebase, C1): a hold ``decide`` worked out from a condition, shown as the next wake
+        (``shown_wake``) and never kept as one. It was kept as the next wake (``_keep_wake``), and ``recover`` only
+        moved an earlier wake later: after the owner raised the daily cap (an option change restarts the app), topped
+        up out of maintenance or switched event wake-ups off, Ember still waited, under the old reason."""
+        if not preview:
+            self.hold = (when, reason)
+
+    def shown_wake(self) -> tuple[datetime | None, str | None]:
+        """0.40.3 (analysis-0.40.1 codebase, C1): the next wake and its reason as the dashboard shows them: Ember's own
+        (next_wake_at), or the later hold the last ``decide`` worked out."""
+        wake = self._meta_time("next_wake_at")
+        reason = self.db.get_meta(self._key("next_wake_reason")) or None
+        if self.hold is not None and wake is not None and self.hold[0] > wake:
+            return self.hold
+        return wake, reason
 
     def _event_wake(self, now: datetime, preview: bool = False) -> Decision | None:
         """0.13.0: an urgent event in the agenda (a reply to Ember's email, an inquiry, a milestone's last day) wakes
@@ -551,11 +589,13 @@ class Agent:
             ).fetchall()
         return len(rows) == CRASH_LOOP and all(r["status"] == "interrupted" for r in rows)
 
-    def _maintenance_day(self, wake: datetime, preview: bool = False) -> datetime | None:
+    def _maintenance_day(self, wake: datetime) -> datetime | None:
         """0.15.0: in the maintenance burn mode, one cycle a day after a failed, stopped or refused cycle too (its
         back-off woke the agent 30 minutes later): no scheduled wake before a day after the last cycle began. Any cycle
         counts (the owner's and events' too), as a completed one's sleep always did (``_after``). Returns that moment
-        (kept as the next wake) when it is later than ``wake``; None otherwise."""
+        when it is later than ``wake``; None otherwise. 0.40.3 (analysis-0.40.1 codebase, C1): a hold (``_hold``), no
+        longer kept as the next wake, and the only one: a completed cycle's sleep no longer becomes a day in
+        maintenance (``_after``), so money that lifts the mode lifts the day too."""
         with self.db.connection() as conn:
             last = conn.execute(
                 "SELECT MAX(started_at) FROM cycles WHERE simulated = ? AND session = ?",
@@ -565,10 +605,7 @@ class Agent:
             return None
         day = min(burn.MAINTENANCE_SLEEP_MINUTES, self.settings.max_sleep_minutes)
         held = from_iso(last) + timedelta(minutes=day)
-        if held <= wake:
-            return None
-        self._keep_wake(held, MAINTENANCE_REASON, preview)
-        return held
+        return held if held > wake else None
 
     def _next_local_midnight(self, now: datetime) -> datetime:
         local = now.astimezone(self.clock.tz)
@@ -893,10 +930,9 @@ class Agent:
                 reason += f"; waking for the check of milestone #{check[1]}"
             if check is not None and uncut is not None and uncut[0] > check[0]:
                 uncut = check[0], f"{uncut[1]}; waking for the check of milestone #{check[1]}"
-            daily = min(burn.MAINTENANCE_SLEEP_MINUTES, self.settings.max_sleep_minutes)
-            if minutes < daily and burn.current(self.db, self.economy.life.evaluate()).mode == burn.MAINTENANCE:
-                minutes, reason = daily, "the burn mode is maintenance: one cycle a day"  # 0.12.0
-                uncut = None
+            # 0.12.0 made the sleep a day in the maintenance burn mode. 0.40.3 (analysis-0.40.1 codebase, C1): the sleep
+            # stays Ember's, and ``decide`` holds the schedule a day after the last cycle began while the mode is
+            # maintenance (_maintenance_day): a day kept as the wake outlived a top-up that lifted the mode
         if end.status not in ("completed", "idle"):
             failures += 1
             self.db.set_meta(self._key("failures"), str(failures))
@@ -1231,8 +1267,7 @@ class Agent:
 
     def agent_fields(self) -> dict[str, Any]:
         blocked = self.blocked_reason()
-        wake = self._meta_time("next_wake_at")
-        reason = self.db.get_meta(self._key("next_wake_reason")) or None
+        wake, reason = self.shown_wake()  # 0.40.3 (analysis-0.40.1 codebase, C1): with the hold decide worked out
         if self.message_waiting:  # it wakes for the owner's message as soon as it can (decide)
             now = self.clock.now()
             soon = max(now, self.last_wake_request + WAKE_NOW_MIN_GAP) if self.last_wake_request else now
@@ -1269,7 +1304,7 @@ class Agent:
             digest = audit.latest(conn, scope)
             unlocks = sum(1 for g in policy.grants(conn, scope) if g["level"] != "manual")
         data = (digest or {}).get("data") or {}
-        wake = self._meta_time("next_wake_at") if self.blocked_reason() is None else None
+        wake = self.shown_wake()[0] if self.blocked_reason() is None else None  # 0.40.3 (C1): as the dashboard
         return {
             **counts,
             "email_unread": email_unread,
@@ -1388,13 +1423,23 @@ class Agent:
         with self.db.connection() as conn:
             return website.built(conn, self.scope(), website.owner(self.settings))
 
-    def site_download(self) -> bytes:
-        """The website as a zip for the owner to publish; the download is recorded, so the plan and the dashboard can
-        say what changed since. Raises site.SiteError."""
+    def site_download(self) -> tuple[bytes, str]:
+        """The website as a zip for the owner to publish, and its version (website.version). Raises site.SiteError.
+        0.40.3 (analysis-0.40.1, W3): nothing is recorded (a GET that wrote counted a prefetch or a second tab as a
+        download): the dashboard records the download once the zip is saved (record_site_download)."""
         files = self.site_files()
+        return site.archive(files), website.version(files)
+
+    def record_site_download(self, version: str) -> str:
+        """0.40.3: the owner saved the zip of ``version``: recorded (when), so the plan and the dashboard can say what
+        changed since. Raises site.SiteError, also when the website changed after that download (it isn't this one)."""
+        files = self.site_files()
+        if website.version(files) != version:
+            raise site.SiteError("the website changed after your download: download it again")
+        now = to_iso(self.clock.now())
         with self.db.transaction() as conn:
-            website.record_download(conn, self.scope(), files, to_iso(self.clock.now()))
-        return site.archive(files)
+            website.record_download(conn, self.scope(), files, now)
+        return now
 
     def workspace_product(self, path: str) -> tuple[str, bytes, str]:
         """(file name, bytes, content type) of a PDF, Word, Excel or PNG file; raises views.WorkspaceFileError."""

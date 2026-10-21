@@ -184,6 +184,16 @@ def listed(conn: sqlite3.Connection, project_id: int) -> bool:
     return row is not None
 
 
+FIRST_LISTING = ("etsy_listing", "printify_product")  # 0.40.3: the requests a first listing needs a note for
+
+
+def needs_note(conn: sqlite3.Connection, project_id: int, now: str) -> bool:
+    """0.40.3 (analysis-0.40.1 codebase, PL4): whether the product line's first listing would be refused for its demand
+    note (propose_etsy_listing and propose_printify_product refuse it): it has no listing yet, and no note from the
+    last DAYS days. The plan reads it too (plan._fresh_demand): a step that proposes one waits behind a new note."""
+    return not listed(conn, project_id) and recent(conn, project_id, now) is None
+
+
 def probe_text(row: sqlite3.Row) -> str:
     """A demand note's market probe in words ("" without one)."""
     if row["listings"] is None:
