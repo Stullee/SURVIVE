@@ -21,7 +21,10 @@ the app changes with this analysis.*
 - **Most findings reproduced.** A finding marked **reproduced** was shown by a script run against this repository's
   code, with the pinned libraries, on a fresh data folder. I re-ran the most important ones myself (section 8). The
   scripts are not committed.
-- **The test suite and lint.** 2,816 tests pass under `-W error`. `ruff check` and `ruff format --check` are clean.
+- **The test suite, coverage and lint.**
+  - 3,248 tests pass under `-W error` (3,262 at 0.40.2).
+  - Line coverage of `app/` is 93.9%.
+  - `ruff check` and `ruff format --check` are clean.
 - **Your report of 10-21** (6,359 lines): the economy, the planner's context, the twelve cycles, the plan's picks, the
   integrations and the records.
 
@@ -67,7 +70,7 @@ time.
   on Amazon (10-19 and 10-20), and a third book is ready. 0.40.0's page check, built from Ember's own upgrade request
   #12, caught each defect of that third book in turn.
 - **The loop between you, the reports and the code works.** A diagnostics report becomes an analysis and a release
-  within a day. Ember's upgrade requests #10 and #12 were built.
+  within a day. Ember's upgrade requests #10 and #12 were built. 3,248 tests cover 93.9% of the app's lines.
 
 ### Going wrong
 
@@ -80,6 +83,11 @@ time.
   - The plan and the tools keep separate copies of the same rules. Besides KDP's week, which 0.40.2 fixes, this
     analysis found three more pairs that disagree.
   - Five fixes closed the path that was reported, but not the mechanism behind it (5.4).
+- **A test fails from 10-28, 01:00 UTC.**
+  - `test_the_report_stays_under_its_cap_and_redacted` stamps its rows with a fixed day while the app prunes by the
+    real clock.
+  - CI would turn red and, by the release rules, block every release.
+  - Fixed on this branch (X1), and checked with the clock moved to 10-29 and to 2027-01-15.
 - **One high defect** (P1): the workshop's PDF check can freeze the whole app, because one regex backtracks
   exponentially.
 - **Fifteen medium defects** (4.1), among them:
@@ -103,8 +111,8 @@ time.
 
 ### What to build
 
-1. **A fix release, 0.40.3, after 0.40.2.** It holds the high defect and the fifteen medium ones: small, local changes,
-   listed by urgency in 6.1.
+1. **A fix release, 0.40.3, after 0.40.2.** It holds the test that fails from 10-28, the high defect and the fifteen
+   medium ones: small, local changes, listed by urgency in 6.1.
 2. **Three structural changes** (6.2), so the same classes stop coming back:
    - each tool's preconditions as one function, used by the plan too;
    - one helper for the owner's day;
@@ -301,9 +309,25 @@ KDP), and reuse one proven design across several books." The report and the numb
 
 ### 3.8 The process and the tests
 
-- **2,816 tests, all passing under `-W error`.**
-  - CI runs them with ruff, a gitleaks scan of every commit, and image builds for amd64 and arm64.
-  - The image is also smoke-tested in dev mode and in strict mode.
+- **3,248 tests, all passing under `-W error`.**
+  - Line coverage is 93.9%: the economy 96.9%, the agent 94.2%, the products 94.2%, the integrations 93.1%.
+  - The safety-critical modules are higher still:
+    - `security.py` 100%;
+    - `publish_queue.py` 99.5%;
+    - `db.py` 99.1%;
+    - `privacy.py` 99.0%;
+    - `optout.py` 98.6%;
+    - `executor.py` 97.3%;
+    - `metering.py` 96.1%.
+  - The migrations have 25 tests of their own, and 24 more migrate an old schema with rows forward.
+  - CI runs them with ruff, a gitleaks scan of every commit, and image builds for amd64 and arm64. The image is also
+    smoke-tested in dev mode and in strict mode.
+- **Time goes through one clock.**
+  - All of the app's time comes from `economy/clock.py`.
+  - The tests of the clock and of the wakes name 2026-03-29 and 2026-10-25.
+  - With the app's clock moved to just before 10-25's change, the 40 test files that use the real clock passed.
+- **No TODO, FIXME or XXX comment, and no import cycle at module level.**
+- **All 106 options are in DOCS.md.** The 53 defaults compared match `config.yaml`, and all 69 internal links resolve.
 - **The diagnostics report is what makes analyses like this one possible.** It carries:
   - every cycle in full, with each call, reply and tool;
   - the planner's context as the next plan would see it;
@@ -321,11 +345,12 @@ KDP), and reuse one proven design across several books." The report and the numb
 
 ### 4.1 All defects, by severity
 
-IDs: **E** economy, **C** cycle, **PL** plan, **T** tools, **M** integrations and mail, **PR** products, **W** web,
-security and privacy.
+IDs: **X** tests and CI, **E** economy, **C** cycle, **PL** plan, **T** tools, **M** integrations and mail, **PR** products,
+**W** web, security and privacy.
 
 | ID | Severity | What | Where | Evidence |
 |---|---|---|---|---|
+| X1 | **high** (process) | A test fails from 10-28 01:00 UTC: its rows are stamped 2026-09-28 and pruned after 30 days by the real clock | `tests/test_diagnostics.py:22` | reproduced; fixed on this branch |
 | P1 | **high** | The workshop's PDF check backtracks exponentially and freezes the whole app | `products/checks.py:96` | reproduced |
 | E1 | medium | An unknown usage field makes Ember critical, its will written and dormant, with the money there; refunds don't end it | `economy/life.py:347, 358`; `economy/metering.py:1547` | reproduced |
 | M1 | medium | An approved email goes out despite a newer unread reply; the "stop" regex misses common phrasings and HTML-only stops | `integrations/executor.py:262-282`; `integrations/optout.py:109-235`; `integrations/mail.py:665` | reproduced |
@@ -767,12 +792,54 @@ Five defects here are earlier fixes that held for the case that was reported:
   - `agent/plan.py`, 4,414 lines: the tree, its keeper, its steering, its waits and its text.
 - **Function sizes.** `candidates()` is 191 lines with 8 parameters, `wait_step` has 11 parameters, and
   `roadmap.create` 24.
-- **Coupling.** The cycle plan → quality → prompts → tools → plan holds only through function-level imports.
-- **The whole codebase.** 75,000 lines of app code and 55,000 lines of tests, 94 releases in 24 days, one maintainer
-  and one agent.
+- **More size numbers.**
+  - `CycleRunner` (`agent/loop.py`) is 2,289 lines with 72 methods.
+  - 18 functions have a McCabe complexity over 20, and two of them 46: the fake's `_stage_call` and
+    `tools._milestone_update`.
+- **Coupling.**
+  - `loop.py` imports 61 of the app's modules, `tools.py` 52.
+  - The cycle plan → quality → prompts → tools → plan holds only through function-level imports. Each such import is
+    commented.
+- **The whole codebase.** 75,000 lines of app code and 55,000 lines of tests, one maintainer and one agent.
+- **The tests follow the releases, not the code.**
+  - 59 of 171 test modules are named by version (`test_fixes_0350.py` …), with 39% of the test lines. Since 10-07,
+    28 of 31 new test files were.
+  - `plan.py` has no `test_plan.py`: 32 test files import it, 23 of them named by version.
+  - Old version files keep changing: `test_fixes_0350` and `test_fixes_0360` 8 times each in the last 60 commits.
+  - Every migration edits hard-coded migration lists in three of them (0.40.2 did).
 
 The tests carry it. But each release now changes rules whose interplay only a live day shows, as sections 5.2 to 5.4
 did.
+
+### 5.7 The release process
+
+- **The pace.** 47 versions in 14 days (0.23.2 on 10-05 to 0.40.1 on 10-19), 30 of them patches; 7 on 10-10 alone,
+  0.37.1 to 0.37.7 between 09:42 and 12:33.
+  - 81 of the 174 commits are merges, 54 of them merging or renumbering parallel branches.
+  - Five version numbers in commit subjects were never released.
+- **Each live report becomes a release within hours.** That is why fixes arrive fast, and why some of them are
+  fixes of fixes (5.4): the "stop" detection of § 7 UWG was fixed in 0.37.3, 0.39.5 and 0.39.7, and still misses
+  phrasings (M1).
+- **The README's rules and the repository disagree.**
+  - The README says to tag every release: the repository has no tags.
+  - CI runs only on pushes, so a test that fails on a date (X1) shows only after that date, on the next push.
+- **CI's gaps:**
+  - no coverage measure or gate;
+  - no type checker, though most functions are annotated;
+  - no dependency audit;
+  - no lint or test of `app.js`'s 10,943 lines, beyond tests that grep its text;
+  - actions pinned by tag, not by commit;
+  - no job timeouts;
+  - no scheduled run.
+  - `-W error` is set only in CI, not in `pytest.ini`.
+- **Stale facts:**
+  - The README says Haiku 4.5 retires "not sooner than 2026-10-15", a day now past.
+  - The README links `DOCS.md#roadmap`, a section renamed "Plan" in 0.35.0.
+  - The README's Status table still ends at "Findings from live testing come next".
+  - `vision/live-page.md` still says "Nothing here is built yet" (0.16.0 built most of it).
+  - The migration number 0070 is reserved for `claude/zen-cannon-v75uxs` ("0.16.0: Google Search Console", 10-01),
+    20 days and 24 minor versions behind.
+  - The repository is public and has no license.
 
 ---
 
@@ -780,6 +847,8 @@ did.
 
 ### 6.1 Fix now: 0.40.3, by urgency
 
+0. **X1:** the diagnostics test's rows stamped from the app's clock. Done on this branch (`c5c590c`): CI stays green
+   after 10-28.
 1. **P1:** possessive `_WS` in `products/checks.py`, and a test with 40 `%`.
 2. **E1:**
    - runway and critical judged on settled money;
@@ -859,6 +928,32 @@ And, with them:
 - **A refusal fallback for the planner.** A refusal by Opus 5.5's classifier ends the cycle, and the same context will
   likely be refused again. The API's `fallbacks` would carry it.
 
+And for the tests and CI (5.6, 5.7):
+- **A scheduled CI run once a week.** It would have shown X1 before its day.
+- **The safety paths coverage shows are never run.** Each needs a test:
+  - the kill switch inside a round: tested for email and Etsy edits only, never run for Bluesky, Pinterest,
+    Printify, the blog, new Etsy listings and their Undos (20 lines);
+  - the email executor's "unclear, never retried" path (`integrations/executor.py:322-325`);
+  - the money guard's refusals of a workshop run over its cap, of a request it can't size, and its worst-case
+    fallback (`economy/metering.py:1080, 1287, 1438-1440`);
+  - 12 route handlers never called over HTTP, among them the owner's drop, done, keep and autonomy.
+- **A coverage gate at about 93%**, so a release can't lower it.
+- **Tests by feature**, with the version story in each test's docstring. A `tests/plan/`, a `tests/money/`. Migration
+  lists computed, not written out.
+- **A clock for `create_app`.** 40 test files run on the real clock and can't freeze it (X1's cause).
+- **The rest of CI:**
+  - `-W error` and `--strict-markers` in `pytest.ini`;
+  - a dependency audit (`pip-audit`, or Dependabot);
+  - actions pinned by commit;
+  - job timeouts;
+  - ruff's complexity rule (C901) with a ceiling;
+  - a type checker, starting with `economy/`.
+- **The README:**
+  - its stale facts (5.7);
+  - tags, or drop the rule;
+  - a license;
+  - and decide on 0070: rebase the Search Console branch or release the number.
+
 ### 6.3 For the business: you
 
 - **KDP is the plan.**
@@ -904,7 +999,8 @@ And, with them:
 | 10-14 | 0.39.0 | 3,956 | 5,580 | 72,422 |
 | 10-19 | 0.40.1 | 4,414 | 6,061 | 75,114 |
 
-- The tests: 176 files, 55,036 lines, 2,816 tests.
+- The tests: 176 files, 55,036 lines, 3,248 tests (3,262 at 0.40.2). The full run takes about 30 minutes on 4 CPUs
+  with coverage; the slowest test, 60 s.
 - The changelog: 94 versions, 0.1.0 to 0.40.1.
 - From 0.23.2 on, 174 commits in 15 days. The busiest day was 10-10, with 34.
 
@@ -920,6 +1016,19 @@ And, with them:
 | 166 | `agent/views.py`, `ventures_view` |
 | 149 | `agent/views.py`, `roadmap_view` |
 | 143 | `agent/loop.py`, `_snapshot` |
+
+**Coverage** (lines of `app/`, at 0.40.1): 93.9%, 37,654 of 40,083 statements.
+
+| Least covered | % | | Most lines missed | Lines |
+|---|---|---|---|---|
+| `integrations/etsy_connection.py` | 63.0 | | `agent/tools.py` | 209 |
+| `products/selftest.py` | 76.3 | | `agent/loop.py` | 187 |
+| `web.py` | 80.6 | | `web.py` | 140 |
+| `integrations/bluesky_publisher.py` | 85.1 | | `products/sheets.py` | 100 |
+| `products/site.py` | 86.1 | | `agent/plan.py` | 99 |
+| `integrations/pinterest_publisher.py` | 87.1 | | `agent/fake_llm.py` | 74 |
+| `integrations/kdp.py` | 88.5 | | `integrations/printify_publisher.py` | 74 |
+| `agent/workshop.py` | 88.8 | | `agent/owner.py` | 58 |
 
 **Where the changes go** (files of `ember/app/` touched in the last 60 commits): `agent/tools.py` 15, `agent/plan.py`
 10, `agent/loop.py` 10, `web/static/js/app.js` 8, `diagnostics.py` 8.
@@ -948,6 +1057,10 @@ And, with them:
 - **The live report.** I read the economy, the scheduler, the planner's context, the twelve cycles (counting their
   costs from the calls), the plan's picks and the integrations. Every defect in 4.1 was checked against it for live
   impact: E1, M1, T3, PR1 and PR3 haven't happened on your install yet.
-- **The tests.** The full suite ran here on Python 3.13 (CI uses 3.12): 2,816 passed under `-W error`. Ruff was clean.
+- **The tests.** The full suite ran twice here on Python 3.13 (CI uses 3.12), once with coverage: all 3,248 passed
+  under `-W error`. Ruff was clean.
+- **X1.** I re-ran the test with the clock moved to 10-29 06:00 UTC: it failed. With the fix it passes at 10-29 and at
+  2027-01-15. A second test that failed with the clock moved (`test_an_unlock_needs_owner_user_ids`) does so only
+  because the test takes its date from the real clock while the move shifts only the app's: not a defect.
 - **0.40.2.** I read its analysis on `claude/cool-davinci-5gean8` (commit `7dfb2ab`; its code wasn't pushed yet) and
   left out what its 4.3 covers.
