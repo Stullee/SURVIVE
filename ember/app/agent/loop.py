@@ -1995,6 +1995,11 @@ class CycleRunner:
             response = result.response or {}
             content = response.get("content") or []
             stop = response.get("stop_reason")
+            if stop == "refusal" and not content:
+                # 0.42.1: a refusal before any output (a classifier's usual way) ends the cycle like one with text: it
+                # was nudged once (another paid call on the same refused context) and then ended as "done"
+                act.end_reason = "refusal"
+                return act
             if not content:
                 # The API rejects an empty assistant turn, so it is never sent back: nudge inside the last
                 # user turn instead (once), or end the act phase.

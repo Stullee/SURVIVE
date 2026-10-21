@@ -388,6 +388,18 @@ def test_a_work_steps_refusal_still_ends_the_cycle(data_dir: Path) -> None:
     assert made == [("plan", "claude-opus-5-5"), ("work", "claude-sonnet-5")]  # no retry on another model
 
 
+def test_a_work_steps_refusal_before_any_output_ends_the_cycle_without_a_nudge(data_dir: Path) -> None:
+    """0.42.1: an empty refused reply was nudged once (another paid call on the same refused context) and the work then
+    ended as "done", with a reflection."""
+    agent, _, _ = agent_with(data_dir, [Plan(PLAN), refusal("claude-sonnet-5")], OPUS_PLANS)
+    end = agent.run_cycle("schedule")
+    assert (end.status, end.note) == ("stopped", "the model refused to continue")
+    assert [(c["purpose"], c["model"]) for c in calls(agent)] == [
+        ("plan", "claude-opus-5-5"),
+        ("work", "claude-sonnet-5"),
+    ]
+
+
 def test_a_cycle_line_says_which_lifetime_its_calls_asked_for() -> None:
     def call(*ttls: str) -> dict[str, Any]:
         return {"plan": json.dumps({"cache_ttls": list(ttls)})}
