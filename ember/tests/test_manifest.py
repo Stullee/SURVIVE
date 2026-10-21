@@ -210,7 +210,7 @@ def test_service_scripts_are_executable() -> None:
     for script in ("run", "finish"):
         assert os.access(service / script, os.X_OK), script
     assert (APP_DIR / "rootfs" / "etc" / "s6-overlay" / "s6-rc.d" / "user" / "contents.d" / "ember").exists()
-    assert "exec python3 -m app" in (service / "run").read_text()
+    assert "exec s6-setuidgid ember python3 -m app" in (service / "run").read_text()
 
 
 def test_dockerfile_pins_official_base_image() -> None:

@@ -3491,10 +3491,11 @@ automation, for example:
 - The app has no access to the Home Assistant API, runs without host
   networking and maps no folders besides its own `/data`. The Supervisor gives
   every app a token for a few Supervisor endpoints about itself (such as its own
-  options); Ember removes that token at startup. When Ember's process exits,
-  the app stops completely instead of restarting by itself, so every restart
-  goes through Home Assistant, which rewrites the options you saved. Turn on
-  **Watchdog** so that happens automatically.
+  options); Ember removes that token at startup. Ember's process runs as its own
+  unprivileged user, not root: it can read its options but not change them.
+  When Ember's process exits, the app stops completely instead of restarting by
+  itself, so every restart goes through Home Assistant, which rewrites the
+  options you saved. Turn on **Watchdog** so that happens automatically.
 - The agent's model calls go only to `https://api.anthropic.com` (any other
   address is refused inside the app, and proxy settings are ignored). Its
   tools have no network access of their own: the model calls of research, the

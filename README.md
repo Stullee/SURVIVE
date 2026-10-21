@@ -557,13 +557,28 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   in `ember/app/security.py`.
 - **Least privilege.** `homeassistant_api: false`, `hassio_api: false`, no host
   network, no mapped folders besides the app's own `/data`, no published ports.
-  `ember/tests/test_manifest.py` fails if any of this is loosened.
+  `ember/tests/test_manifest.py` fails if any of this is loosened. Since 0.41.0
+  the Python process runs as the unprivileged user `ember` (UID and GID 1000),
+  not root: the s6 run script, as root, prepares `/data` and then starts Python
+  with `s6-setuidgid`. At each start it gives every file in `/data` that isn't
+  `ember`'s yet to `ember` (the database, its backups, the 0600 token files,
+  the workspace, as earlier versions wrote them as root), changing a link
+  itself and never what it points to. The app's code (`/opt/ember`, the Python
+  packages) is root's and read-only to it, PID 1's environment is unreadable to
+  it, and it has no capabilities. Enforced in `ember/tests/test_entrypoint.py`
+  and by CI's image smoke test.
 - **Options can't be changed from inside.** The Supervisor hands every app a
   token that can change the app's own options or uninstall it, even with
-  `hassio_api: false`; the s6 run script deletes it before Python starts. And
+  `hassio_api: false`; the s6 run script deletes it before Python starts, from
+  the s6 copy of the environment too (which is root's only since 0.41.0). And
   whenever the Python process exits, the whole container stops instead of
   restarting in place, so a restart always goes through the Supervisor, which
-  rewrites `/data/options.json` from the options you saved.
+  rewrites `/data/options.json` from the options you saved. Since 0.41.0 the
+  process can read `/data/options.json` but not change it: the run script
+  keeps the file root's (group `ember`, mode 0640) after the Supervisor writes
+  it, and `/data` itself is root's too (group `ember`, writable and sticky, mode
+  1775), so Ember can make and remove its own files there but can't remove or
+  replace the options.
 - **The agent's reach.** Its file tools work inside its own folders only
   (`ember/app/agent/sandbox.py`: no links, no absolute paths, size quotas). Its
   tool handlers, but those of the six tools that call a model (research,
@@ -590,6 +605,12 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   (0.19.0), Ember's code logs in to `bsky.social` with the account's app
   password and posts what the owner approved to the account's own server at
   Bluesky, and nowhere else (`ember/app/integrations/bluesky_live.py`).
+  All of this runs in-process, so code that got past it would hold what the
+  process holds: since 0.41.0 that is the user `ember` (see Least privilege),
+  which can change Ember's data and read its tokens, but not its options or its
+  code; besides `/data` it can write only temporary folders (`/tmp`,
+  `/var/tmp`, `/dev/shm`) and its home, which last only as long as the
+  container.
 - **Outside actions.** The agent has no tool that sends or posts anything. An
   email it proposes is sent by Ember's code only after the owner approves it,
   exactly as approved, once, to one recipient, with a footer saying an AI wrote
@@ -637,8 +658,9 @@ EMBER_DATA_DIR=../dev/data-local EMBER_DEV_MODE=1 python -m app
 ```
 
 `EMBER_DATA_DIR` replaces `/data` (a different folder from the one docker-compose
-uses, whose files belong to root); `EMBER_DEV_MODE=1` turns off the Ingress IP
-filter (there is no Ingress proxy locally). Never set it inside Home Assistant.
+uses, whose files belong to the container's user, UID 1000, and root);
+`EMBER_DEV_MODE=1` turns off the Ingress IP filter (there is no Ingress proxy
+locally). Never set it inside Home Assistant.
 In dev mode the server listens on 127.0.0.1 only (override with `EMBER_HOST`)
 and answers only requests addressed to `localhost`, `127.0.0.1` or `[::1]`, which
 stops other machines and DNS-rebinding web pages from reaching it.
@@ -654,6 +676,13 @@ docker compose up --build
 The container is the same image Home Assistant builds; `dev/data` plays the role
 of the app's `/data` folder (edit `dev/data/options.json` to change options). The
 port is bound to localhost only, because the dashboard has no login of its own.
+
+As in Home Assistant, the app runs as the container's user `ember` (UID and GID
+1000), and each start prepares the folder as root (0.41.0): the files in
+`dev/data` become owned by UID 1000, `dev/data` itself and `options.json` by
+root (group 1000; `options.json` mode 0640, so the app can read it but not
+change it). So once the app has started, edit `dev/data/options.json` with
+`sudo`, and remove `dev/data` with `sudo` too.
 
 In the dashboard, **System → Preview** switches the preview data between the
 alive, paused, critical and dead states (the dead state shows the memorial).

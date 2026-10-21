@@ -7,6 +7,10 @@
 # Options are read by Python from /data/options.json rather than with
 # bashio::config (which calls the Supervisor API), so the same image also runs
 # outside Home Assistant with docker-compose.
+#
+# This script runs as root. Since 0.41.0 it prepares /data and then starts the
+# Python process as the unprivileged user ember (see the Dockerfile), so code
+# that got out of the agent's sandbox can't change Ember's options or its code.
 # ==============================================================================
 
 # The Supervisor gives every app a token for its own Supervisor API endpoints,
@@ -16,12 +20,42 @@
 # this environment and from the s6 copy that later scripts would load.
 unset SUPERVISOR_TOKEN HASSIO_TOKEN
 rm -f /run/s6/container_environment/SUPERVISOR_TOKEN /run/s6/container_environment/HASSIO_TOKEN
+# The rest of that copy is for root's scripts only. (PID 1's own environment is
+# root's too: the user ember can't read /proc/1/environ.)
+chmod 0700 /run/s6/container_environment || bashio::log.warning "Could not make the s6 environment root's only"
 
 # The Anthropic SDK reads these; none may redirect the agent's model calls or add
 # headers to them. The transport ignores proxies anyway and only reaches api.anthropic.com.
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy NO_PROXY no_proxy
 for name in $(env | sed -n 's/^\(ANTHROPIC_[A-Z0-9_]*\)=.*/\1/p'); do unset "$name"; done
 
+# /data itself stays root's, writable by the group ember and sticky: Ember can
+# make and remove its own files there, but can't remove or replace a file that
+# isn't its own, such as options.json. (Without a mounted /data, as in CI's
+# strict run, the folder is made here.)
+mkdir -p /data && chown root:ember /data && chmod 1775 /data \
+  || bashio::log.warning "Could not prepare /data for the user ember"
+
+# Files an earlier version wrote as root (the database, its backups, the token
+# files, the workspace) become ember's. Only those that aren't yet, so a large
+# workspace isn't rewritten at every start; -h changes a link itself, never the
+# file it points to.
+find /data -mindepth 1 ! -path /data/options.json \( ! -user ember -o ! -group ember \) \
+  -exec chown -h ember:ember {} + \
+  || bashio::log.warning "Could not give every file in /data to the user ember"
+
+# The Supervisor writes options.json as root at every start (it is absent when
+# the image runs without options, as in CI's strict run).
+# Ember may read it, never change it: it stays root's, readable by the group.
+if [[ -L /data/options.json ]]; then
+  bashio::log.warning "/data/options.json is a link; it is left as it is"
+elif [[ -f /data/options.json ]]; then
+  chown root:ember /data/options.json && chmod 0640 /data/options.json \
+    || bashio::log.warning "Could not make /data/options.json read-only for Ember"
+fi
+
 bashio::log.info "Starting Ember..."
 cd /opt/ember || bashio::exit.nok "Ember is not installed in /opt/ember"
-exec python3 -m app
+# /root isn't readable by ember: a library that wants a cache folder gets ember's own home.
+export HOME=/home/ember
+exec s6-setuidgid ember python3 -m app

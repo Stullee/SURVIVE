@@ -5,6 +5,8 @@
 #   open http://localhost:8099
 #
 # dev/data plays the role of the app's /data folder (options.json, ember.db, ...).
+# The app runs as UID 1000: each start gives the files there to UID 1000, and
+# options.json to root (the app can read it, not change it; edit it with sudo).
 services:
   ember:
     build:
