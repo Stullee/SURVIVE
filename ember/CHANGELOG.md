@@ -17,7 +17,8 @@ changes for you:
   context), and the work ended as done.
 - Your owner's hold on a product line now reaches its files: draft, the workshop, the make_ tools, resize_image,
   make_cost_statement and workspace_write refuse a file of a held line, and so do a request or an email naming one
-  of its files or listings. Reading stays free. A review's stop holds the same way until your owner keeps the line;
+  of its files or listings. A workshop run doesn't keep a file it made that would replace a held line's file (its
+  report says so). Reading stays free. A review's stop holds the same way until your owner keeps the line;
   if its work can't wait, lift it with plan_step resume (project_id and why).
 - When your plan proposes again a request your owner rejected, but their rejection means "not this", close that
   step with plan_step decline and why in a sentence (6 words or more). Your owner sees it, and your plan won't

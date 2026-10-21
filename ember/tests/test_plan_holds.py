@@ -29,7 +29,8 @@ pytest.importorskip("httpx2")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app.agent import plan, weights, workfiles  # noqa: E402
+from app.agent import plan, tools, weights, workfiles  # noqa: E402
+from app.agent.fake_llm import Plan, Reply, ToolCalls  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from tests.test_agent import rows  # noqa: E402
 from tests.test_etsy import call, shop_context  # noqa: E402
@@ -42,7 +43,9 @@ from tests.test_fixes_0376 import asked, candidate, closed_without_proposing, de
 from tests.test_fixes_0393 import LATER, hold, product_of  # noqa: E402
 from tests.test_fixes_0398 import ads, keep_paid  # noqa: E402
 from tests.test_fixes_0402 import held  # noqa: E402
+from tests.test_loop_shapes import JOURNAL, PLAN  # noqa: E402
 from tests.test_owner_api import post  # noqa: E402
+from tests.test_workshop import workshop_answer  # noqa: E402
 
 # --- 1. your hold, on files too ---
 
@@ -103,6 +106,53 @@ def test_the_owners_hold_refuses_what_writes_or_builds_on_its_lines_files_not_wh
         plan.owner_resume(conn, agent.scope(), product_of(agent, book), "Owner", now(agent))
     resumed = call(ctx, "workspace_write", {"path": BOOK_FILE, "mode": "append", "content": "Feb"})
     assert resumed.ok, resumed.text
+
+
+def test_a_workshop_task_naming_a_held_lines_file_in_its_folder_is_refused_before_it_is_paid_for(
+    data_dir: Path,
+) -> None:
+    """A file a workshop task names without a folder is made in the run's folder: "Summarise haushaltsbuch.md" with
+    folder books would replace the held book's manuscript (0.40.3's T2 case), and the hold read only the bare name."""
+    agent, _ = lined(data_dir, titles=())
+    book = project(agent, *BOOK)
+    tracker = project(agent, *TRACKER)
+    keep(agent)
+    filed(agent, book, BOOK_FILE)
+    filed(agent, None, f"{tools.WORKSHOP_FOLDER}/chart.md")
+    hold(agent, book)
+    ctx = working(agent, tracker)
+    ran: list[str | None] = []
+    ctx.workshop = lambda _task, _files, _script, folder: ran.append(folder) or tools.Outcome(True, "Made.", "made")
+    task = {"task": "Summarise haushaltsbuch.md for the blurb", "folder": "books/"}
+    said = call(ctx, "workshop", task)
+    assert not said.ok and f"{BOOK_FILE} is a file of product line #{book}, and your owner holds" in said.text
+    assert ran == []
+    assert call(ctx, "workshop", {**task, "folder": "drafts"}).ok  # its own file there, of no line
+    assert call(ctx, "workshop", {"task": "Redo chart.md"}).ok  # workshop/out/chart.md is of no line
+    assert ran == ["drafts", None]
+
+
+def test_a_workshop_run_keeps_no_file_of_a_held_line_that_its_task_didnt_name(data_dir: Path) -> None:
+    """The sandbox names what a run makes: a task that named no file could still bring back books/haushaltsbuch.md
+    for the held book. The file isn't kept, and the run's report says why; its other files are."""
+    agent, fake = lined(data_dir, titles=())
+    book = project(agent, *BOOK)
+    keep(agent)
+    filed(agent, book, BOOK_FILE, "# Haushaltsbuch 2027\n\nJanuar")
+    hold(agent, book)
+    with agent.db.transaction() as conn:  # the cycle filed() wrote in has ended
+        conn.execute("UPDATE cycles SET status = 'completed', ended_at = ? WHERE status = 'running'", (now(agent),))
+    ids = [fake._new_file(name, b"# Stub\n", True) for name in ("haushaltsbuch.md", "months.md")]
+    run = ("workshop", {"task": "A table of the months", "folder": "books"})
+    fake.script.extend([Plan(PLAN), ToolCalls([run]), workshop_answer(ids), Reply("Done."), JOURNAL])
+    agent.run_cycle("schedule")
+    [made] = rows(agent, "SELECT status, result FROM tool_calls WHERE tool = 'workshop'")
+    assert "Kept: books/months.md" in made["result"], made["result"]
+    assert (
+        f"Not kept: haushaltsbuch.md: {BOOK_FILE} is a file of product line #{book}, and your owner holds product"
+        f" line #{book} ({LATER}): no workshop run for it until they resume it" in made["result"]
+    )
+    assert agent.roots()[0].read(BOOK_FILE) == "# Haushaltsbuch 2027\n\nJanuar"
 
 
 def test_a_reviews_stop_holds_its_lines_files_and_listings_too_but_embers_own_hold_doesnt(data_dir: Path) -> None:

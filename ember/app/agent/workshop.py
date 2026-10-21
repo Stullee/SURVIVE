@@ -43,7 +43,7 @@ from ..products import checks
 from . import netguard, prompts, store
 from .sandbox import MAX_DEPTH, NAME, Jail, SandboxError, kind_of
 from .store import AgentScope
-from .tools import WORKSHOP_INPUT_MB, WORKSHOP_INPUTS, keep_version
+from .tools import WORKSHOP_FOLDER, WORKSHOP_INPUT_MB, WORKSHOP_INPUTS, held_file, keep_version
 
 log = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ MAX_OUTPUTS = 12
 MAX_LOOKUPS = 3 * MAX_OUTPUTS  # files looked at: a file copied out in several commands comes back each time
 MAX_CONTINUATIONS = 2  # a paused run (pause_turn) is continued at most twice, each a metered call
 SCRIPTS = "workshop/scripts"
-DEFAULT_FOLDER = "workshop/out"
+DEFAULT_FOLDER = WORKSHOP_FOLDER
 ANSWER_CHARS = 1_500
 MIME_TYPES = {
     ".md": "text/markdown",
@@ -376,6 +376,12 @@ class Workshop:
             if size > limit:
                 run.refused.append((name, f"it is larger than {limit // (1024 * 1024)} MB"))
                 continue
+            if name != "script.py":  # 0.42.1: a held line's file, though the task didn't name it (a script is new)
+                with self.db.connection() as conn:
+                    held = held_file(conn, self.scope, f"{folder}/{name}", "workshop run")
+                if held is not None:
+                    run.refused.append((name, held))
+                    continue
             try:
                 # 0.42.0 (analysis-0.40.1 codebase, 6.2 disk): a file the device has no room for isn't downloaded (the
                 # write below checks again, by its real size)

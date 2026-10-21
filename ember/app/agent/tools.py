@@ -254,6 +254,7 @@ READ_ONLY_TOOLS = frozenset(
 )
 WORKSHOP_INPUTS = 5  # files handed over to one workshop run
 WORKSHOP_INPUT_MB = 10  # their size together
+WORKSHOP_FOLDER = "workshop/out"  # where a run's files go when it names no folder (0.42.1: one source)
 # 0.12.0: a long file written in one call of its own (draft; prompts takes these from here). A work reply holds only
 # ONE_REPLY_CHARS of a text, and every part written through the conversation is read again by each later step.
 DRAFT_MAX_TOKENS = 8_000
@@ -3351,6 +3352,9 @@ def _held_files(ctx: ToolContext, name: str, args: dict[str, Any]) -> None:
     if not texts:
         return
     words = {w.split("#")[0].split("@")[0].strip(_AROUND) for t in texts for w in re.split(r"[\s,]+", t)}
+    if name == "workshop":  # a file its task names without a folder is made in its folder (books + interior.md)
+        folder = str(args.get("folder") or WORKSHOP_FOLDER).strip().strip("/")
+        words |= {f"{folder}/{w}" for w in words if w and "/" not in w}
     with ctx.db.connection() as conn:
         filed = workfiles.lines_of(conn, ctx.scope, sorted(w for w in words if "." in w))  # a file has its suffix
         named = [(f"{path} is a file of product line #{line}", line) for path, line in filed.items()]
@@ -3363,6 +3367,16 @@ def _held_files(ctx: ToolContext, name: str, args: dict[str, Any]) -> None:
             held = _held(conn, ctx.scope, line, what)
             if held is not None:
                 raise ToolError(f"{thing}, and {held}")
+
+
+def held_file(conn: Any, scope: AgentScope, path: str, what: str) -> str | None:
+    """0.42.1 (analysis-0.40.1 codebase, 6.2 "Your hold, on files too"): why ``what`` may not write ``path``, a file of
+    a held line (``_held``), or None: the workshop's check of a file its run made, which its task didn't name."""
+    for filed, line in workfiles.lines_of(conn, scope, [path]).items():
+        held = _held(conn, scope, line, what)
+        if held is not None:
+            return f"{filed} is a file of product line #{line}, and {held}"
+    return None
 
 
 def _listing_line(ctx: ToolContext, conn: Any, listing_id: int, what: str) -> None:
