@@ -258,7 +258,7 @@ def test_a_report_naming_a_promise_the_owner_heard_nothing_of_since_goes_through
 
 
 def test_the_days_messages_count_from_the_start_of_the_owners_day_as_message_owner_counts_them(data_dir: Path) -> None:
-    """message_owner (0.41.0: preconditions.MESSAGES) counts from the start of the owner's day in their time zone, not
+    """message_owner (0.42.0: preconditions.MESSAGES) counts from the start of the owner's day in their time zone, not
     from midnight UTC: in Berlin the 2nd of September begins at 22:00 UTC on the 1st. The loop, the Plan tab and the
     report give the plan their clock's day_start."""
     agent, _ = lined(data_dir, titles=())  # 2026-09-01 12:00 UTC
@@ -276,7 +276,7 @@ def test_the_days_messages_count_from_the_start_of_the_owners_day_as_message_own
     berlin = Clock(now=agent.clock.now, tz=ZoneInfo("Europe/Berlin"))
     assert (berlin.today(), to_iso(berlin.day_start(berlin.today()))) == (the_2nd, "2026-09-01T22:00:00Z")
     assert wait(the_2nd, "2026-09-01T22:00:00Z") == "messages"  # both were sent on the owner's 2nd
-    with agent.db.connection() as conn:  # as the tool counts them with the owner's clock (0.41.0: its precondition)
+    with agent.db.connection() as conn:  # as the tool counts them with the owner's clock (0.42.0: its precondition)
         facts = tools._facts(dataclasses.replace(working(agent), clock=berlin), conn)
         assert store.unasked_since(conn, agent.scope(), facts.day_start) == 2 and preconditions.MESSAGES.check(facts)
     assert wait(the_2nd, None) is None  # from midnight UTC of the 2nd: none of them

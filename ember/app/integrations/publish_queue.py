@@ -17,7 +17,7 @@ Ember's code gives each one a slot (``schedule``):
 
 The publishers make only what is due, one at a time (``due``); the Approvals tab, the agent's news, its tools and its
 plan say when each one goes out, and the agent proposes no more for a channel while WAITING of its requests there wait
-for the owner or for their slot (``waiting``). 0.41.0 (M3): a request whose service asked to wait (retry.py) is in the
+for the owner or for their slot (``waiting``). 0.42.0 (M3): a request whose service asked to wait (retry.py) is in the
 queue again, its slot no earlier than that.
 """
 
@@ -63,7 +63,7 @@ class Item:
     links: tuple[str, ...]  # the listings and pages it links (``keys``)
     language: str  # a post's ("de" or "en"); "" for a pin
     approved_at: datetime
-    retry_at: datetime | None = None  # 0.41.0 (M3): its service asked to wait until then
+    retry_at: datetime | None = None  # 0.42.0 (M3): its service asked to wait until then
 
 
 @dataclass(frozen=True)
@@ -78,7 +78,7 @@ class Made:
 class Slot:
     approval_id: int
     at: datetime  # UTC: it goes out at the first round from then on
-    why: str  # what set it: 'now', 'gap', 'link', 'hours', 'limit' or (0.41.0) 'retry'
+    why: str  # what set it: 'now', 'gap', 'link', 'hours', 'limit' or (0.42.0) 'retry'
     language: str = ""  # a post's, whose hours it has
 
 
@@ -142,7 +142,7 @@ def _earliest(
         moment = bound + shift
     else:
         why = "now"
-    if item.retry_at is not None and item.retry_at > moment:  # 0.41.0 (M3): not before its service's wait ends
+    if item.retry_at is not None and item.retry_at > moment:  # 0.42.0 (M3): not before its service's wait ends
         moment, why = item.retry_at, "retry"
     first, end = hours(channel, item.language)
     for _ in range(DAYS_AHEAD):
@@ -191,7 +191,7 @@ def _parsed(channel: str, raw: str | None) -> tuple[tuple[str, ...], str]:
 
 
 def _not_begun(alias: str, channel: str) -> str:
-    """SQL: Ember's code hasn't begun request ``alias``, or (0.41.0, M3) its service asked to wait, nothing made."""
+    """SQL: Ember's code hasn't begun request ``alias``, or (0.42.0, M3) its service asked to wait, nothing made."""
     return (
         f"((NOT EXISTS (SELECT 1 FROM action_journal j WHERE j.approval_id = {alias}.id)"
         f" AND NOT EXISTS (SELECT 1 FROM {MADE_IN[channel]} p WHERE p.approval_id = {alias}.id))"
@@ -200,7 +200,7 @@ def _not_begun(alias: str, channel: str) -> str:
 
 
 def queued(conn: sqlite3.Connection, scope: AgentScope, channel: str) -> list[Item]:
-    """A channel's approved requests that Ember's code hasn't begun to carry out (0.41.0: or whose service asked to
+    """A channel's approved requests that Ember's code hasn't begun to carry out (0.42.0: or whose service asked to
     wait, with when)."""
     where, params = scope.where("a")
     rows = conn.execute(
@@ -338,7 +338,7 @@ def why(channel: str, cause: str, per_day: int, language: str = "") -> str:
         "link": f"a listing or page gets at most one {one} in {LINK_DAYS} days",
         "hours": f"{many} go out from {first}:00 to {end}:00",
         "limit": f"at most {per_day} {many} a day",
-        "retry": f"{SERVICES[channel]} asked to wait",  # 0.41.0 (M3)
+        "retry": f"{SERVICES[channel]} asked to wait",  # 0.42.0 (M3)
     }.get(cause, "")
 
 

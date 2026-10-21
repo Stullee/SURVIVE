@@ -8,7 +8,7 @@ Undo deletes it). The image must be exactly the file the owner approved (its SHA
 pins a day. 0.37.8: an approved pin waits for its slot in the publishing queue (publish_queue.py: in the channel's
 hours, hours after the last pin, a listing at most every two days) and goes out alone. The owner's Undo of a pin is a
 request of theirs (executor 'pinterest_delete'), carried out here too, at once. The sync reads each live pin's numbers
-(impressions, saves, outbound clicks) at most every SYNC_HOURS. 0.41.0 (M3): when Pinterest asks Ember's code to come
+(impressions, saves, outbound clicks) at most every SYNC_HOURS. 0.42.0 (M3): when Pinterest asks Ember's code to come
 back later (HTTP 429, or 503 with Retry-After) at a pin on a board that exists, the pin stays approved and waits for its
 slot again, from then on (retry.py); a pin that made a new board first isn't tried again.
 
@@ -157,7 +157,7 @@ def execution(
             }
     else:
         pin = conn.execute("SELECT * FROM pinterest_pins WHERE approval_id = ?", (row["id"],)).fetchone()
-        retry_at = retry.waiting(conn, row["id"])  # 0.41.0 (M3): Pinterest asked to wait, then its slot
+        retry_at = retry.waiting(conn, row["id"])  # 0.42.0 (M3): Pinterest asked to wait, then its slot
         if retry_at is not None:
             slot = publish_queue.slot_of(conn, scope, clock, "pinterest", daily_limit, int(row["id"]))
             return retry.execution(pin, max(retry_at, slot.at) if slot is not None else retry_at)
@@ -277,7 +277,7 @@ class Publisher:
                     if outcome == connectors.HALTED:
                         return done  # 0.37.3: the kill switch came on: the rest waits
                     if outcome in ("waiting_limit", retry.LATER):
-                        break  # the rest waits for tomorrow too, in order (0.41.0: or until Pinterest's wait)
+                        break  # the rest waits for tomorrow too, in order (0.42.0: or until Pinterest's wait)
                 for approval_id in self._approved(scope, "pinterest_delete"):
                     outcome = self._delete(account, scope, approval_id)
                     done.append((approval_id, outcome))
@@ -387,7 +387,7 @@ class Publisher:
         with self.db.transaction() as conn:
             row = conn.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
             started = conn.execute("SELECT 1 FROM pinterest_pins WHERE approval_id = ?", (approval_id,)).fetchone()
-            again = started is not None and retry.due(conn, approval_id, self.clock.now())  # 0.41.0 (M3)
+            again = started is not None and retry.due(conn, approval_id, self.clock.now())  # 0.42.0 (M3)
             if row is None or row["status"] not in ("approved", "approved_with_changes") or (started and not again):
                 return "skipped"  # cancelled or decided meanwhile (or Pinterest's wait isn't over)
             if connectors.halted(conn):
@@ -406,7 +406,7 @@ class Publisher:
         # Committed: from here on this pin is never made a second time, whatever happens.
         try:
             board_id = pin.board_id or self._named(scope, str(pin.board_name))
-            existing = board_id is not None  # 0.41.0 (M3): only a pin that makes nothing before it may wait
+            existing = board_id is not None  # 0.42.0 (M3): only a pin that makes nothing before it may wait
             board_id = board_id or self._board(account, scope, approval_id, str(pin.board_name))
         except PinterestError as exc:
             note = f"Not pinned: the new board couldn't be made ({exc})"
@@ -417,7 +417,7 @@ class Publisher:
             connectors.begin(conn, approval_id, to_iso(self.clock.now()))
         try:
             pin_id = account.create_pin(board_id, pin, image)
-        except NotSent as exc:  # 0.41.0 (M3): Pinterest asking to come back later is no refusal (on a board it had)
+        except NotSent as exc:  # 0.42.0 (M3): Pinterest asking to come back later is no refusal (on a board it had)
             waits = self._wait(approval_id, exc) if existing else None
             return waits or self._after(
                 approval_id, "failed", None, board_id, f"Not pinned: Pinterest refused it ({exc})", str(exc)
@@ -484,7 +484,7 @@ class Publisher:
         link: str,
         again: bool = False,
     ) -> None:
-        if again:  # 0.41.0 (M3): Pinterest asked to wait: its row is tried again
+        if again:  # 0.42.0 (M3): Pinterest asked to wait: its row is tried again
             retry.reopen(conn, "pinterest_pins", approval_id, stamp, title=title[:100], link=link[:500])
             return
         conn.execute(
@@ -494,7 +494,7 @@ class Publisher:
         )
 
     def _wait(self, approval_id: int, exc: Exception) -> str | None:
-        """0.41.0 (M3): Pinterest asked to come back later before anything changed (``pinterest.Busy``): the pin
+        """0.42.0 (M3): Pinterest asked to come back later before anything changed (``pinterest.Busy``): the pin
         stays approved and waits for its slot again, from then on (retry.park; no board, so no day's pin is counted).
         None when it may not wait (an unlock's, or it waited retry.TRIES times): it fails as before."""
         if not isinstance(exc, pinterest.Busy):

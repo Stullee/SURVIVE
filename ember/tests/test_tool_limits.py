@@ -1,4 +1,4 @@
-"""0.41.0 (analysis-0.40.1 codebase, 5.5, 6.2 and 9): text limits that cut, the conversation's room in each work step,
+"""0.42.0 (analysis-0.40.1 codebase, 5.5, 6.2 and 9): text limits that cut, the conversation's room in each work step,
 and a journal's closing tags taken off in linear time.
 
 1. Text limits that cut. On 10-21, 6 of the 11 refused tool calls were a text over its length (a brainstorm's theme 471
@@ -43,7 +43,7 @@ NOTES = frozenset(
         "project_update.hypothesis",
         "project_update.note",
         "project_update.bet",
-        "plan_step.steps.title",  # 0.41.0: live, 185 of 120 was refused
+        "plan_step.steps.title",  # 0.42.0: live, 185 of 120 was refused
         "plan_step.why",
         "venture_create.title",
         "venture_create.pitch",
@@ -58,15 +58,15 @@ NOTES = frozenset(
         "venture_update.risks",
         "venture_update.first_test",
         "venture_update.note",
-        "brainstorm.theme",  # 0.41.0: live, 471 of 300 was refused
+        "brainstorm.theme",  # 0.42.0: live, 471 of 300 was refused
         "milestone_update.note",
-        "milestone_update.wait_for",  # 0.41.0: shown cut to 80 characters anyway
-        "request_approval.title",  # 0.41.0: the request card's heading
-        "request_approval.expected_benefit",  # 0.41.0: as request_upgrade's
+        "milestone_update.wait_for",  # 0.42.0: shown cut to 80 characters anyway
+        "request_approval.title",  # 0.42.0: the request card's heading
+        "request_approval.expected_benefit",  # 0.42.0: as request_upgrade's
         "withdraw_request.reason",
-        "message_owner.commits",  # 0.41.0: OBLIGATIONS shows it cut to its length; the message holds the promise
+        "message_owner.commits",  # 0.42.0: OBLIGATIONS shows it cut to its length; the message holds the promise
         "obligation_done.result",
-        "request_upgrade.title",  # 0.41.0
+        "request_upgrade.title",  # 0.42.0
         "request_upgrade.problem",
         "request_upgrade.proposed_change",
         "request_upgrade.expected_benefit",
@@ -74,8 +74,8 @@ NOTES = frozenset(
         "write_journal.summary",
         "write_journal.entry",
         "write_journal.next",
-        "mark_opt_out.reason",  # 0.41.0: the suppression's why
-        "inquiry_done.reason",  # 0.41.0
+        "mark_opt_out.reason",  # 0.42.0: the suppression's why
+        "inquiry_done.reason",  # 0.42.0
         *(
             f"{name}.reason"
             for name in (

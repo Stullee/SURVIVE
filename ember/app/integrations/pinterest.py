@@ -63,7 +63,7 @@ class NotSent(PinterestError):
 
 
 class Busy(retry.Busy, NotSent):
-    """0.41.0 (M3): Pinterest asked Ember's code to come back later (HTTP 429, or 503 with Retry-After): nothing
+    """0.42.0 (M3): Pinterest asked Ember's code to come back later (HTTP 429, or 503 with Retry-After): nothing
     changed."""
 
 

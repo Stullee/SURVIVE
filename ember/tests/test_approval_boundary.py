@@ -1,4 +1,4 @@
-"""0.41.0 (analysis-0.40.1 codebase, M3 and M4): the approval boundary.
+"""0.42.0 (analysis-0.40.1 codebase, M3 and M4): the approval boundary.
 
 M3: a 429 or a 503 with Retry-After, before anything changed, closed the approval as failed: the agent proposed again
 and the owner approved again, though the service had said when to come back. Now the request stays approved and is

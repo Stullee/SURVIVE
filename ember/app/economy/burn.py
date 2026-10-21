@@ -174,7 +174,7 @@ def judged(status: LifeStatus, since: Since | None) -> float | None:
     """0.16.2: the net runway a move up from the mode that began at ``since`` is judged by: at the API spending of the
     week before it moved down when that was more than now's (a lower mode spends less, and that alone made the runway
     look long), less the revenue and expenses of the runway's week; None while that earns at least what it spends.
-    0.41.0 (analysis-0.40.1 codebase, E1): of the balance the runway is judged on (``LifeStatus.judged_balance``), as
+    0.42.0 (analysis-0.40.1 codebase, E1): of the balance the runway is judged on (``LifeStatus.judged_balance``), as
     ``net_days`` is: the booked one held answered calls whose bill is uncertain at their worst case, so after such an
     episode a move up waited on money that was there."""
     runway = status.runway

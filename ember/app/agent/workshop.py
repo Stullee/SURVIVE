@@ -377,7 +377,7 @@ class Workshop:
                 run.refused.append((name, f"it is larger than {limit // (1024 * 1024)} MB"))
                 continue
             try:
-                # 0.41.0 (analysis-0.40.1 codebase, 6.2 disk): a file the device has no room for isn't downloaded (the
+                # 0.42.0 (analysis-0.40.1 codebase, 6.2 disk): a file the device has no room for isn't downloaded (the
                 # write below checks again, by its real size)
                 self.jail.room_on_disk(size)
                 data = self.transport.download_file(file_id, limit)

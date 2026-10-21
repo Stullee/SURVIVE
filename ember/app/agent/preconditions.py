@@ -1,4 +1,4 @@
-"""One precondition per tool, read by the plan too (0.41.0, analysis-0.40.1 codebase, 5.2 and 6.2.1).
+"""One precondition per tool, read by the plan too (0.42.0, analysis-0.40.1 codebase, 5.2 and 6.2.1).
 
 A tool that refused for a reason the plan could know before a cycle (a count, a limit, a date, a missing note) refused
 by a rule written twice: once as the tool's refusal in tools.py, once as the plan's wait in plan.py, or not at all

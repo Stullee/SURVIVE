@@ -9,7 +9,7 @@ from app.__main__ import bind_host
 
 APP_DIR = Path(__file__).resolve().parent.parent
 RUN_SCRIPT = APP_DIR / "rootfs/etc/s6-overlay/s6-rc.d/ember/run"
-# 0.41.0: the run script starts Python as the unprivileged user ember (see the Dockerfile).
+# 0.42.0: the run script starts Python as the unprivileged user ember (see the Dockerfile).
 DROP = "exec s6-setuidgid ember python3 -m app"
 
 
@@ -58,12 +58,12 @@ def test_run_script_removes_supervisor_tokens() -> None:
     assert "/run/s6/container_environment/HASSIO_TOKEN" in before_exec
     assert "unset HTTP_PROXY HTTPS_PROXY" in before_exec
     assert "ANTHROPIC_" in before_exec
-    # 0.41.0: and the rest of the s6 copy of the environment is root's only.
+    # 0.42.0: and the rest of the s6 copy of the environment is root's only.
     assert "chmod 0700 /run/s6/container_environment" in before_exec
 
 
 def test_python_runs_as_the_user_ember_not_root() -> None:
-    """0.41.0: the last command drops root for good; nothing after it, nothing that runs Python as root."""
+    """0.42.0: the last command drops root for good; nothing after it, nothing that runs Python as root."""
     code = _run_code()
     assert code[-1] == DROP
     assert sum("python3" in line for line in code) == 1
@@ -74,7 +74,7 @@ def test_python_runs_as_the_user_ember_not_root() -> None:
 
 
 def test_data_belongs_to_ember_except_the_options() -> None:
-    """0.41.0: files an earlier version wrote as root become ember's, without following links."""
+    """0.42.0: files an earlier version wrote as root become ember's, without following links."""
     code = _run_code()
     chown = next(line for line in code if line.startswith("find /data "))
     assert "-mindepth 1" in chown  # /data itself stays root's (see below)
@@ -86,7 +86,7 @@ def test_data_belongs_to_ember_except_the_options() -> None:
 
 
 def test_options_stay_read_only_for_ember() -> None:
-    """0.41.0: the Supervisor writes options.json as root at each start; ember may read it, not change it."""
+    """0.42.0: the Supervisor writes options.json as root at each start; ember may read it, not change it."""
     code = _run_code()
     text = "\n".join(code)
     assert "chown root:ember /data/options.json && chmod 0640 /data/options.json" in text

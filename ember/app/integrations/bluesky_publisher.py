@@ -10,7 +10,7 @@ waits for its slot in the publishing queue (publish_queue.py: in the hours of it
 a listing or page at most every two days) and goes out alone. Before the first post of a round Ember's code logs in:
 while Bluesky refuses the login, approved posts wait (nothing is begun). The owner's Undo of a post is a request of
 theirs (executor 'bluesky_delete'), carried out here too, at once. The sync reads the account's followers and each live
-post's numbers (likes, reposts, replies, quotes, moderation's labels) at most every SYNC_HOURS. 0.41.0 (M3): when
+post's numbers (likes, reposts, replies, quotes, moderation's labels) at most every SYNC_HOURS. 0.42.0 (M3): when
 Bluesky asks Ember's code to come back later (HTTP 429, or 503 with Retry-After) while it posts (the login, a picture's
 upload, which nothing shows until a post uses it, or the post), the post stays approved and waits for its slot again,
 from then on (retry.py).
@@ -151,7 +151,7 @@ def execution(
             }
     else:
         post = conn.execute("SELECT * FROM bluesky_posts WHERE approval_id = ?", (row["id"],)).fetchone()
-        retry_at = retry.waiting(conn, row["id"])  # 0.41.0 (M3): Bluesky asked to wait, then its slot
+        retry_at = retry.waiting(conn, row["id"])  # 0.42.0 (M3): Bluesky asked to wait, then its slot
         if retry_at is not None:
             slot = publish_queue.slot_of(conn, scope, clock, "bluesky", daily_limit, int(row["id"]))
             return retry.execution(post, max(retry_at, slot.at) if slot is not None else retry_at)
@@ -261,7 +261,7 @@ class Publisher:
                 if outcome == connectors.HALTED:
                     return done  # 0.37.3: the kill switch came on: the rest waits
                 if outcome in ("waiting_limit", retry.LATER):
-                    break  # the rest waits for tomorrow too, in order (0.41.0: or until Bluesky's wait)
+                    break  # the rest waits for tomorrow too, in order (0.42.0: or until Bluesky's wait)
                 due = self._slotted(scope)
             for approval_id in undoing:
                 outcome = self._delete(account, scope, approval_id)
@@ -359,7 +359,7 @@ class Publisher:
         return image, thumb, note
 
     def _due(self, conn: sqlite3.Connection, approval_id: int) -> tuple[sqlite3.Row | None, bool]:
-        """The approved request, unless it was cancelled or decided meanwhile, or its post was begun (0.41.0, M3:
+        """The approved request, unless it was cancelled or decided meanwhile, or its post was begun (0.42.0, M3:
         and isn't to be tried again now, after Bluesky asked to wait); and whether it is tried again."""
         row = conn.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
         started = conn.execute("SELECT 1 FROM bluesky_posts WHERE approval_id = ?", (approval_id,)).fetchone()
@@ -415,7 +415,7 @@ class Publisher:
         # Committed: from here on this post is never made a second time, whatever happens.
         try:
             made = account.create_post(post, image, thumb)
-        except NotSent as exc:  # 0.41.0 (M3): Bluesky asking to come back later is no refusal: no post exists
+        except NotSent as exc:  # 0.42.0 (M3): Bluesky asking to come back later is no refusal: no post exists
             waits = self._wait(approval_id, exc)
             return waits or self._after(
                 approval_id, "failed", None, f"Not posted: Bluesky refused it ({exc})", str(exc)
@@ -446,7 +446,7 @@ class Publisher:
         sent: bool,
         again: bool = False,
     ) -> None:
-        if again:  # 0.41.0 (M3): Bluesky asked to wait: its row is tried again
+        if again:  # 0.42.0 (M3): Bluesky asked to wait: its row is tried again
             values = {"text": text[:3000], "link": (link or "")[:500] or None, "sent": int(sent)}
             retry.reopen(
                 conn, "bluesky_posts", approval_id, stamp, **values, second_link=(second_link or "")[:500] or None
@@ -468,7 +468,7 @@ class Publisher:
         )
 
     def _wait(self, approval_id: int, exc: Exception) -> str | None:
-        """0.41.0 (M3): Bluesky asked to come back later before the post was made (``bluesky.Busy``): it stays approved
+        """0.42.0 (M3): Bluesky asked to come back later before the post was made (``bluesky.Busy``): it stays approved
         and waits for its slot again, from then on (retry.park; not sent, so the day's limit doesn't count it). None
         when it may not wait (it waited retry.TRIES times): it fails as before."""
         if not isinstance(exc, bluesky.Busy):

@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 
 ROUND_SECONDS = 60.0
 PRUNE_EVERY_SECONDS = 300.0
-# 0.41.0 (analysis-0.40.1 codebase, 6.2 disk): the kept texts of deleted files (Agent.prune_versions), at the first
+# 0.42.0 (analysis-0.40.1 codebase, 6.2 disk): the kept texts of deleted files (Agent.prune_versions), at the first
 # round and then once a day: it looks up their files and sums the kept texts' sizes
 VERSIONS_EVERY_SECONDS = 86_400.0
 STOP_WAIT_SECONDS = 8.0  # Home Assistant kills the app 10 s after asking it to stop

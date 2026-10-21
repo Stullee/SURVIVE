@@ -20,7 +20,7 @@ WORKDIR /opt/ember
 COPY requirements.txt ./
 RUN pip3 install --only-binary=:all: -r requirements.txt
 
-# 0.41.0: Ember's process runs as this unprivileged user, not root. The s6 run
+# 0.42.0: Ember's process runs as this unprivileged user, not root. The s6 run
 # script (as root) prepares /data, then starts Python with s6-setuidgid; the
 # container itself still starts as root, as s6-overlay needs. A fixed UID and
 # GID, free in the base image, so the files in /data keep their owner from one

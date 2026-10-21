@@ -7,7 +7,7 @@
   var POLL_RUNNING_MS = 3000;
   var POLL_IDLE_MS = 30000;
   var POLL_ERROR_MS = 15000;
-  // 0.41.0: Home Assistant's Ingress session for this page runs out while the tab sleeps (the Supervisor answers 401,
+  // 0.42.0: Home Assistant's Ingress session for this page runs out while the tab sleeps (the Supervisor answers 401,
   // never Ember); its frontend renews it within a minute, so the dashboard retries quietly that long before it asks
   // for a reload (live, "Ember refused the request (HTTP 401: 401: Unauthorized)" after the page sat idle).
   var SESSION_RETRY_MS = 5000;
@@ -33,7 +33,7 @@
     timer: null,
     seq: 0,              // only the response to the latest dashboard request is used
     fetchError: null,
-    sessionLostSince: 0,  // Date.now() of the first 401 in a row (0.41.0): Ingress's session ran out
+    sessionLostSince: 0,  // Date.now() of the first 401 in a row (0.42.0): Ingress's session ran out
     rendered: {},        // section name -> JSON of the data it was last rendered from
     sectionErrors: {},
     bannerKey: null,
@@ -502,7 +502,7 @@
     var detail = "";
     if (isObject(res.data) && typeof res.data.error === "string") detail = res.data.error;
     else if (res.text && res.text.length <= 200 && res.text.indexOf("<") < 0) detail = res.text.trim();
-    if (res.status === 401) {  // 0.41.0: the Supervisor's Ingress, not Ember (see SESSION_RETRY_MS)
+    if (res.status === 401) {  // 0.42.0: the Supervisor's Ingress, not Ember (see SESSION_RETRY_MS)
       return new RequestError("http", "Home Assistant's session for this page ran out (HTTP 401): wait a moment and try again, or reload the page", 401);
     }
     return new RequestError("http", "HTTP " + res.status + (detail ? ": " + detail : ""), res.status);
@@ -547,7 +547,7 @@
       ui.fetchError = err;
       document.body.setAttribute("data-stale", "true");
       if (err.kind === "http" && err.status === 401) {
-        // 0.41.0: Ingress's session ran out; Home Assistant renews it, and the system log would answer 401 too
+        // 0.42.0: Ingress's session ran out; Home Assistant renews it, and the system log would answer 401 too
         if (!ui.sessionLostSince) ui.sessionLostSince = Date.now();
         next = SESSION_RETRY_MS;
         safely("banners", renderBanners);
@@ -806,7 +806,7 @@
     if (arr(sys.config_corrections).length) {
       list.push({ kind: "error", icon: "✕", title: "Some app options don't fit together, so " + name + " corrected them until you fix them in the app's Configuration tab.", items: sys.config_corrections });
     }
-    // 0.41.0 (analysis-0.40.1 codebase, 6.2 disk)
+    // 0.42.0 (analysis-0.40.1 codebase, 6.2 disk)
     if (isObject(sys.storage) && sys.storage.low) {
       list.push({ kind: "warning", icon: "!", title: "The device is low on space (" + byteSize(sys.storage.free_bytes) + " free on /data). " + name + " keeps " + byteSize(sys.storage.floor_bytes) + " free for its database, so it refuses new workspace files and workshop output until there is room: free space on the device, or ask " + name + " in the Inbox to delete files it no longer needs." });
     }
@@ -819,7 +819,7 @@
       list.push({ kind: "warning", icon: "!", title: "Everyone who can open " + name + " in Home Assistant counts as its owner: they can grant money, approve emails and use the kill switch. To let only you in, put your Home Assistant user ID in the app's owner_user_ids option (Configuration tab) and restart the app.",
         items: owner.user_id ? ["Your user ID: " + String(owner.user_id)] : [] });
     }
-    // economy_broken is also among the agent's warnings; it already has its own banner. 0.41.0: so is the warning on the
+    // economy_broken is also among the agent's warnings; it already has its own banner. 0.42.0: so is the warning on the
     // calls charged at their worst case, with its Keep as charged (it hides the advice only: no money moves).
     var held = isObject(agent.held_warning) ? agent.held_warning : null;
     var warnings = arr(agent.warnings).filter(function (w) {
@@ -833,7 +833,7 @@
         action: { label: "Keep as charged", post: "api/economy/uncertain/keep", body: { held_micros: held.held_micros },
           confirm: "Keep " + usd(held.held_usd) + " as charged? The warning goes away until a call is charged at its worst case again. The balance stays as it is; you can still record a correction." } });
     }
-    // 0.41.0: answers charged at their worst case only for a usage field Ember's code doesn't know: the owner treats its
+    // 0.42.0: answers charged at their worst case only for a usage field Ember's code doesn't know: the owner treats its
     // value as standard price, after seeing what that settles (the refund shown is the most it may refund)
     arr(agent.uncertain_bills).forEach(function (b) {
       var usage = "usage." + b.field + ' = "' + b.value + '"';
@@ -880,7 +880,7 @@
       action = h("button", { type: "button", class: "btn banner-action", text: spec.action.label });
       action.addEventListener("click", function () {
         if (!spec.action.post) { openLedgerForm(spec.action.form); return; }
-        if (spec.action.confirm && !window.confirm(spec.action.confirm)) return;  // 0.41.0
+        if (spec.action.confirm && !window.confirm(spec.action.confirm)) return;  // 0.42.0
         var btn = this;
         btn.disabled = true;
         request("POST", spec.action.post, spec.action.body || {}).then(function (res) {
@@ -2905,7 +2905,7 @@
         h("strong", { text: "Never automatic: " }), arr(a.never).join("; ") + ". It waits for you, whatever you unlocked.") : null,
       arr(a.qa).length ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "! " }),
         h("strong", { text: "QA (Ember's code): " }), arr(a.qa).join("; ") + ".") : null,
-      changedFilesBox(a, name),  // 0.41.0 (M4)
+      changedFilesBox(a, name),  // 0.42.0 (M4)
       executor === "email" && a.first_contact ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "! " }),
         h("strong", { text: "First email to this address." }), " Cold advertising emails are illegal in Germany (§ 7 UWG). Approve only if this person asked to hear from you.") : null,
       note ? h("p", { class: "todo-note" }, h("span", { "aria-hidden": "true", text: "☐ " }), note) : null,
@@ -2972,13 +2972,13 @@
       h("pre", { class: "payload capped", tabindex: "0", "data-copy": "body", text: asText(action.body) }));
   }
 
-  // 0.25.0 (a KDP book's), 0.41.0 (M4: every card whose files Ember's code uploads only as proposed): a file the
+  // 0.25.0 (a KDP book's), 0.42.0 (M4: every card whose files Ember's code uploads only as proposed): a file the
   // workspace no longer holds as it was proposed, so what the card shows of it isn't what the request carries.
   function changedMark(f, advice) {
     return f && f.unchanged === false ? h("strong", { class: "kdp-changed", text: " changed or deleted since it was proposed: " + advice }) : null;
   }
 
-  // 0.41.0 (M4): the files of a card (a listing's, a change's, a pin's, a post's, a product's) that changed since it was
+  // 0.42.0 (M4): the files of a card (a listing's, a change's, a pin's, a post's, a product's) that changed since it was
   // proposed, each with the KDP card's mark: the owner can't approve other bytes than Ember's code would upload.
   function changedFilesBox(a, name) {
     var changed = arr(a.files).filter(function (f) { return isObject(f) && f.unchanged === false; });
@@ -3054,7 +3054,7 @@
   }
 
   // A listing the agent proposed: its words, and its photos and files as they are in the workspace now (Ember
-  // uploads them only if they are still exactly the ones proposed; 0.41.0: the card marks one that isn't).
+  // uploads them only if they are still exactly the ones proposed; 0.42.0: the card marks one that isn't).
   function etsyDraft(action, final) {
     var photos = arr(action.photos);
     var files = arr(action.files);
@@ -3141,7 +3141,7 @@
       h("p", { class: "execution-detail" }, detail));
   }
 
-  // 0.41.0 (M3): an approved request whose service asked Ember's code to come back later, before anything changed: when
+  // 0.42.0 (M3): an approved request whose service asked Ember's code to come back later, before anything changed: when
   // it is tried again (a pin's or post's slot, no earlier), and what the service said.
   function retryDetail(ex, service) {
     var due = ex.due_at ? [timeEl(ex.due_at, fmtDateTime(ex.due_at)), " (", relTime(ex.due_at), ")"] : "later";
@@ -4578,7 +4578,7 @@
     replace($("options"), optionsTable(options));
   }
 
-  // 0.41.0 (analysis-0.40.1 codebase, 6.2 disk): the free space on /data, against the floor Ember keeps for its database
+  // 0.42.0 (analysis-0.40.1 codebase, 6.2 disk): the free space on /data, against the floor Ember keeps for its database
   function storageText(st) {
     if (typeof st.free_bytes !== "number") return "Free space unknown" + (st.error ? " (" + st.error + ")" : "");
     var text = byteSize(st.free_bytes) + " free on /data";
@@ -10200,11 +10200,11 @@
     // 0.39.8: a weekly pin or post of a product with no listing of its own, and a channel that brings next to nothing
     listing: "it has no listing of its own: it waits until Ember moves one to it (project_update)",
     floor: "its channel brings next to nothing (at its floor): it waits unless you pin it",
-    // 0.41.0: another rule Ember's tool refuses by (KDP's week, a first listing's demand note), in the tool's words
+    // 0.42.0: another rule Ember's tool refuses by (KDP's week, a first listing's demand note), in the tool's words
     blocked: "Ember's tool would refuse it now",
   };
 
-  // A step's wait in words, with the tool's own words when its tool would refuse it (0.41.0)
+  // A step's wait in words, with the tool's own words when its tool would refuse it (0.42.0)
   function planWait(st) {
     var said = PLAN_WAIT[st.waiting] || st.waiting;
     return st.waiting === "blocked" && st.refused ? said + ": " + st.refused : said;

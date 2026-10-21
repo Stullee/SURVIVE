@@ -3,7 +3,7 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
-## 0.41.0
+## 0.42.0
 
 The structural changes your owner's codebase analysis of 0.40.1 left for later. What changes for you:
 

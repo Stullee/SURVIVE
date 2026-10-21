@@ -964,7 +964,7 @@ def _never(conn: sqlite3.Connection, r: sqlite3.Row) -> list[str]:
     return [never.CLASSES[k] for k in never.reasons(conn, r)]
 
 
-# 0.41.0 (analysis-0.40.1 codebase, M4): a card shows a request's files as the workspace holds them now, and Ember's
+# 0.42.0 (analysis-0.40.1 codebase, M4): a card shows a request's files as the workspace holds them now, and Ember's
 # code uploads only the bytes whose SHA-256 the request froze. Every card of a request that uploads such files says
 # which one changed since it was proposed, as the KDP book's did (0.25.0), and the owner's Approve of it is refused
 # (web.py): approved, it would fail at the run ("changed after you approved it"), the approval wasted.
@@ -974,7 +974,7 @@ _hashes_lock = threading.Lock()
 
 
 def _uploads(executor_name: str | None, action: Any) -> tuple[etsy.Upload, ...]:
-    """0.41.0 (M4): the workspace files a request's executor uploads only as the SHA-256 frozen in it says (a changed
+    """0.42.0 (M4): the workspace files a request's executor uploads only as the SHA-256 frozen in it says (a changed
     one makes it refuse the request); none for a request that uploads none."""
     try:
         if executor_name == "etsy_listing":
@@ -1022,7 +1022,7 @@ def _unchanged(workspace: Jail, upload: etsy.Upload, kept: bool = True) -> bool:
 
 def _frozen(agent: Agent, r: sqlite3.Row, uploads: tuple[etsy.Upload, ...]) -> list[dict[str, Any]]:
     """The files a request froze, each with whether the workspace still holds it as proposed (None once the request
-    is closed: nothing reads it again). 0.25.0 for a KDP book; 0.41.0 (M4) for every request that uploads files."""
+    is closed: nothing reads it again). 0.25.0 for a KDP book; 0.42.0 (M4) for every request that uploads files."""
     workspace, _ = agent.roots()
     open_ = r["status"] in ("pending", "approved", "approved_with_changes")
     return [
@@ -1031,7 +1031,7 @@ def _frozen(agent: Agent, r: sqlite3.Row, uploads: tuple[etsy.Upload, ...]) -> l
 
 
 def changed_files(agent: Agent, approval_id: int) -> list[str]:
-    """0.41.0 (M4): the files of a request waiting for the owner that changed since it was proposed (hashed afresh),
+    """0.42.0 (M4): the files of a request waiting for the owner that changed since it was proposed (hashed afresh),
     for their Approve; none for one that uploads none."""
     where, params = agent.scope().where()
     with agent.db.connection() as conn:
@@ -1155,7 +1155,7 @@ def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope
         "execution": execution,
         "reddit_url": reddit_url,
         "kdp": book,
-        "files": _frozen(agent, r, _uploads(r["executor"], action)) if action is not None else [],  # 0.41.0 (M4)
+        "files": _frozen(agent, r, _uploads(r["executor"], action)) if action is not None else [],  # 0.42.0 (M4)
         "editable": editable,
         "closed_by": r["closed_by"],
     }

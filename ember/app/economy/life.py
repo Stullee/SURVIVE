@@ -130,7 +130,7 @@ class LifeStatus:
 
     @property
     def judged_balance(self) -> int:
-        """0.41.0 (analysis-0.40.1 codebase, E1): the balance the runway is judged on (``Runway.balance``: the answered
+        """0.42.0 (analysis-0.40.1 codebase, E1): the balance the runway is judged on (``Runway.balance``: the answered
         calls whose bill is uncertain at what they are known to cost), the booked one for a runway built without one."""
         return self.balance if self.runway.balance is None else self.runway.balance
 

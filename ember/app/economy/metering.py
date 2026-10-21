@@ -469,7 +469,7 @@ def recover_interrupted(db: Database, clock: Clock, boot_id: str) -> int:
 
 SPEED_SETTLED_KEY = "economy.speed_settled"  # 0.39.8: the newest call settle_speed settled
 SPEED_NETTED_KEY = "economy.speed_netted"  # 0.39.8: the owner's own refunds (micros) it counted against them
-# 0.41.0 (analysis-0.40.1 codebase, 6.2 bills): the usage fields Ember's code doesn't know, with the values the owner
+# 0.42.0 (analysis-0.40.1 codebase, 6.2 bills): the usage fields Ember's code doesn't know, with the values the owner
 # treats as standard-priced, from the dashboard: {"<field>": ["<value>", ...]}. An answer whose bill is uncertain only
 # for such a field with such a value costs the price table's price, and the calls already charged at their worst case
 # for it are settled once (settle_usage). Each new field took a release and a one-off settlement (usage.speed, 0.39.8),
@@ -483,7 +483,7 @@ _NO_PENDING = 2**63 - 1
 
 @dataclass(frozen=True)
 class UsageSettlement:
-    """0.41.0 (6.2 bills): what settling the calls charged at their worst case for usage.``key`` = ``value`` alone does
+    """0.42.0 (6.2 bills): what settling the calls charged at their worst case for usage.``key`` = ``value`` alone does
     now: ``calls`` of them, charged ``excess`` over their price, ``owners`` of which the owner's own refunds already
     cover, and Ember's code's refunds (``refunds``: per day, its calls and micros). The dashboard shows it before the
     owner confirms; ``_book`` records it."""
@@ -503,7 +503,7 @@ class UsageSettlement:
 
 
 class UsageChanged(Exception):
-    """0.41.0 (6.2 bills): settling would now refund more than the owner was shown (calls answered since): nothing
+    """0.42.0 (6.2 bills): settling would now refund more than the owner was shown (calls answered since): nothing
     changed."""
 
     def __init__(self, plan: UsageSettlement) -> None:
@@ -512,7 +512,7 @@ class UsageChanged(Exception):
 
 
 def standard_usage(db: Database) -> dict[str, list[str]]:
-    """0.41.0 (6.2 bills): the usage fields and values the owner treats as standard-priced (STANDARD_USAGE_KEY). A value
+    """0.42.0 (6.2 bills): the usage fields and values the owner treats as standard-priced (STANDARD_USAGE_KEY). A value
     that can't be read counts as none (fail-closed: those answers stay at their worst case)."""
     try:
         stored = json.loads(db.get_meta(STANDARD_USAGE_KEY) or "{}")
@@ -540,7 +540,7 @@ def _usage_settlement(conn: sqlite3.Connection, key: str, value: str) -> UsageSe
     settled_key, netted_key = _settled_keys(key, value)
     note, path = f"unknown usage field {key}", f"$.{key}"
     done = conn.execute("SELECT value FROM meta WHERE key = ?", (settled_key,)).fetchone()
-    # 0.41.0: a call still in flight may be answered before the owner's choice counts for it, so the calls from it on
+    # 0.42.0: a call still in flight may be answered before the owner's choice counts for it, so the calls from it on
     # wait for the next settlement: the newest call settled never passes over one that may still need it
     pending = conn.execute("SELECT MIN(id) FROM llm_calls WHERE status = 'pending' AND simulated = 0").fetchone()[0]
     rows = conn.execute(
@@ -615,7 +615,7 @@ def _book(db: Database, conn: sqlite3.Connection, plan: UsageSettlement, now: st
 
 
 def settle_usage(db: Database, clock: Clock, key: str, value: str) -> int:
-    """0.39.8 (analysis-0.39.6, 3.1), as settle_speed for usage.speed "standard"; 0.41.0 (6.2 bills), for any usage
+    """0.39.8 (analysis-0.39.6, 3.1), as settle_speed for usage.speed "standard"; 0.42.0 (6.2 bills), for any usage
     field and value held standard-priced: the live calls charged at their worst case only for usage.``key`` = ``value``
     ("unknown usage field <key>"), settled at what they cost: their known cost is their price, since the standard price
     is the one the table holds. One refund (a negative API cost correction, Ember's code's) for each day they were made
@@ -630,7 +630,7 @@ def settle_usage(db: Database, clock: Clock, key: str, value: str) -> int:
 
 
 def settle_standard_usage(db: Database, clock: Clock) -> int:
-    """At startup: settle_usage for usage.speed "standard" (0.39.8) and, 0.41.0, for each field and value the owner
+    """At startup: settle_usage for usage.speed "standard" (0.39.8) and, 0.42.0, for each field and value the owner
     holds standard-priced (a call answered while they chose). Returns the micros refunded."""
     pairs = [("speed", speed) for speed in sorted(STANDARD_SPEEDS)]
     pairs += [(key, value) for key, values in standard_usage(db).items() for value in values]
@@ -638,7 +638,7 @@ def settle_standard_usage(db: Database, clock: Clock) -> int:
 
 
 def usage_offers(db: Database) -> list[UsageSettlement]:
-    """0.41.0 (6.2 bills): for each usage field Ember's code doesn't know, and each text value of it that alone left
+    """0.42.0 (6.2 bills): for each usage field Ember's code doesn't know, and each text value of it that alone left
     live answers charged at their worst case, what treating it as standard-priced would settle now (the dashboard's
     offer). Only text values: a number or an object may be a count the price depends on."""
     prefix = "unknown usage field "
@@ -666,7 +666,7 @@ def usage_offers(db: Database) -> list[UsageSettlement]:
 
 
 def accept_usage(db: Database, clock: Clock, key: Any, value: Any, most: int, who: str) -> UsageSettlement | None:
-    """0.41.0 (6.2 bills): the owner (``who``) treats usage.``key`` = ``value`` as standard-priced from now on, and the
+    """0.42.0 (6.2 bills): the owner (``who``) treats usage.``key`` = ``value`` as standard-priced from now on, and the
     calls charged at their worst case for it alone are settled (settle_usage), in one transaction. Only a field Ember's
     code doesn't know, and a value of it the owner already holds or that has calls to settle (else None: nothing
     changed); and only when it refunds at most ``most``, what the dashboard showed them (else UsageChanged). Again for
@@ -1751,7 +1751,7 @@ class MeteredModel:
         )
 
     def _standard(self, key: str, value: Any) -> bool:
-        """0.41.0 (analysis-0.40.1 codebase, 6.2 bills): whether the owner treats usage.``key`` = ``value`` as
+        """0.42.0 (analysis-0.40.1 codebase, 6.2 bills): whether the owner treats usage.``key`` = ``value`` as
         standard-priced (STANDARD_USAGE_KEY): exactly that text value, nothing else of the field."""
         return isinstance(value, str) and value in standard_usage(self.db).get(key, [])
 

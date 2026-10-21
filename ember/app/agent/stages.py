@@ -233,7 +233,7 @@ def resume_projects(conn: sqlite3.Connection, venture_id: int) -> list[int]:
 
 def hold_requests(conn: sqlite3.Connection, scope: AgentScope, venture_id: int, stage: str, now: str) -> list[int]:
     """0.23.3: what was approved for the work the owner's park or kill (``stage``) of a venture stops, and Ember's code
-    hasn't begun (no journal entry, nothing claimed in its executor's table; 0.41.0: or waits for its service, nothing
+    hasn't begun (no journal entry, nothing claimed in its executor's table; 0.42.0: or waits for its service, nothing
     made), isn't carried out
     (ventures.request_stopped): a new listing or product, a change, a pin or a post of a stopped line. An unlock's
     approval waits for the owner again (as policy._stop); the owner's own is closed, saying why (a listing approved

@@ -8,7 +8,7 @@
 # bashio::config (which calls the Supervisor API), so the same image also runs
 # outside Home Assistant with docker-compose.
 #
-# This script runs as root. Since 0.41.0 it prepares /data and then starts the
+# This script runs as root. Since 0.42.0 it prepares /data and then starts the
 # Python process as the unprivileged user ember (see the Dockerfile), so code
 # that got out of the agent's sandbox can't change Ember's options or its code.
 # ==============================================================================

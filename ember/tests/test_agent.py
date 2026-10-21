@@ -240,7 +240,7 @@ def test_a_path_with_a_line_break_or_space_is_refused_and_nothing_is_created(dat
         ],
     )
     agent.run_cycle("schedule")
-    *results, room = transport.sent[2]["messages"][-1]["content"]  # 0.41.0: the room line after the results
+    *results, room = transport.sent[2]["messages"][-1]["content"]  # 0.42.0: the room line after the results
     assert all(r["is_error"] for r in results) and room["text"].startswith(loop.ROOM_MARKER)
     assert all("control character" in r["content"] or "is not allowed" in r["content"] for r in results)
     workspace, _ = agent.roots()
@@ -288,7 +288,7 @@ def test_tool_errors_and_limits_go_back_to_the_model(data_dir: Path) -> None:
     )
     assert agent.run_cycle("schedule").status == "completed"
     check_conversations(transport.sent)
-    *second, _room = transport.sent[2]["messages"][-1]["content"]  # 0.41.0: the room line after the results
+    *second, _room = transport.sent[2]["messages"][-1]["content"]  # 0.42.0: the room line after the results
     assert all(r["is_error"] for r in second)
     assert "leaves the workspace" in second[0]["content"] or "not allowed" in second[0]["content"]
     assert "no tool called" in second[1]["content"] and "whole number" in second[2]["content"]

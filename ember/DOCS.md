@@ -1328,7 +1328,7 @@ as may wait for you wait"): "Propose the listing" (the product, the book),
 proposing one again, and the critic's fixes, which are a change of the listing.
 Since 0.40.3 a report also waits while five of Ember's messages are unread, when
 she can't write to you at all ("5 of Ember's messages to you are unread"), until
-you read them. Since 0.41.0 each of these rules is written once, and both the
+you read them. Since 0.42.0 each of these rules is written once, and both the
 tool and the plan read it; two more rules of Ember's tools are read the same way:
 KDP's limit of 2 new titles of a format a week, and the demand note a line's
 first listing needs. A step whose tool would refuse it for one of them waits
@@ -1691,11 +1691,11 @@ no longer shown); a study that failed three times stops until you press
   Ember's code can undo it. A listing, or a change to one, with fewer than 5
   photos (the one **QA** number: the Etsy guide, the plan's defects and the
   `qa_clean` metric read it too) says so on its card before you decide.
-  Since 0.41.0 the card of a listing, a change, a pin, a post or a Printify
+  Since 0.42.0 the card of a listing, a change, a pin, a post or a Printify
   product says which of its files changed since it was proposed (as a KDP
   book's does): Ember uploads only the files as proposed, so **Approve** is
   refused for it; reject it and ask the agent to propose it again.
-- **Asked to wait** (0.41.0): when Etsy, Pinterest or Bluesky answers "too many
+- **Asked to wait** (0.42.0): when Etsy, Pinterest or Bluesky answers "too many
   requests" (or "down for now, come back later") before anything changed (no
   draft, no part of a change, no new board, no post yet), the approved request
   stays approved: Ember tries it again when the service said, at least a minute
@@ -3038,7 +3038,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.41.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.42.0 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3113,7 +3113,7 @@ own account. Ember never logs in to Amazon or reads its pages.
   request you rejected or approved with changes, or your note on one KDP
   refused. The agent proposes a paperback only in a later reply of the same
   cycle as a check of that very file, with `qa`: what it saw on the pages,
-  point by point (since 0.41.0, a longer one is cut to 900 characters, not
+  point by point (since 0.42.0, a longer one is cut to 900 characters, not
   refused). A check from an earlier cycle, or of the file before it
   changed, doesn't count: twice the Haushaltsbuch went back to you on pictures
   of an older version or a checklist passed days before. The request shows you
@@ -3137,7 +3137,7 @@ own account. Ember never logs in to Amazon or reads its pages.
   spent its first steps finding out which file was the book. A cycle's work
   conversation holds 96,000 bytes (64,000 until 0.40.1), room for two checks of
   six pages each: four of the five cycles on the book before 0.40.0 ended at
-  64,000 without proposing it. Since 0.41.0 each work step is told how much of
+  64,000 without proposing it. Since 0.42.0 each work step is told how much of
   it is used ("Room: 61 of 96 KB of this cycle's conversation used."), with a
   warning from three quarters on.
 - **Placeholders** (0.40.2, the analysis of 0.40.1): the check finds words in
@@ -3258,7 +3258,7 @@ On the dashboard you can record:
 - **Expense**: real-world money you spent on Ember's behalf (a domain, a fee).
 - **Adjustment**: add to or subtract from the balance for anything else.
 - **API cost correction**: if Anthropic's Console shows a different cost than
-  Ember computed, record the difference here. Since 0.41.0, when answers were
+  Ember computed, record the difference here. Since 0.42.0, when answers were
   charged at their worst case only because of a usage field Ember's code
   doesn't know, the dashboard offers **Treat usage.X = "Y" as standard price**,
   with how many calls that settles and what it refunds. Confirm it once the

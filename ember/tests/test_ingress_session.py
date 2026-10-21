@@ -1,4 +1,4 @@
-"""0.41.0: a 401 is Home Assistant's Ingress, never Ember: the dashboard retries quietly while the session renews.
+"""0.42.0: a 401 is Home Assistant's Ingress, never Ember: the dashboard retries quietly while the session renews.
 
 Live, after the page sat idle, the dashboard said "Ember refused the request (HTTP 401: 401: Unauthorized). Reload the
 page; ...". Ember's server answers 403 to what it refuses; "401: Unauthorized" is the Supervisor's Ingress proxy, whose
@@ -25,7 +25,7 @@ def test_the_dashboard_retries_a_401_quietly_before_it_asks_for_a_reload() -> No
     retry = int(re.search(r"var SESSION_RETRY_MS = (\d+);", JS)[1])
     grace = int(re.search(r"var SESSION_GRACE_MS = (\d+);", JS)[1])
     assert retry <= 10_000 and grace >= 60_000  # Home Assistant renews the session about once a minute
-    assert "err.status === 401) {\n        // 0.41.0: Ingress" in JS  # retried at SESSION_RETRY_MS, no system log fetch
+    assert "err.status === 401) {\n        // 0.42.0: Ingress" in JS  # retried at SESSION_RETRY_MS, no system log fetch
     assert "Home Assistant renews it within a minute; retrying." in JS  # a warning first
     assert "ran out and wasn't renewed (HTTP 401). Reload the page" in JS  # the reload advice only after the grace
     assert "ui.sessionLostSince = 0;" in JS  # a good answer ends it

@@ -1,8 +1,8 @@
-"""One precondition per tool, read by the plan too (0.41.0, analysis-0.40.1 codebase, 5.2 and 6.2.1).
+"""One precondition per tool, read by the plan too (0.42.0, analysis-0.40.1 codebase, 5.2 and 6.2.1).
 
 A tool that refuses by a rule the plan can know before a cycle (a count, a limit, a date, a missing note) refuses by
 a precondition of preconditions.py, and a step of that tool waits on it with the tool's words, cutting no sleep. Until
-0.41.0 each rule was written twice, or only in the tool: 0.37.6, 0.37.8, 0.37.9, 0.38.1, 0.39.1, 0.40.2 and 0.40.3
+0.42.0 each rule was written twice, or only in the tool: 0.37.6, 0.37.8, 0.37.9, 0.38.1, 0.39.1, 0.40.2 and 0.40.3
 each mended one pair after a step the tool refused had cut Ember's sleep and paid for a cycle that ended in the
 refusal.
 

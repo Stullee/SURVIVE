@@ -1,6 +1,6 @@
-"""Uncertain bills (0.41.0, analysis-0.40.1 codebase, 6.2 "Settling uncertain bills from settings", and E1).
+"""Uncertain bills (0.42.0, analysis-0.40.1 codebase, 6.2 "Settling uncertain bills from settings", and E1).
 
-An answer carrying a usage field Ember's code doesn't know is charged at its worst case. Until 0.41.0 only a release
+An answer carrying a usage field Ember's code doesn't know is charged at its worst case. Until 0.42.0 only a release
 ended such an episode: it taught the code the field and settled its calls once (usage.speed, 0.39.8: $15.94 booked
 for $3.87 on 10-16), while the owner compared the Anthropic Console by hand and typed refunds. Now the dashboard offers
 "Treat usage.X = "Y" as standard price: settles N calls, refunds $Z". The owner's yes prices the answers with exactly
@@ -273,7 +273,7 @@ def judged_status(**runway: Any) -> LifeStatus:
 def test_a_move_up_of_the_burn_mode_is_judged_on_the_balance_the_runway_is_judged_on() -> None:
     since = burn.Since(money_in=1, spend=5_500_000)  # $5.50 a day before maintenance
     settled = judged_status(balance=110_000_000)  # $30 of it answered uncertain calls' worst case
-    assert burn.judged(settled, since) == pytest.approx(110 / 5.5)  # 20 days: until 0.41.0, 80 / 5.5 = 14.5
+    assert burn.judged(settled, since) == pytest.approx(110 / 5.5)  # 20 days: until 0.42.0, 80 / 5.5 = 14.5
     assert burn.settle("maintenance", settled, since) == "focus"
     assert burn.judged(judged_status(), since) == pytest.approx(80 / 5.5)  # a runway built without one: the booked
     assert burn.settle("maintenance", judged_status(), since) == "maintenance"

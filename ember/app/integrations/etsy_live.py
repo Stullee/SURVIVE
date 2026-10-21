@@ -3,7 +3,7 @@
 Every request goes to https://api.etsy.com (anything else is refused before it leaves, and redirects aren't
 followed), with the owner's app key (``x-api-key``: keystring and shared secret) and, for the shop, the OAuth
 access token, refreshed when it is about to expire. Errors come back as ``NotSent`` (Etsy refused: nothing changed;
-0.41.0: ``Busy`` when it asked to come back later) or ``Unclear`` (a timeout or a lost connection: something may have
+0.42.0: ``Busy`` when it asked to come back later) or ``Unclear`` (a timeout or a lost connection: something may have
 changed). Responses are size-limited and never
 logged; tokens and the shared secret are registered for log redaction.
 """
@@ -122,7 +122,7 @@ def _send(client: httpx2.Client, method: str, path: str, *, changes: bool, **kwa
         str(data.get("error") or data.get("error_description") or "").strip()[:200] if isinstance(data, dict) else ""
     )
     message = f"HTTP {status}" + (f": {detail}" if detail else "")
-    if retry.asks_to_wait(status, retry_after, date):  # 0.41.0 (M3): Etsy's "come back later": nothing changed
+    if retry.asks_to_wait(status, retry_after, date):  # 0.42.0 (M3): Etsy's "come back later": nothing changed
         wait = retry.seconds(retry_after, date)
         raise Busy(message + retry.said(status, wait), wait)
     if status >= 500 and changes:

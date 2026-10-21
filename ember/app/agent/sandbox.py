@@ -9,7 +9,7 @@ file outside the workspace, such as the database, is refused), and FIFOs or
 devices are never opened for reading. Writes go to a temporary file created
 with ``O_EXCL`` next to the target, are flushed to disk, and replace the old
 file atomically, so a crash never leaves a half-written file. Size, file-count
-and total quotas are checked before a write, and (0.41.0) so is the device's
+and total quotas are checked before a write, and (0.42.0) so is the device's
 free space: a write never leaves less than ``paths.FREE_FLOOR_BYTES``. A name is
 used exactly as given (nothing is trimmed, no control characters), so no other
 name on disk can pass for a valid one, and listings leave any other name out.
@@ -142,7 +142,7 @@ class Jail:
     ) -> None:
         self.root = root
         self.limits = limits or Limits()
-        # 0.41.0 (analysis-0.40.1 codebase, 6.2 disk): the bytes a write leaves free on the device at least (0: none),
+        # 0.42.0 (analysis-0.40.1 codebase, 6.2 disk): the bytes a write leaves free on the device at least (0: none),
         # and how the free bytes are read (paths.free_bytes, looked up at each write; a test gives its own)
         self.floor = floor
         self.free = free
@@ -424,7 +424,7 @@ class Jail:
         return len(data)
 
     def room_on_disk(self, size: int) -> None:
-        """0.41.0 (analysis-0.40.1 codebase, 6.2 disk): refuse a write of ``size`` bytes that would leave less than
+        """0.42.0 (analysis-0.40.1 codebase, 6.2 disk): refuse a write of ``size`` bytes that would leave less than
         the floor free on the device. The quotas above are blind to it: 2 GB of products fill a small card, and then
         the database can't grow. The new file is written whole before the old one goes, so all of it counts."""
         if self.floor <= 0:

@@ -11,7 +11,7 @@ ignore = [
 [lint.per-file-ignores]
 "tests/**" = ["S104", "S105", "S106", "B017"]
 
-# 0.41.0: a ceiling, not a target: the two most complex functions (the fake model's _stage_call and
+# 0.42.0: a ceiling, not a target: the two most complex functions (the fake model's _stage_call and
 # tools._milestone_update) are at 46; nothing may grow past them (the codebase analysis of 0.40.1, 5.6).
 [lint.mccabe]
 max-complexity = 46

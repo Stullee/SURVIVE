@@ -22,7 +22,7 @@ CONSTITUTION_PATH = APP_DIR / "agent" / "constitution.md"
 KNOWLEDGE_PATH = APP_DIR / "agent" / "knowledge.md"
 MANIFEST_PATH = ROOT_DIR / "config.yaml"
 CHANGELOG_PATH = ROOT_DIR / "CHANGELOG.md"
-# 0.41.0 (analysis-0.40.1 codebase, 6.2 disk): what Ember leaves free on the data folder's disk for its database, which
+# 0.42.0 (analysis-0.40.1 codebase, 6.2 disk): what Ember leaves free on the data folder's disk for its database, which
 # grows with every cycle and must never meet a full disk. The workspace's quotas are absolute (2 GB of products on a
 # Raspberry Pi's card): a workspace write or a workshop file that would leave less is refused, and the dashboard warns.
 FREE_FLOOR_BYTES = 1024 * 1024 * 1024
@@ -33,12 +33,12 @@ def data_dir() -> Path:
 
 
 def free_bytes(path: Path | None = None) -> int:
-    """0.41.0: the bytes this process may still write on the disk that holds ``path`` (the data folder): one statvfs."""
+    """0.42.0: the bytes this process may still write on the disk that holds ``path`` (the data folder): one statvfs."""
     return shutil.disk_usage(path or data_dir()).free
 
 
 def disk_full_text(free: int, floor: int = FREE_FLOOR_BYTES) -> str:
-    """0.41.0: why a write is refused under the floor, for the agent."""
+    """0.42.0: why a write is refused under the floor, for the agent."""
     return (
         f"the device has {size_text(free)} free; Ember keeps {size_text(floor)} free for its database: delete files "
         "you no longer need (workspace_write delete) or ask your owner"
@@ -46,7 +46,7 @@ def disk_full_text(free: int, floor: int = FREE_FLOOR_BYTES) -> str:
 
 
 def storage() -> dict[str, Any]:
-    """0.41.0: the free space on the data folder's disk (in whole MB: the dashboard redraws its System part when it
+    """0.42.0: the free space on the data folder's disk (in whole MB: the dashboard redraws its System part when it
     changes) and whether it is under FREE_FLOOR_BYTES, for the dashboard and the diagnostics report."""
     try:
         free = free_bytes()

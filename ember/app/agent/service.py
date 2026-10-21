@@ -246,7 +246,7 @@ class Agent:
 
     def roots(self) -> tuple[Jail, Jail]:
         base = paths.data_dir() / "dry_run" if self.mode == "dry_run" else paths.data_dir()
-        # 0.41.0 (analysis-0.40.1 codebase, 6.2 disk): the memory's three files (7 KB at most, each version kept in
+        # 0.42.0 (analysis-0.40.1 codebase, 6.2 disk): the memory's three files (7 KB at most, each version kept in
         # the database too) are written whatever the free space, so a full disk never keeps the agent from starting
         return Jail(base / "workspace"), Jail(base / "memory", floor=0)
 
@@ -368,7 +368,7 @@ class Agent:
         self.db.set_meta(DRY_RUN_FOLDER_KEY, session)
 
     def prune_versions(self) -> int:
-        """0.41.0 (analysis-0.40.1 codebase, 6.2 disk): the kept texts of the files that are gone
+        """0.42.0 (analysis-0.40.1 codebase, 6.2 disk): the kept texts of the files that are gone
         (tools.prune_versions), in every mode and session: the live workspace's and the dry-run session's files are
         looked up, whichever mode runs now; a past dry-run session's folder is gone. The scheduler calls it daily."""
         base = paths.data_dir()

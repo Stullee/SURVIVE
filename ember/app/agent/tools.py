@@ -124,7 +124,7 @@ READ_DEFAULT_CHARS = 3_000
 READ_MAX_CHARS = 3_500
 READ_ROOM = 200  # a read's header and data marks without its path (twice in them) and what it says of a made file
 MAX_TOOL_CALLS_PER_TURN = 4  # a reply's tool calls that run (write_journal besides them); the rest are skipped
-MAX_UNREAD_MESSAGES = store.MAX_UNREAD_MESSAGES  # 0.40.3 (PL3); 0.41.0: refused by preconditions.UNREAD
+MAX_UNREAD_MESSAGES = store.MAX_UNREAD_MESSAGES  # 0.40.3 (PL3); 0.42.0: refused by preconditions.UNREAD
 MAX_NEW_UPGRADES = 5
 SANDBOX_STRIKES = 3
 INBOX_SIZE = 15
@@ -312,7 +312,7 @@ class Field:
     enum: tuple[str, ...] = ()
     minimum: int | None = None
     maximum: int | None = None
-    # too long: cut to max_len with a note instead of refusing. 0.41.0 (analysis-0.40.1 codebase, 5.5): every note for
+    # too long: cut to max_len with a note instead of refusing. 0.42.0 (analysis-0.40.1 codebase, 5.5): every note for
     # Ember or its owner that loses little when cut (a reason, a title, a theme); what goes to buyers or outside, a
     # file, a path, an id or a brief refuses (tests/test_tool_limits.py classifies each field)
     cut: bool = False
@@ -492,7 +492,7 @@ SPECS: dict[str, Spec] = {
                     "add, split, replace: the new steps, in order.",
                     plan.MAX_NEW_STEPS,
                     {
-                        # 0.41.0 (analysis-0.40.1 codebase, 5.5): cut, not refused (live, 185 of 120 cost a step)
+                        # 0.42.0 (analysis-0.40.1 codebase, 5.5): cut, not refused (live, 185 of 120 cost a step)
                         "title": _s("A small concrete step.", plan.TITLE_CHARS, cut=True),
                         # 0.39.2: live, a step to send pins was added as "ship": an ordinary cycle took it, and that
                         # has no propose_pin (analysis-0.39.1, 3.4)
@@ -640,7 +640,7 @@ SPECS: dict[str, Spec] = {
             "from a venture or give a theme; leave both out for anything.",
             {
                 "venture_id": _i("Branch the new ideas from this venture.", required=False),
-                # 0.41.0 (analysis-0.40.1 codebase, 5.5): cut, not refused (live, 471 of 300 cost a step)
+                # 0.42.0 (analysis-0.40.1 codebase, 5.5): cut, not refused (live, 471 of 300 cost a step)
                 "theme": _s(
                     "A market, a customer group, a problem or a skill to think about.", 300, required=False, cut=True
                 ),
@@ -1961,7 +1961,7 @@ def _slipped(value: str, marks: list[re.Match[str]]) -> bool:
 
 
 def _unclosed(text: str) -> str:
-    """0.41.0 (analysis-0.40.1 codebase, 9): ``text`` without the closing tags at its end and the spaces before them
+    """0.42.0 (analysis-0.40.1 codebase, 9): ``text`` without the closing tags at its end and the spaces before them
     ('...</entry>\\n</parameter>\\n'), or as it is when it ends in none, in linear time. The pattern that took them off
     (0.19.2) was tried at each position of a run of spaces, which takes the run's length squared: 20,000 spaces after
     a field's mark took 0.6 s, and a journal's raw input is read before its lengths are checked."""
@@ -2075,7 +2075,7 @@ def _checked(fields: dict[str, Field], raw: Any, notes: list[str] | None, where:
                     # 0.39.1: and how much to cut (live, commits of 101 characters was refused, and a lesson kept)
                     over = f"(cut {len(value) - f.max_len:,})"
                     raise ToolError(f"{name} is too long: {len(value):,} of {f.max_len:,} characters {over}{remedy}")
-                if notes is not None:  # 0.41.0: an item's text says which item ("steps item 2's title")
+                if notes is not None:  # 0.42.0: an item's text says which item ("steps item 2's title")
                     named = f"{where}'s {name}" if where else name
                     notes.append(f"{named} was cut to {f.max_len:,} of its {len(value):,} characters")
                 value = value[: f.max_len - 1].rstrip() + "…"
@@ -2285,7 +2285,7 @@ def keep_version(
     return True
 
 
-# 0.41.0 (analysis-0.40.1 codebase, 6.2 disk): the kept texts of a file that is gone (deleted, or renamed: a copy and a
+# 0.42.0 (analysis-0.40.1 codebase, 6.2 disk): the kept texts of a file that is gone (deleted, or renamed: a copy and a
 # delete; or a past dry-run session's) stay this many days after the newest of them, so restore brings back a file
 # deleted lately; then Ember's code prunes them (once a day, scheduler.py). They were kept for good, and versioned names
 # (-v3 ... -v22) multiplied them. All kept texts together take at most VERSIONS_MAX_BYTES, the oldest going first.
@@ -2294,7 +2294,7 @@ VERSIONS_MAX_BYTES = 50 * 1024 * 1024
 
 
 def prune_versions(conn: Any, workspaces: Mapping[tuple[str, int], Jail], now: datetime) -> int:
-    """0.41.0: delete the kept texts of the files that are gone, VERSIONS_GONE_DAYS after their newest, and the oldest
+    """0.42.0: delete the kept texts of the files that are gone, VERSIONS_GONE_DAYS after their newest, and the oldest
     beyond VERSIONS_MAX_BYTES; returns how many were deleted. ``workspaces``: the folder of each (mode, session) whose
     files still exist (the live workspace, the dry-run session's): any other's are gone."""
     stale = conn.execute(
@@ -2323,7 +2323,7 @@ def _still_there(jail: Jail | None, path: str) -> bool:
 
 
 def _restorable(kept: bool, days: int | None = None) -> str:
-    """0.41.0: ``days``, for a deleted file: how long its text is kept (VERSIONS_GONE_DAYS)."""
+    """0.42.0: ``days``, for a deleted file: how long its text is kept (VERSIONS_GONE_DAYS)."""
     if not kept:
         return ""
     return f" Its text before is kept{f' for {days} days' if days else ''}: restore brings it back."
@@ -3740,13 +3740,13 @@ def _room_for_request(ctx: ToolContext, conn: Any, kind: str) -> None:
 
 
 def _facts(ctx: ToolContext, conn: Any, **call: Any) -> preconditions.Facts:
-    """0.41.0: what a precondition reads of this call (preconditions.Facts), on the tool's clock."""
+    """0.42.0: what a precondition reads of this call (preconditions.Facts), on the tool's clock."""
     day_start = to_iso(ctx.clock.day_start(ctx.clock.today()))
     return preconditions.Facts(conn, ctx.scope, ctx.clock.now(), day_start, ctx.clock.tz, **call)
 
 
 def _refuse(ctx: ToolContext, conn: Any, rule: preconditions.Rule, **call: Any) -> None:
-    """0.41.0 (analysis-0.40.1 codebase, 6.2.1): a refusal by a rule the plan can know before a cycle is the tool's
+    """0.42.0 (analysis-0.40.1 codebase, 6.2.1): a refusal by a rule the plan can know before a cycle is the tool's
     precondition (preconditions.py), which the plan reads too: a step of the tool waits on it with these words, and
     takes no cycle that would end in the refusal. ``call``: what the call is about (preconditions.Facts)."""
     said = rule.check(_facts(ctx, conn, **call))
@@ -5877,10 +5877,10 @@ def _propose_kdp_book(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     if not reason:
         raise ToolError(f"{path} needs reason: why this book, for your owner")
     page_check = _page_check(ctx, book, args.get("qa"), notes) if book.format == "paperback" else ""
-    noted = "".join(f" Note: {note}." for note in notes)  # 0.41.0: with a qa cut to its length
+    noted = "".join(f" Note: {note}." for note in notes)  # 0.42.0: with a qa cut to its length
     with ctx.db.transaction() as conn:
         project_id = _product_line(ctx, conn, spec, "book")
-        _refuse(ctx, conn, preconditions.KDP_WEEK, form=book.format)  # 0.25.0; 0.41.0: the plan waits on it too
+        _refuse(ctx, conn, preconditions.KDP_WEEK, form=book.format)  # 0.25.0; 0.42.0: the plan waits on it too
         made_request = _new_request(
             ctx,
             conn,
@@ -6031,7 +6031,7 @@ def _page_check(ctx: ToolContext, book: kdp.Book, qa: Any, notes: list[str]) -> 
     """0.40.0 (upgrade request #12): a paperback goes to the owner only after a check drew its interior's pages, of
     the same file, in an earlier reply of this cycle (one in the same reply hadn't reached the model when it wrote the
     proposal), with qa: what the agent saw on them. The owner reads qa on the request, with what Ember's code found
-    (0.41.0: a longer qa cut to QA_CHARS, said in ``notes``)."""
+    (0.42.0: a longer qa cut to QA_CHARS, said in ``notes``)."""
     path = book.manuscript.path
     drawn = ctx.state.drawn.get(path)
     if drawn is None:
@@ -6053,7 +6053,7 @@ def _page_check(ctx: ToolContext, book: kdp.Book, qa: Any, notes: list[str]) -> 
             " take the sentence out, make it again and check it; a book never prints [words in brackets]"
         )
     said = " ".join(str(qa or "").split())
-    # 0.41.0 (analysis-0.40.1 codebase, 5.5): cut, not refused. Live, qa of 1,605 and 909 characters were refused: each
+    # 0.42.0 (analysis-0.40.1 codebase, 5.5): cut, not refused. Live, qa of 1,605 and 909 characters were refused: each
     # cost a step of the cycle whose check it needs, and three cycles that day ended at their last step. It is the
     # agent's own account for its owner, who checks the files before approving, beside what Ember's code found.
     if len(said) > QA_CHARS:

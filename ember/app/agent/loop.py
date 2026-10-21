@@ -116,7 +116,7 @@ MAX_TOOL_CALLS_PER_TURN = tools.MAX_TOOL_CALLS_PER_TURN
 # 0.40.1 (analysis-0.40.0, 3.3): at 64,000 four of the five cycles on the KDP book ended before they could propose it,
 # and a book's page check (0.40.0) takes about 20,000 of it: six pages and its measures; a fix needs two checks.
 MAX_CONVERSATION_BYTES = 96_000
-# 0.41.0 (analysis-0.40.1 codebase, 6.2): each work step is told how much of it is used (room_line), and warned from
+# 0.42.0 (analysis-0.40.1 codebase, 6.2): each work step is told how much of it is used (room_line), and warned from
 # this share on
 ROOM_MARKER = "Room: "
 ROOM_SHORT = 0.75
@@ -144,7 +144,7 @@ def cut_call(name: str) -> str:
 
 
 def room_line(size: int) -> str:
-    """0.41.0 (analysis-0.40.1 codebase, 6.2): how much of MAX_CONVERSATION_BYTES the work conversation (``size``
+    """0.42.0 (analysis-0.40.1 codebase, 6.2): how much of MAX_CONVERSATION_BYTES the work conversation (``size``
     bytes, as _size counts them) uses, and from ROOM_SHORT on a warning. The worker couldn't see it: 4 of the 5 cycles
     on the KDP book ran out of room unannounced before 0.40.1 raised the limit, and a page check takes about 20 KB."""
     line = f"{ROOM_MARKER}{size // 1_000} of {MAX_CONVERSATION_BYTES // 1_000} KB of this cycle's conversation used."
@@ -154,7 +154,7 @@ def room_line(size: int) -> str:
 
 
 def _with_room(turns: list[dict[str, Any]], size: int) -> list[dict[str, Any]]:
-    """0.41.0: ``turns`` with the room line at the end of the newest user turn (the step's tool results), where it
+    """0.42.0: ``turns`` with the room line at the end of the newest user turn (the step's tool results), where it
     stays as it was sent: each later step reads it from the prompt cache with the turns before its own. In the system
     prompt, the tools or an earlier turn it would change the cached prefix at every step. None before the first reply
     (the brief starts the conversation), and one a turn (a nudge comes after the line its turn has)."""
@@ -170,7 +170,7 @@ def _is_room(block: Any) -> bool:
 
 def _carried(block: Any) -> bool:
     """What the reflection keeps of a trailing user turn: its tool results, which answer the calls before it, and
-    (0.41.0) its room line, so the prefix the last step cached stays the reflection's; its prompt replaces a nudge."""
+    (0.42.0) its room line, so the prefix the last step cached stays the reflection's; its prompt replaces a nudge."""
     return (isinstance(block, dict) and block.get("type") == "tool_result") or _is_room(block)
 
 
@@ -1886,7 +1886,7 @@ class CycleRunner:
             if size > MAX_CONVERSATION_BYTES:
                 act.end_reason = "the conversation got too long"
                 break
-            turns = _with_room(turns, size)  # 0.41.0 (analysis-0.40.1 codebase, 6.2)
+            turns = _with_room(turns, size)  # 0.42.0 (analysis-0.40.1 codebase, 6.2)
             final = step == max_steps
             request = prompts.work_request(self.settings, brief, turns, final=final, **self._flags(ctx))
             if not self._affordable(cycle_id, request, brief, turns, ctx):

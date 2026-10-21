@@ -9,7 +9,7 @@ within Bluesky's 300 logins a day) and renews them with the refresh token before
 (a wrong app password, an account taken down) is remembered, so it isn't tried again for REFUSED_WAIT, and a login
 made with the account's own password rather than an app password, or to an account that isn't active, is refused
 before anything is posted. Errors come back as ``NotSent`` (Bluesky refused: nothing changed; ``Refused`` for
-the login, ``Gone`` for what isn't there, 0.41.0: ``Busy`` when it asked to come back later) or ``Unclear`` (a timeout
+the login, ``Gone`` for what isn't there, 0.42.0: ``Busy`` when it asked to come back later) or ``Unclear`` (a timeout
 or a lost connection: something may have changed). Responses are size-limited and never logged; the app password and
 the tokens are registered for log redaction.
 """
@@ -128,7 +128,7 @@ def _send(client: httpx2.Client, method: str, path: str, *, changes: bool, **kwa
         return data
     code = str(data.get("error") or "").strip()[:60]
     message = str(data.get("message") or "").strip()[:200]
-    if retry.asks_to_wait(status, retry_after, date):  # 0.41.0 (M3): Bluesky's "come back later": nothing changed
+    if retry.asks_to_wait(status, retry_after, date):  # 0.42.0 (M3): Bluesky's "come back later": nothing changed
         wait = retry.seconds(retry_after, date)
         raise Busy(f"HTTP {status}" + (f": {code}" if code else "") + retry.said(status, wait), wait)
     if status >= 500 and changes:

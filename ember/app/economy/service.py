@@ -75,7 +75,7 @@ TYPE_LABELS = {
 }
 
 
-# 0.41.0 (analysis-0.40.1 codebase, 6.2 bills; the owner's report): the calls charged at their worst case that the owner
+# 0.42.0 (analysis-0.40.1 codebase, 6.2 bills; the owner's report): the calls charged at their worst case that the owner
 # keeps as charged, "<the newest of them> <the micros the System warning named> <the newest ledger row then>": the
 # warning names only what is charged so after them, less the owner's refunds since. Its $0.10 stood from 10-18 on, as
 # nobody looks a few cents up in the Console. It hides the advice only: the ledger and every balance stay as they are,
@@ -137,7 +137,7 @@ class Economy:
             )
         else:
             recover_interrupted(self.db, self.clock, self.boot_id)
-            # 0.39.8: the calls charged at their worst case for usage.speed alone; 0.41.0, for a usage field and value
+            # 0.39.8: the calls charged at their worst case for usage.speed alone; 0.42.0, for a usage field and value
             # the owner holds standard-priced (one answered while they chose)
             settle_standard_usage(self.db, self.clock)
         if self.loaded.safe_mode:
@@ -190,7 +190,7 @@ class Economy:
         return Reply(200, {"reset": raised})
 
     def accept_usage(self, body: Any, entered_by: str | None = None) -> Reply:
-        """0.41.0 (analysis-0.40.1 codebase, 6.2 bills): the owner treats a usage field's value as standard-priced, the
+        """0.42.0 (analysis-0.40.1 codebase, 6.2 bills): the owner treats a usage field's value as standard-priced, the
         dashboard's offer on the uncertain bills: {"field", "value", "refund_micros": the refund the offer showed}.
         The calls charged at their worst case for it alone are settled once (metering.accept_usage); an episode of a
         new usage field is a click, not a release and a one-off settlement."""
@@ -343,7 +343,7 @@ class Economy:
 
     def held_warning(self, status: LifeStatus) -> tuple[str, int] | None:
         """The System warning on the calls charged at their worst case, with the micros it names; None without any.
-        Live only: simulated charges have no Console to check against. 0.41.0 (analysis-0.40.1 codebase, 6.2 bills):
+        Live only: simulated charges have no Console to check against. 0.42.0 (analysis-0.40.1 codebase, 6.2 bills):
         only what is charged so after the calls the owner kept as charged (KEPT_KEY), less the refunds they recorded
         since (they refund those; which calls a refund settles isn't recorded)."""
         held = status.settled_balance - status.balance
@@ -382,7 +382,7 @@ class Economy:
         return int(parts[0]), int(parts[2])
 
     def keep_as_charged(self, body: Any, entered_by: str | None = None) -> Reply:
-        """0.41.0 (analysis-0.40.1 codebase, 6.2 bills; the owner's report): the owner keeps the calls charged at their
+        """0.42.0 (analysis-0.40.1 codebase, 6.2 bills; the owner's report): the owner keeps the calls charged at their
         worst case that the System warning names as charged, {"held_micros": what it named}. Only the warning changes
         (KEPT_KEY): the ledger and every balance stay, and a correction can still be recorded."""
         shown = body.get("held_micros") if isinstance(body, dict) else None
@@ -480,7 +480,7 @@ class Economy:
         return result
 
     def uncertain_bills(self) -> list[dict[str, Any]]:
-        """0.41.0 (analysis-0.40.1 codebase, 6.2 bills): what treating each usage field and value that alone left
+        """0.42.0 (analysis-0.40.1 codebase, 6.2 bills): what treating each usage field and value that alone left
         answers charged at their worst case as standard-priced would settle (metering.usage_offers), for the owner to
         confirm. Live only: simulated charges have no Console to check against."""
         if self.mode != "live":
@@ -544,8 +544,8 @@ class Economy:
             "last_will_due": status.last_will_due,
             "revive": revive,
             "warnings": self.warnings(),
-            "uncertain_bills": self.uncertain_bills(),  # 0.41.0 (6.2 bills): the owner's offers on them
-            "held_warning": _held(self.held_warning(status)),  # 0.41.0: the warning above, for its Keep as charged
+            "uncertain_bills": self.uncertain_bills(),  # 0.42.0 (6.2 bills): the owner's offers on them
+            "held_warning": _held(self.held_warning(status)),  # 0.42.0: the warning above, for its Keep as charged
             # 0.12.0: the estimates scaled up after a call cost more than estimated (per purpose and model)
             "estimate_factors": [
                 {"purpose": purpose, "model": model, "factor": float(factor)}
@@ -620,13 +620,13 @@ class Economy:
 
 
 def _held(found: tuple[str, int] | None) -> dict[str, Any] | None:
-    """0.41.0 (6.2 bills): the System warning on the calls charged at their worst case as the dashboard's Keep as
+    """0.42.0 (6.2 bills): the System warning on the calls charged at their worst case as the dashboard's Keep as
     charged needs it: its text (the banner it replaces) and the micros it names."""
     return None if found is None else {"text": found[0], "held_usd": micros_to_usd(found[1]), "held_micros": found[1]}
 
 
 def _offer(plan: UsageSettlement, accepted: bool) -> dict[str, Any]:
-    """0.41.0 (6.2 bills): a usage field and value's settlement as the dashboard shows it (``accepted``: the owner holds
+    """0.42.0 (6.2 bills): a usage field and value's settlement as the dashboard shows it (``accepted``: the owner holds
     it standard-priced already, and calls answered while they chose are left)."""
     return {
         "field": plan.key,

@@ -26,7 +26,7 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements-dev.txt
       # One worker per CPU (pytest-xdist): every test has its own data folder (tests/conftest.py).
-      # 0.41.0: with line coverage and a floor under it (93.9% at 0.40.1, the codebase analysis of 0.40.1, 5.7).
+      # 0.42.0: with line coverage and a floor under it (93.9% at 0.40.1, the codebase analysis of 0.40.1, 5.7).
       - run: python -m pytest -W error -n auto --cov=app --cov-report=term:skip-covered --cov-fail-under=92
       - run: ruff check app tests
       - run: ruff format --check app tests
@@ -54,7 +54,7 @@ jobs:
     name: Dependency audit
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    # 0.41.0: known vulnerabilities in the pinned dependencies (the codebase analysis of 0.40.1, 5.7). It reports and
+    # 0.42.0: known vulnerabilities in the pinned dependencies (the codebase analysis of 0.40.1, 5.7). It reports and
     # doesn't block: a new advisory against a pin shouldn't stop a release on its own; bump the pin deliberately.
     continue-on-error: true
     steps:
@@ -84,7 +84,7 @@ jobs:
           --build-arg BUILD_VERSION=ci
           --tag local/ember:ci
           --load
-      # 0.41.0: as the app's user (ember), as the app runs: the libraries need nothing they can't write.
+      # 0.42.0: as the app's user (ember), as the app runs: the libraries need nothing they can't write.
       - name: Make a PDF, Word, Excel and PNG file with the image's libraries
         run: >-
           docker run --rm --platform ${{ matrix.platform }} --user ember --entrypoint python3 local/ember:ci

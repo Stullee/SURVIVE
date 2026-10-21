@@ -1,4 +1,4 @@
-# 0.41.0: an update process for what is pinned (the codebase analysis of 0.40.1, 5.7). Dependabot opens a pull request
+# 0.42.0: an update process for what is pinned (the codebase analysis of 0.40.1, 5.7). Dependabot opens a pull request
 # a week per ecosystem; CI must pass on it like on any change, and the README's release steps still apply.
 version: 2
 updates:

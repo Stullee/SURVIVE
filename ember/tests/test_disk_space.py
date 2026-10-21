@@ -1,4 +1,4 @@
-"""0.41.0: disk space (analysis-0.40.1 codebase, 6.2 "Disk space").
+"""0.42.0: disk space (analysis-0.40.1 codebase, 6.2 "Disk space").
 
 Ember runs on small devices and keeps everything in /data, but its quotas were absolute and blind to the device: 2 GB
 of products and 50 MB of text on a Raspberry Pi's card, while the database grows with every cycle.

@@ -554,7 +554,7 @@ def _database(state: AppState) -> str:
 
 
 def _disk() -> str:
-    """0.41.0 (analysis-0.40.1 codebase, 6.2 disk): the free space on the data folder's disk against the floor that
+    """0.42.0 (analysis-0.40.1 codebase, 6.2 disk): the free space on the data folder's disk against the floor that
     refuses workspace writes and workshop files, and the database's copies kept before its upgrades."""
     disk = paths.storage()
     if disk["free_bytes"] is None:
@@ -631,7 +631,7 @@ def _economy(state: AppState) -> str:
         "totals": {k: micros_to_usd(v) for k, v in books.totals(scope).items()},
         "health": {"lock_held": economy.health.lock_held, "broken": economy.health.broken},
         "warnings": economy.warnings(),
-        # 0.41.0 (analysis-0.40.1 codebase, 6.2 bills): the owner's choices on the uncertain bills, and what is offered
+        # 0.42.0 (analysis-0.40.1 codebase, 6.2 bills): the owner's choices on the uncertain bills, and what is offered
         "standard_usage": standard_usage(state.db),
         "kept_as_charged": state.db.get_meta(KEPT_KEY),
         "uncertain_bills": economy.uncertain_bills(),
@@ -1253,7 +1253,7 @@ def _agent(state: AppState, full: bool = True) -> str:
             {
                 "step": c.step.id,
                 "line": c.step.product,
-                "waiting": f"blocked ({c.refused})" if c.waiting == "blocked" else c.waiting,  # 0.41.0: in its words
+                "waiting": f"blocked ({c.refused})" if c.waiting == "blocked" else c.waiting,  # 0.42.0: in its words
                 "title": c.step.title,
             }
             for c in found
@@ -1270,7 +1270,7 @@ def _agent(state: AppState, full: bool = True) -> str:
             " day's message limit would refuse; 0.38.1: 'sales', a listing, a change of one, a Printify product or"
             " a KDP book the sell requests waiting for the owner would refuse; 0.39.8: 'listing', a weekly pin or"
             " post of a line with no listing of its own, and 'floor', one of a channel at its floor; every one,"
-            " 0.39.8: the first 15 left the KDP book's 'tried' out; 0.41.0: 'blocked', what its tool would refuse"
+            " 0.39.8: the first 15 left the KDP book's 'tried' out; 0.42.0: 'blocked', what its tool would refuse"
             f" now by another rule of its own, in the tool's words. Now: {limits.text()})\n"
             + _rows(waiting, ["step", "line", "waiting", "title"])
         )

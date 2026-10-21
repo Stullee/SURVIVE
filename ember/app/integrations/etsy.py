@@ -90,7 +90,7 @@ class NotSent(EtsyError):
 
 
 class Busy(retry.Busy, NotSent):
-    """0.41.0 (M3): Etsy asked Ember's code to come back later (HTTP 429, or 503 with Retry-After): nothing changed."""
+    """0.42.0 (M3): Etsy asked Ember's code to come back later (HTTP 429, or 503 with Retry-After): nothing changed."""
 
 
 class Unclear(EtsyError):

@@ -292,7 +292,7 @@ class Books:
 
     def uncertain_excess(self, scope: Scope, answered: bool = False, after: int = 0) -> int:
         """What the calls whose bill is uncertain (``answered``: only the answered ones) may have been overcharged,
-        their charge less their known floor, no refund netted; 0.41.0, of the calls after call ``after`` (the owner
+        their charge less their known floor, no refund netted; 0.42.0, of the calls after call ``after`` (the owner
         kept those up to it as charged: the System warning names only the rest)."""
         where, params = scope.where("l")
         read = f" AND {_USAGE_READ}" if answered else ""
@@ -308,7 +308,7 @@ class Books:
         return int(row[0])
 
     def owner_refunds_after(self, scope: Scope, mark: int) -> int:
-        """0.41.0: the refunds of no call (negative API cost corrections) the owner recorded after ledger row
+        """0.42.0: the refunds of no call (negative API cost corrections) the owner recorded after ledger row
         ``mark``."""
         where, params = scope.where()
         with self.db.connection() as conn:

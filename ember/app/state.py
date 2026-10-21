@@ -62,7 +62,7 @@ class AppState:
             "economy_error": self.economy_error,
             "economy_broken": self.economy.health.broken if self.economy is not None else None,
             "agent_error": self.agent_error,
-            "storage": paths.storage(),  # 0.41.0
+            "storage": paths.storage(),  # 0.42.0
         }
 
     def recent_events(self, limit: int = 30) -> list[dict[str, Any]]:

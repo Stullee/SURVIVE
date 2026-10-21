@@ -260,7 +260,7 @@ class Owner:
                 self._check_version(row, data)
                 if row["status"] not in ("approved", "approved_with_changes"):
                     raise OwnerError("id", f"only an approved request can be closed (it is {row['status']})", 409)
-                # 0.41.0 (analysis-0.40.1 codebase, M3): one whose service asked to wait is begun, but nothing changed
+                # 0.42.0 (analysis-0.40.1 codebase, M3): one whose service asked to wait is begun, but nothing changed
                 waits = retry.waiting(conn, approval_id) is not None
                 if row["executor"] == "email":
                     # In the same transaction as the executor's check: either this cancels it or Ember sends it.

@@ -1,7 +1,7 @@
-"""0.41.0 (analysis-0.40.1 codebase, M3): a service that asks Ember's code to come back later, before anything changed.
+"""0.42.0 (analysis-0.40.1 codebase, M3): a service that asks Ember's code to come back later, before anything changed.
 
 Etsy, Pinterest and Bluesky answer HTTP 429 (too many requests) when Ember's code asks too often, and 503 with a
-Retry-After when they are down for a while, and say when to come back. Until 0.41.0 such an answer closed the approval
+Retry-After when they are down for a while, and say when to come back. Until 0.42.0 such an answer closed the approval
 as failed, so the agent had to propose again and the owner to approve again. Now, when it refuses the call that would
 have created or changed something first (nothing changed yet: an Etsy listing's draft, the first change of a live
 listing, a pin on an existing board, a Bluesky post), the request stays approved and waits:

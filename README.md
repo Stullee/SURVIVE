@@ -512,7 +512,7 @@ has 52 blank pages. The shareable report no longer holds the database (it took 2
 seconds with a full mailbox) and also hides phone numbers, IBANs, the KDP author
 and the SFTP login; the website's download counts only once the zip is saved.
 
-0.41.0: the structural changes the codebase analysis of 0.40.1 left for later.
+0.42.0: the structural changes the codebase analysis of 0.40.1 left for later.
 The plan and the tools read each rule from one place, so a step a tool would
 refuse waits (with the tool's words on the Plan tab) instead of costing a cycle;
 notes Ember writes are cut instead of refused; and each work step shows how much
@@ -573,7 +573,7 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   in `ember/app/security.py`.
 - **Least privilege.** `homeassistant_api: false`, `hassio_api: false`, no host
   network, no mapped folders besides the app's own `/data`, no published ports.
-  `ember/tests/test_manifest.py` fails if any of this is loosened. Since 0.41.0
+  `ember/tests/test_manifest.py` fails if any of this is loosened. Since 0.42.0
   the Python process runs as the unprivileged user `ember` (UID and GID 1000),
   not root: the s6 run script, as root, prepares `/data` and then starts Python
   with `s6-setuidgid`. At each start it gives every file in `/data` that isn't
@@ -586,10 +586,10 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
 - **Options can't be changed from inside.** The Supervisor hands every app a
   token that can change the app's own options or uninstall it, even with
   `hassio_api: false`; the s6 run script deletes it before Python starts, from
-  the s6 copy of the environment too (which is root's only since 0.41.0). And
+  the s6 copy of the environment too (which is root's only since 0.42.0). And
   whenever the Python process exits, the whole container stops instead of
   restarting in place, so a restart always goes through the Supervisor, which
-  rewrites `/data/options.json` from the options you saved. Since 0.41.0 the
+  rewrites `/data/options.json` from the options you saved. Since 0.42.0 the
   process can read `/data/options.json` but not change it: the run script
   keeps the file root's (group `ember`, mode 0640) after the Supervisor writes
   it, and `/data` itself is root's too (group `ember`, writable and sticky, mode
@@ -622,7 +622,7 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   password and posts what the owner approved to the account's own server at
   Bluesky, and nowhere else (`ember/app/integrations/bluesky_live.py`).
   All of this runs in-process, so code that got past it would hold what the
-  process holds: since 0.41.0 that is the user `ember` (see Least privilege),
+  process holds: since 0.42.0 that is the user `ember` (see Least privilege),
   which can change Ember's data and read its tokens, but not its options or its
   code; besides `/data` it can write only temporary folders (`/tmp`,
   `/var/tmp`, `/dev/shm`) and its home, which last only as long as the
@@ -637,7 +637,7 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   and the agent hasn't read that email yet, the email waits until it has, and an
   approved email not sent within 7 days of its approval isn't sent at all. A send
   is recorded before it starts and never retried
-  (`ember/app/integrations/executor.py`). 0.41.0: when Etsy, Pinterest or
+  (`ember/app/integrations/executor.py`). 0.42.0: when Etsy, Pinterest or
   Bluesky answers "too many requests" (429, or 503 with Retry-After) before
   anything changed (no draft, no part of a change, no new board, no post), an
   approved listing, change, pin or post stays approved and Ember's code tries it
@@ -702,7 +702,7 @@ of the app's `/data` folder (edit `dev/data/options.json` to change options). Th
 port is bound to localhost only, because the dashboard has no login of its own.
 
 As in Home Assistant, the app runs as the container's user `ember` (UID and GID
-1000), and each start prepares the folder as root (0.41.0): the files in
+1000), and each start prepares the folder as root (0.42.0): the files in
 `dev/data` become owned by UID 1000, `dev/data` itself and `options.json` by
 root (group 1000; `options.json` mode 0640, so the app can read it but not
 change it). So once the app has started, edit `dev/data/options.json` with
