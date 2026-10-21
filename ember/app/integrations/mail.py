@@ -661,19 +661,67 @@ def _too_large(size: int | None, started: bool = False) -> str:
 NO_TEXT = "[This email has no text.]"
 
 
+STUB_CHARS = 300  # 0.40.3: a plain-text part this short that holds few of its HTML part's words only stands in for it
+_WORD = re.compile(r"\w+")
+_LABELLED = ("us-ascii", "ascii", "utf-8", "utf8")  # 0.40.3: the labels 8-bit text that isn't UTF-8 comes under
+
+
 def _body_text(msg: EmailMessage) -> tuple[str, bool]:
     part = msg.get_body(preferencelist=("plain", "html"))
     if part is None:
         return NO_TEXT, False
+    text = _part_text(part)
+    if part.get_content_type() == "text/plain":
+        # 0.40.3 (analysis-0.40.1 codebase, M1): a plain-text part that only stands in for the HTML part (empty, much
+        # shorter, or a mail program's "This message contains HTML") gives way to the HTML part's text: a stop only
+        # there was read by neither the opt-out check nor the agent. A broken HTML part never loses the plain text.
+        with contextlib.suppress(Exception):
+            html = msg.get_body(preferencelist=("html",))
+            other = _part_text(html) if html is not None else None
+            if other and _stub(text or "", other):
+                text = other
+    if text is None:
+        return NO_TEXT, False
+    text, cut = fit_text(text)
+    return text or NO_TEXT, cut
+
+
+def _part_text(part: Message) -> str | None:
+    """A text part's text (an HTML part's visible text), or None. 0.40.3 (analysis-0.40.1 codebase, M1): 8-bit text
+    that isn't UTF-8 at all, under an unknown charset, none (US-ASCII) or UTF-8, is read as Windows-1252 (Latin-1's
+    superset): its umlauts were replacement characters, and a "stop" written with them was missed."""
     try:
         content = part.get_content()
     except (LookupError, ValueError, AssertionError):  # an unknown charset or a broken encoding
-        payload = part.get_payload(decode=True)
-        content = payload.decode("utf-8", "replace") if isinstance(payload, bytes) else str(payload or "")
+        content = _eight_bit(part.get_payload(decode=True))
+    else:
+        if isinstance(content, str) and "\ufffd" in content and (part.get_content_charset() or "us-ascii") in _LABELLED:
+            content = _eight_bit(part.get_payload(decode=True))
     if not isinstance(content, str):
-        return NO_TEXT, False
-    text, cut = fit_text(html_to_text(content) if part.get_content_type() == "text/html" else clean_text(content))
-    return text or NO_TEXT, cut
+        return None
+    return html_to_text(content) if part.get_content_type() == "text/html" else clean_text(content)
+
+
+def _eight_bit(payload: Any) -> str:
+    """0.40.3: a part's bytes as UTF-8, or as Windows-1252 when no character of them is UTF-8 (a text with some UTF-8
+    in it keeps it, and its replacement characters)."""
+    if not isinstance(payload, bytes):
+        return str(payload or "")
+    text = payload.decode("utf-8", "replace")
+    if "\ufffd" in text and all(char == "\ufffd" for char in text if ord(char) > 127):
+        return payload.decode("cp1252", "replace")
+    return text
+
+
+def _stub(plain: str, html: str) -> bool:
+    """0.40.3 (analysis-0.40.1 codebase, M1): whether a plain-text part only stands in for the HTML part's text:
+    empty, a quarter of its length or less, or short and holding less than half of its words."""
+    if not plain.strip() or len(plain) * 4 <= len(html):
+        return True
+    if len(plain) > STUB_CHARS:
+        return False
+    words = set(_WORD.findall(html.casefold()))
+    return bool(words) and len(words & set(_WORD.findall(plain.casefold()))) * 2 < len(words)
 
 
 LEFT_OUT = "[...]"  # 0.39.7: in an email's kept text, where lines it quotes were left out (fit_text)

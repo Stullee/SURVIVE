@@ -4265,7 +4265,7 @@ def _email_inbox(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
 
 
 def _email_read(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
-    _mail(ctx)
+    box = _mail(ctx)
     row = mailstore.email(conn, ctx.scope, args["email_id"])
     if row is None:
         raise ToolError(f"there is no email #{args['email_id']}")
@@ -4298,12 +4298,20 @@ def _email_read(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
             else "Not a verified person's (an unverified sender, a list or a machine): no obligation, and it doesn't"
             " count as them having written."
         )
+        waited: list[int] = []
         if row["read_by_agent_at"] is None:
+            # 0.40.3 (analysis-0.40.1 codebase, M1): the approved emails that waited for this one to be read
+            waited = [request for request, _, held in mailstore.held(conn, ctx.scope, box.address) if held == row["id"]]
             mailstore.mark_read(conn, row["id"], ctx.now(), ctx.cycle_id)
         if mailstore.is_suppressed(conn, ctx.scope, row["from_addr"]):
             more += "\nThis sender asked not to get emails: never write to them again."
         else:
             more += f"\nTo answer it, use propose_email with reply_to_email_id {row['id']}."
+            if waited:
+                more += (
+                    f"\nYour approved email of request #{waited[0]} waited for you to read this: if it asks not to be"
+                    " emailed, use mark_opt_out now; otherwise it can go out."
+                )
     source = f"email:{row['id']}"
     return Outcome(True, f"{lead}\n{wrap(ctx, source, text)}{more}", f"read email #{row['id']}")
 

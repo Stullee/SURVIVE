@@ -57,6 +57,7 @@ RESEARCH_CHARS = 200  # of each question and digest
 # Ember's mailbox (only when it has one): its address and the newest unread emails, sender and subject quoted.
 MAIL_BUDGET = 600
 MAIL_SHOWN = 3
+MAIL_HELD = 2  # 0.40.3 (analysis-0.40.1 codebase, M1): approved emails held by an unread reply, named in MAIL
 # The owner's rulebook (0.36.0, in place of the standing instructions, 1,500 characters in one text): their rules, at
 # most 1,500 characters together, one a line with its number, JSON-quoted, in every plan and work step.
 RULES_HEADING = "YOUR OWNER'S RULEBOOK"
@@ -231,6 +232,7 @@ class MailView:
     address: str
     unread: int = 0
     newest: tuple[tuple[int, str, str], ...] = ()
+    held: tuple[tuple[int, str, int], ...] = ()  # 0.40.3: (request, recipient, email) of mailstore.held
 
 
 @dataclass
@@ -350,7 +352,8 @@ def snapshot(
     mail = None
     if mail_address is not None:
         unread, newest = mailstore.unread(conn, scope, MAIL_SHOWN)
-        mail = MailView(mail_address, unread, tuple((r["id"], r["from_addr"], r["subject"]) for r in newest))
+        held = tuple(mailstore.held(conn, scope, mail_address))  # 0.40.3 (M1)
+        mail = MailView(mail_address, unread, tuple((r["id"], r["from_addr"], r["subject"]) for r in newest), held)
     money: dict[int, tuple[int, int]] = {}
     for p in projects:
         spent = conn.execute(
@@ -851,10 +854,17 @@ def mail_text(s: Snapshot) -> str:
         return ""
     m = s.mail
     head = f"Your address: {m.address}. " + (f"{m.unread} unread; newest:" if m.unread else "No unread email.")
+    # 0.40.3 (analysis-0.40.1 codebase, M1): first, so a cut never takes them: an approved email waits for the agent to
+    # read its recipient's newer email (executor.REPLIED)
+    held = [
+        f"Your approved email of request #{request} to {_quote(_start(to, 80))} waits until you read email #{email}"
+        " (email_read): if it asks not to be emailed, mark_opt_out."
+        for request, to, email in m.held[:MAIL_HELD]
+    ]
     lines = [
         f"#{i} from {_quote(_start(sender, 80))} {_quote(_start(subject, 100))}" for i, sender, subject in m.newest
     ]
-    return "\n".join([head, *lines])
+    return "\n".join([head, *held, *lines])
 
 
 def mail_section(s: Snapshot) -> list[tuple[str, str]]:

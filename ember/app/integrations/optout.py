@@ -12,11 +12,16 @@ or "now", not a question), when the subject is one, or when one of its lines or 
 stop." was missed), and more phrases count; 0.39.5: the first lines of each part of their own words, the part below
 a quote too, and (0.39.7) below a quote of any length. A false alarm only means Ember doesn't write to that sender
 again (they can write first); a miss would break the law (GDPR Art. 21, UWG § 7), so the phrases lean towards asking.
-The agent marks what this misses (mark_opt_out), and the owner can add any address.
+The agent marks what this misses (mark_opt_out), and the owner can add any address. 0.40.3 (analysis-0.40.1 codebase,
+M1): more phrasings ("mich nicht mehr zu kontaktieren", "unterlassen Sie ... Kontaktaufnahme", "sehen Sie von weiteren
+E-Mails ab", "do not reach out to me again", "please remove"), a mail gateway's tag before the subject ("[EXTERNAL]")
+is left out, and a line's link or "[" hides only the phrase in its own sentence (_INSTRUCTION); and an approved email
+waits until the agent has opened its recipient's newer email (executor.REPLIED), so what this misses is read first.
 """
 
 from __future__ import annotations
 
+import bisect
 import re
 import unicodedata
 
@@ -103,10 +108,35 @@ _PHRASES = re.compile(
     r"stop sending(?: me)?(?: (?:these|those|this|them|that|it))?(?= *(?:[.!,;]|$))|"
     r"no (?:more|further) (?:e-?mails?|mails?|messages?|contact)|"
     r"object to (?:the )?(?:processing|use) of my|"
+    # 0.40.3 (analysis-0.40.1 codebase, M1): "do not reach out to me again", "I'd prefer not to receive any further
+    # emails", "please remove us", "not interested, please remove", "cease all contact"
+    r"(?:(?:do not|don'?t|dont|never) reach|(?:please|kindly) stop reaching) out(?: to (?:me|us))?"
+    r"(?: (?:again|any ?more)\b|(?: in (?:the )?future)?(?= *(?:[.!,;]|$)))|"
+    r"(?:(?:prefer|like|want|wish) not to|rather not) (?:receive|get) "
+    r"(?:any (?:further |more )?|further |more |these |such |your )(?:e-?mails?|mails?|messages?|newsletters?"
+    r"|communications?)|"
+    r"please remove(?: (?:me|us)\b|(?= *(?:[.!,;]|$)))|(?:remove|take) us(?: off)?(?= *(?:[.!,;]|$))|"
+    r"cease (?:all |any )?(?:further )?(?:contact|communications?|e-?mails?|e-?mailing|messages?)\b|"
     # German
     r"abmelden|abmeldung|abbestell\w*|austragen|"
-    r"keine (?:weiteren |weitere )?(?:e-?mails?|mails?|nachrichten|werbung|newsletter)(?: mehr)?\b|"
-    r"nicht mehr (?:an)?(?:schreiben|kontaktieren|mailen|anmailen)|"
+    r"keine (?:weiteren |weitere )?(?:e-?mails?|mails?|nachrichten|werbung|newsletter|kontaktaufnahmen?"
+    r"|zusendungen?)(?: mehr)?\b|"
+    # 0.40.3 (analysis-0.40.1 codebase, M1): "keine weitere Kontaktaufnahme" (above), "keinen weiteren Kontakt"
+    r"(?:keine (?:weitere )?kommunikation|keinen (?:weiteren kontakt|kontakt mehr))(?: mehr)?(?= *(?:[.!,;]|$))|"
+    # 0.40.3 (analysis-0.40.1 codebase, M1): with "zu" ("mich nicht mehr zu kontaktieren", "mir nicht mehr zu
+    # schreiben", "nicht mehr anzuschreiben")
+    r"nicht mehr (?:zu )?(?:an(?:zu)?)?(?:schreiben|kontaktieren|mailen)|"
+    # 0.40.3: "unterlassen Sie künftig jede weitere Kontaktaufnahme", "weitere E-Mails zu unterlassen", "sehen Sie
+    # von weiteren E-Mails ab", "von weiteren Kontaktaufnahmen abzusehen", "sehen Sie davon ab, mir zu schreiben"
+    r"unterlassen sie\b[^.!?;]{0,40}?\b(?:kontakt\w*|e-?mails?|mails?|nachrichten|zusendung\w*|werbung)|"
+    r"(?:kontakt\w*|e-?mails?|mails?|nachrichten|zusendung\w*) (?:zu )?unterlassen\b|"
+    r"sehen sie (?:bitte )?(?:kunftig |zukunftig |in zukunft )?von (?:weiteren |jeglichen |kunftigen "
+    r"|jeder (?:weiteren )?)?(?:e-?mails?|mails?|nachrichten|kontakt\w*|zusendung\w*|anschreiben|werbung)"
+    r"(?: an (?:mich|uns))? ab(?= *(?:[.!,;]|$))|"
+    r"von (?:weiteren |jeglichen |kunftigen |jeder (?:weiteren )?)?(?:e-?mails?|mails?|nachrichten|kontakt\w*"
+    r"|zusendung\w*|anschreiben|werbung)(?: an (?:mich|uns))? abzusehen\b|"
+    r"sehen sie (?:bitte )?davon ab,? (?:mir|mich|uns) (?:weiter(?:hin)? |noch )?(?:zu (?:schreiben|kontaktieren"
+    r"|mailen)|anzuschreiben|anzumailen)\b|"
     r"(?:schreiben|mailen|kontaktieren) sie mich (?:bitte )?nicht|"
     r"(?:schreiben sie|mailen sie|schreib|schreibt|mail|mailt) mir (?:bitte )?nicht mehr|"
     r"(?:melden sie|meldet) mich (?:bitte )?(?:hier |davon |dort )?ab\b|"
@@ -161,6 +191,14 @@ _INSTRUCTION = re.compile(
     r"\bpour vous desinscrire|\bpara (?:darte|darse|darme) de baja"
 )
 _SUBJECT_PREFIX = re.compile(r"^(?:(?:re|aw|wg|fwd?|antw|sv|rv|r|tr)\s*:\s*)+")
+# 0.40.3 (analysis-0.40.1 codebase, M1): the tags a mail gateway puts before a subject ("[EXTERNAL] STOP", "[Ext]",
+# "EXTERN: Stopp", "***SPAM***"), and the prefixes after them; a subject that is only a tag ("[STOP]") keeps it
+_SUBJECT_TAGS = re.compile(
+    r"^(?:(?:\[[^\[\]]{1,40}\]|\*{1,3}[^*]{1,30}\*{1,3}|(?:extern\w*|ext|caution|warnung|achtung|spam)\s*:)\s*"
+    r"(?:(?:re|aw|wg|fwd?|antw|sv|rv|r|tr)\s*:\s*)*)+"
+)
+# 0.40.3: where a sentence ends within a line (_INSTRUCTION judges the sentence a phrase is in, not its whole line)
+_SENTENCE_END = re.compile(r"[.!?;](?=\s|$)")
 _PUNCTUATION = re.compile(r"[^\w' -]")
 
 
@@ -214,10 +252,29 @@ def _asks_alone(plain: str) -> bool:
     return short and not _STOP.isdisjoint(words) and words <= _STOP | _WITH_STOP
 
 
+def _topic(subject: str | None) -> str:
+    """A subject, plain, without its prefixes ("Re:", "AW:") and (0.40.3) a mail gateway's tags before them."""
+    topic = _SUBJECT_PREFIX.sub("", _plain(subject or ""))
+    untagged = _SUBJECT_TAGS.sub("", topic)
+    return untagged if _bare(untagged) else topic
+
+
+def _asks(plain: str) -> bool:
+    """Whether a line holds a phrase that asks, in a sentence that doesn't tell the reader how to unsubscribe
+    (_INSTRUCTION). 0.40.3 (analysis-0.40.1 codebase, M1): judged on the phrase's sentence: on the whole line, "Please
+    don't email me again. Our policy: https://..." read as a newsletter's footer, and the stop was missed."""
+    ends = [0, *(m.end() for m in _SENTENCE_END.finditer(plain)), len(plain)]
+    for match in _PHRASES.finditer(plain):
+        first, last = bisect.bisect_right(ends, match.start()) - 1, bisect.bisect_left(ends, match.end())
+        if not _INSTRUCTION.search(plain[ends[first] : ends[last]]):  # the sentence (or two) the phrase is in
+            return True
+    return False
+
+
 def opt_out(subject: str | None, body: str | None) -> str | None:
     """The words in which an email asks not to be emailed again (its line that does, or its subject), or None."""
     parts = own_parts(body or "")
-    topic = _SUBJECT_PREFIX.sub("", _plain(subject or ""))
+    topic = _topic(subject)
     for part in parts:  # 0.39.5: each part's, a reply's below the quote too (only the email's first lines counted)
         counted = 0
         for written, plain in part:  # the first lines, a greeting aside (0.15.0: only the first line counted)
@@ -231,6 +288,6 @@ def opt_out(subject: str | None, body: str | None) -> str | None:
     if _bare(topic) in _ALONE:
         return (subject or "").strip()[:REASON_CHARS]
     for written, plain in lines:
-        if _PHRASES.search(plain) and not _INSTRUCTION.search(plain):
+        if _asks(plain):
             return written[:REASON_CHARS]
     return (subject or "").strip()[:REASON_CHARS] if _PHRASES.search(topic) else None

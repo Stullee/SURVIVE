@@ -9,6 +9,7 @@ connection and run inside its transaction.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import sqlite3
@@ -453,6 +454,59 @@ def mark_read(conn: sqlite3.Connection, email_id: int, now: str, cycle_id: int) 
         "UPDATE emails SET read_by_agent_at = ?, seen_cycle_id = ? WHERE id = ? AND read_by_agent_at IS NULL",
         (now, cycle_id, email_id),
     )
+
+
+def unread_reply(
+    conn: sqlite3.Connection, scope: Scope, since: str, to: str, thread: str | None, own: str = ""
+) -> int | None:
+    """0.40.3 (analysis-0.40.1 codebase, M1): the first email the agent hasn't opened that came in after ``since``
+    (an approved email's request) from its recipient ``to``, or in its thread: one that answers (In-Reply-To or
+    References) a message of ``thread`` (the approved email's own headers) or an email Ember sent to ``to`` (not one
+    from Ember's ``own`` address). None: there is none, and the approved email may go out. Until then only the
+    opt-out check read such a reply, and a "stop" in words it missed went unseen."""
+    where, params = scope.where()
+    sent = conn.execute(
+        f"SELECT message_id FROM emails WHERE {where} AND direction = 'out' AND lower(to_addr) = ?"
+        " AND message_id IS NOT NULL",
+        (*params, to.lower()),
+    )
+    ids = {*_REFERENCE.findall(thread or ""), *(str(r[0]) for r in sent)}
+    for row in conn.execute(
+        f"SELECT id, from_addr, in_reply_to, references_ FROM emails WHERE {where} AND direction = 'in'"
+        " AND read_by_agent_at IS NULL AND received_at > ? ORDER BY id",
+        (*params, since),
+    ):
+        sender = str(row["from_addr"] or "").lower()
+        answers = set(_REFERENCE.findall(f"{row['in_reply_to'] or ''} {row['references_'] or ''}"))
+        if sender == to.lower() or (sender != own.lower() and answers & ids):
+            return int(row["id"])
+    return None
+
+
+def held(conn: sqlite3.Connection, scope: Scope, own: str = "") -> list[tuple[int, str, int]]:
+    """0.40.3 (analysis-0.40.1 codebase, M1): the approved emails not begun that wait for the agent to open a newer
+    email of their recipient (``unread_reply``): (request, recipient, email), the oldest request first."""
+    where, params = scope.where()
+    waiting = conn.execute(
+        f"SELECT id, created_at, action FROM approvals WHERE {where} AND executor = 'email'"
+        " AND status IN ('approved', 'approved_with_changes')"
+        " AND NOT EXISTS (SELECT 1 FROM email_actions x WHERE x.approval_id = approvals.id) ORDER BY id",
+        params,
+    ).fetchall()
+    found = []
+    for row in waiting:
+        try:
+            action = json.loads(row["action"] or "null")
+        except ValueError:
+            continue
+        to = action.get("to") if isinstance(action, dict) else None
+        if not isinstance(to, str) or not to:
+            continue
+        thread = f"{action.get('in_reply_to') or ''} {action.get('references') or ''}"
+        email_id = unread_reply(conn, scope, str(row["created_at"]), to, thread, own)
+        if email_id is not None:
+            found.append((int(row["id"]), to, email_id))
+    return found
 
 
 def last_fetch(db: Database, mode: str) -> tuple[str | None, str | None]:

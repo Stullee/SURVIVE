@@ -9,7 +9,9 @@ first:
    approvals, at most FRESH_MINUTES ago, read it through (``_unread``): a reply asking to stop is seen before
    anything goes out. While it can't be read, every email waits. The mailbox went unread for hours while the
    kill switch was on, the app was down or reading failed, and the first round after that sent before it read.
-3. A recipient who asked not to get emails: the request is closed as failed.
+3. A recipient who asked not to get emails: the request is closed as failed. 0.40.3: one who wrote again after the
+   request, in an email the agent hasn't opened, waits until it has (``mailstore.unread_reply``), and one approved
+   more than APPROVED_DAYS ago that never began is closed unsent (analysis-0.40.1 codebase, M1 and M2).
 4. The email is built from the approved action (the owner's text if approved with changes), with a footer
    the model can't remove: plain text, one recipient, no copies, no attachments.
 5. A 'running' row in ``email_actions`` is committed before anything is sent, and the approval is re-checked
@@ -63,6 +65,23 @@ UNREAD = (
     "Ember's mailbox {why}, and a reply asking not to be emailed may wait there: it goes out once the mailbox is read"
 )
 WAITING_MAIL = "waiting_mail"  # 0.37.3: a run's outcome while the approved emails wait for the mailbox to be read
+# 0.40.3 (analysis-0.40.1 codebase, M1): an approved email waits while its recipient's newer email, received after the
+# request, is unopened by the agent (mailstore.unread_reply): the opt-out check alone read it, and a "stop" in words it
+# missed went out unseen ("ich möchte Sie bitten, mich nicht mehr zu kontaktieren"). Once the agent has read it, it
+# marks a stop the check missed (mark_opt_out), and the email is never sent; else it goes out.
+REPLIED = (
+    "The recipient wrote again (email #{email_id}) after this was asked for, and the agent hasn't read it yet: it may"
+    " ask not to be emailed, so this goes out once the agent has read it"
+)
+WAITING_REPLY = "waiting_reply"  # 0.40.3: a run's outcome for an approved email REPLIED holds
+# 0.40.3 (analysis-0.40.1 codebase, M2): an approved email not begun within this many days of its approval (a pause, a
+# wait for money, the daily limit, the kill switch or an unread reply held it) is closed unsent: on Resume after 21
+# days paused, one approved before went out at once, to someone who may have long moved on
+APPROVED_DAYS = 7
+STALE = (
+    "it didn't go out within {days} days of its approval (Ember was paused, or it waited for money, the daily limit or"
+    " an email to be read), so it may no longer fit: it takes a new request if it still does"
+)
 
 
 def _cap(text: str | None, limit: int) -> str | None:
@@ -144,10 +163,25 @@ def waiting(conn: sqlite3.Connection, scope: AgentScope) -> int:
     return int(row[0])
 
 
+def unread_reply(
+    conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row, action: dict[str, Any], own: str = ""
+) -> int | None:
+    """0.40.3 (analysis-0.40.1 codebase, M1): the recipient's newer email the agent hasn't opened that holds this
+    approved email (``row``, its ``action``), or None."""
+    thread = f"{action.get('in_reply_to') or ''} {action.get('references') or ''}"
+    return mailstore.unread_reply(conn, scope, str(row["created_at"]), action["to"], thread, own)
+
+
 def execution(
-    conn: sqlite3.Connection, row: sqlite3.Row, scope: AgentScope, clock: Clock, daily_limit: int
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    scope: AgentScope,
+    clock: Clock,
+    daily_limit: int,
+    own: str = "",
 ) -> dict[str, Any] | None:
-    """What happened to an approved email, for the dashboard (None for other requests, or before approval)."""
+    """What happened to an approved email, for the dashboard (None for other requests, or before approval). ``own``:
+    Ember's address (0.40.3: an email of its own in the thread holds nothing)."""
     if row["executor"] != "email":
         return None
     action = conn.execute("SELECT * FROM email_actions WHERE approval_id = ?", (row["id"],)).fetchone()
@@ -165,6 +199,10 @@ def execution(
     failed = conn.execute("SELECT value FROM meta WHERE key = ?", (mailstore.meta_key(scope.mode, "last_error"),))
     error = (failed.fetchone() or [""])[0]  # 0.37.3: while the mailbox can't be read, it waits (Executor._unread)
     held = UNREAD.format(why=f"can't be read ({error})") if status == "waiting" and error else None
+    if status == "waiting" and held is None:  # 0.40.3 (M1): or while the recipient's newer email is unread
+        with contextlib.suppress(ValueError):
+            email_id = unread_reply(conn, scope, row, parse_action(row["action"]), own)
+            held = REPLIED.format(email_id=email_id) if email_id is not None else None
     return {"status": status, "started_at": None, "finished_at": None, "result": held, "error": None}
 
 
@@ -255,6 +293,7 @@ class Executor:
                 done.append((approval_id, outcome))
                 if outcome in ("waiting_limit", connectors.HALTED):
                     break  # the rest waits too, in order (for tomorrow, or 0.37.3 the kill switch's reset)
+                # 0.40.3 (M1): WAITING_REPLY holds this one only: an email to someone else may go out
             return done
         finally:
             self._lock.release()
@@ -295,6 +334,8 @@ class Executor:
                 return "skipped"  # cancelled or decided meanwhile
             if connectors.halted(conn):
                 return connectors.HALTED  # 0.37.3: the kill switch came on while this round sent
+            if row["decided_at"] and now - from_iso(row["decided_at"]) > timedelta(days=APPROVED_DAYS):
+                return self._failed(conn, approval_id, STALE.format(days=APPROVED_DAYS))  # 0.40.3 (M2): too old
             if sent_today(conn, self.clock, scope) >= self.settings.email_daily_limit:
                 return "waiting_limit"
             try:
@@ -306,6 +347,11 @@ class Executor:
             except ValueError as exc:
                 self._start(conn, approval_id, stamp, None)
                 return self._failed(conn, approval_id, f"the approved email can't be sent: {exc}")
+            # 0.40.3 (analysis-0.40.1 codebase, M1): it waits while its recipient's newer email is unread by the agent
+            # (a recipient who asked to stop is closed below)
+            unasked = not mailstore.is_suppressed(conn, scope, action["to"])
+            if unasked and unread_reply(conn, scope, row, action, self.mailbox.address) is not None:
+                return WAITING_REPLY
             self._start(conn, approval_id, stamp, message_id, action["to"])
             if mailstore.is_suppressed(conn, scope, action["to"]):
                 return self._failed(conn, approval_id, SUPPRESSED)

@@ -2018,6 +2018,16 @@ included: encrypt your backups.
   read that fails while it stores the emails (it raised past the record, so
   the card said only "waiting"), and the listings, pins, posts, products and
   uploads you approved go out meanwhile: each kind on its own.
+- Since 0.40.3 an approved email also waits while its recipient wrote again
+  after it was asked for (from their address, or in its thread) and the agent
+  hasn't opened that email yet: it may ask to stop in words Ember's code
+  misses. Its card says so, and the agent is told in its next cycle. Once the
+  agent has read it, it marks such a stop (then the email is never sent), or
+  the email goes out. An approved email that hasn't gone out 7 days after your
+  approval (Ember was paused, or it waited for money, the daily limit or an
+  email to be read) isn't sent any more: Ember closes it as not sent, with
+  why, and the agent asks again if it still fits (until 0.40.3 it went out on
+  Resume, weeks late).
 - Ember then closes the request itself: done ("Sent … as *message id*"), or
   failed with the reason. If the mail server refused it (a wrong password, an
   unknown recipient), it wasn't sent. If the connection broke while the email
@@ -2040,7 +2050,15 @@ included: encrypt your backups.
   email also covers the address Ember wrote to, if someone else answered
   (0.15.0). A newsletter's or an automatic reply's "unsubscribe" doesn't
   count, unless it answers Ember's email (0.21.0: a "stop" sent through a
-  group or a mailing list was ignored).
+  group or a mailing list was ignored). Since 0.40.3 more phrasings count
+  ("mich nicht mehr zu kontaktieren", "unterlassen Sie … jede weitere
+  Kontaktaufnahme", "sehen Sie von weiteren E-Mails ab", "do not reach out to
+  me again", "please remove"), a mail gateway's tag before the subject
+  ("[EXTERNAL] STOP") doesn't hide it, a link elsewhere in the same line no
+  longer does either (only one in the stop's own sentence marks a
+  newsletter's footer), the HTML part is read when the plain-text part is
+  empty or only stands in for it, and text in an unknown charset (or none)
+  that isn't UTF-8 is read as Windows-1252, not as replacement characters.
   An email Ember can't read (one nested deeper or with more parts than any
   real email, or one the parser fails on) is stored with its headers only, and
   a "stop" in its subject still counts (0.21.0: one such email stopped Ember
