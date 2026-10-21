@@ -482,6 +482,7 @@ def _margins(ink: Ink, size: tuple[Decimal, Decimal], inside: Decimal) -> list[s
     outside, gutter = float(OUTSIDE_MARGIN), float(inside)
     found: list[str] = []
     count = 0
+    bottom_only = True  # 0.40.3: every page found prints within its bottom margin alone
     for number, box in enumerate(ink, 1):
         if box is None:
             continue
@@ -500,12 +501,22 @@ def _margins(ink: Ink, size: tuple[Decimal, Decimal], inside: Decimal) -> list[s
         ]
         if sides:
             count += 1
+            bottom_only = bottom_only and sides == ["bottom"]
             if len(found) < 3:
                 named = ", ".join(sides[:-1]) + " and " + sides[-1] if len(sides) > 1 else sides[0]
                 found.append(f"page {number} prints within its {named} margin{'s' if len(sides) > 1 else ''}")
     if not count:
         return []
     more = f" ({count} pages in all)" if count > len(found) else ""
+    if bottom_only:
+        # 0.40.3 (analysis-0.40.1 codebase, PR3): what prints there in a book of make_document's is its footer (its
+        # text keeps a margin and the footer's space above it). At a 10 mm margin the footer printed 6.0 mm from the
+        # edge, and the advice was the 10 mm margin the book already had
+        return [
+            "; ".join(found) + more + f": without bleed KDP keeps {inches(outside)} free at the bottom edge, where "
+            "a book's footer (its page number) prints: render the book again with make_document, which keeps a book's "
+            "footer clear of it at any margin, or leave the footer out"
+        ]
     return [
         "; ".join(found) + more + f": without bleed KDP keeps {inches(outside)} free at the top, bottom and outside "
         f"edge and {inches(gutter)} at the inside edge for this many pages (make_document: a margin of at least "

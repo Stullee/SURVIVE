@@ -567,7 +567,12 @@ agent's workspace:
   each column still at least as wide as its longest word), and a book names a
   column to write words in (a header word of 4 letters or more) that comes out
   under 13 mm: the Kassenbuch's "Text", where each entry is described, was 12 mm
-  wide on 48 pages, and nothing could widen it.
+  wide on 48 pages, and nothing could widen it. Since 0.40.3 a page break in
+  the Word copy starts the next paragraph's page, also beside a sidebar: a break
+  of its own ran on to a blank page after fill lines (an 83-page planner had 135
+  pages in Word), and a sidebar's Word copy had none (a 2-page CV, 1 page). A
+  `::: pagebreak` inside a box is refused (it printed two layers of text), and a
+  book's footer keeps KDP's 0.25 in from the bottom edge at any margin.
 - **Spreadsheets** (`make_spreadsheet`): a JSON description becomes an Excel
   file with formats, dropdowns, formulas, totals, a chart and a *How to use*
   sheet, plus a picture of each sheet, drawn since 0.37.5 from the file itself:
@@ -3056,9 +3061,11 @@ own account. Ember never logs in to Amazon or reads its pages.
   same places are one kind, every week of a planner), the page with its AI line
   and its last page, at most 6, or the pages the agent names. Ember's code
   measures every page: the blank rows to write in (lower than 5 mm is too low),
-  white space over a quarter of a page between what it prints, the dates it
+  white space over a quarter of a page between what it prints (since 0.40.3,
+  without a footer, under it too, down to the bottom margin), the dates it
   prints (a date that doesn't exist, a weekday that isn't its date's, a week
-  whose label or days aren't that calendar week, Monday to Sunday by ISO, or a
+  whose label or days aren't that calendar week, each of its 7 days once since
+  0.40.3 (a Saturday twice and no Sunday passed), Monday to Sunday by ISO, or a
   US week from Sunday in an English book, and a week missing between the first
   and the last) and its AI line (where, and how little else shares its page).
   With them come a checklist (white space, rows to write in, calendar weeks,

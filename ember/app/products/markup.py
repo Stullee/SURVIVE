@@ -547,6 +547,14 @@ class _Parser:
             self._emit(Space(_at(number, lambda: _number("space", rest or "5", 0, MAX_SPACE_MM))), number)
             return
         if name == "pagebreak":
+            # 0.40.3 (analysis-0.40.1 codebase, PR5): a box is drawn on one page, its background measured first, so a
+            # break inside it put the box's rest on the next page while the page went on below the box: two layers
+            # of text where the main text reached that page
+            if any(frame.kind == "box" for frame in self.stack):
+                raise DocumentError(
+                    f"line {number}: '::: pagebreak' starts a new page, and a box is never split across pages, so it "
+                    "belongs outside the box: end the box with ':::' before it (or make two boxes)"
+                )
             self._emit(PageBreak(), number)
             return
         raise DocumentError(

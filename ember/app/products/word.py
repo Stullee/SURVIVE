@@ -15,11 +15,11 @@ import re
 from docx import Document as new_document
 from docx.enum.section import WD_ORIENT
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_ROW_HEIGHT_RULE, WD_TABLE_ALIGNMENT
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK, WD_LINE_SPACING
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.opc.constants import RELATIONSHIP_TYPE
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Mm, Pt, RGBColor
+from docx.shared import Emu, Mm, Pt, RGBColor
 
 from . import fonts
 from .markup import (
@@ -149,6 +149,7 @@ class Writer:
         self.theme: Theme = resolve(document.settings)
         self.doc = new_document()
         self.fresh: set[object] = set()  # cells (their w:tc) whose first, empty paragraph is still unused
+        self.page_break = False  # 0.40.3: a '::: pagebreak' the next paragraph of the document's body starts a page for
 
     def _table(self, container, rows: int, cols: int, widths: list[float]):  # noqa: ANN001, ANN202 - docx objects
         tc = getattr(container, "_tc", None)
@@ -156,6 +157,8 @@ class Writer:
             self.fresh.discard(tc)
             first = container.paragraphs[0]._p
             first.getparent().remove(first)
+        if container is self.doc and self.page_break:  # 0.40.3: a table can't start a page; a paragraph 1 pt high does
+            self._hairline(self._paragraph(container))
         table = container.add_table(rows=rows, cols=cols)
         table.autofit = False
         table.alignment = WD_TABLE_ALIGNMENT.LEFT
@@ -244,27 +247,29 @@ class Writer:
         section.footer_distance = Mm(4)
         side, main = t.sidebar_width, t.page_width - t.sidebar_width
         widths = [side, main] if t.sidebar == "left" else [main, side]
-        table = self._table(self.doc, 1, 2, widths)
-        _no_borders(table)
-        row = table.rows[0]
-        row.height = Mm(t.page_height - (12 if footer else 2))  # a hair short: Word adds a paragraph after it
-        row.height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
-        side_cell, main_cell = (row.cells[0], row.cells[1]) if t.sidebar == "left" else (row.cells[1], row.cells[0])
-        _cell_shade(side_cell, t.sidebar_background)
-        _cell_margins(side_cell, t.margin, SIDEBAR_PADDING, t.margin, SIDEBAR_PADDING)
-        _cell_margins(main_cell, t.margin, t.margin, t.margin, t.margin)
-        for cell in (side_cell, main_cell):
-            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
-            self.fresh.add(cell._tc)
-        self.blocks(main_cell, self.source.main, self._main_look(), main - 2 * t.margin)
-        self.blocks(
-            side_cell, self.source.sidebar, (t.sidebar_text, t.sidebar_text, "left"), side - 2 * SIDEBAR_PADDING
-        )
+        # 0.40.3 (analysis-0.40.1 codebase, PR6): a table for each page the main text or the sidebar starts with a
+        # '::: pagebreak', on a page of its own (a page break in a cell is none): the main text sat in one cell, and a
+        # 2-page CV's Word copy had 1 page
+        mains, sides = _pages(self.source.main), _pages(self.source.sidebar)
+        for index in range(max(len(mains), len(sides))):
+            self.page_break = index > 0
+            table = self._table(self.doc, 1, 2, widths)
+            _no_borders(table)
+            row = table.rows[0]
+            row.height = Mm(t.page_height - (12 if footer else 2))  # a hair short: Word adds a paragraph after it
+            row.height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
+            side_cell, main_cell = (row.cells[0], row.cells[1]) if t.sidebar == "left" else (row.cells[1], row.cells[0])
+            _cell_shade(side_cell, t.sidebar_background)
+            _cell_margins(side_cell, t.margin, SIDEBAR_PADDING, t.margin, SIDEBAR_PADDING)
+            _cell_margins(main_cell, t.margin, t.margin, t.margin, t.margin)
+            for cell in (side_cell, main_cell):
+                cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
+                self.fresh.add(cell._tc)
+            self.blocks(main_cell, mains[index] if index < len(mains) else [], self._main_look(), main - 2 * t.margin)
+            sidebar = sides[index] if index < len(sides) else []
+            self.blocks(side_cell, sidebar, (t.sidebar_text, t.sidebar_text, "left"), side - 2 * SIDEBAR_PADDING)
         # The paragraph Word keeps after a table: as small as possible, so it can't push out a blank page.
-        last = self.doc.add_paragraph()
-        last.paragraph_format.space_after = Pt(0)
-        last.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
-        last.paragraph_format.line_spacing = Pt(1)
+        self._hairline(self.doc.add_paragraph())
 
     def _footer(self, section, text: str) -> None:  # noqa: ANN001
         paragraph = section.footer.paragraphs[0]
@@ -302,7 +307,11 @@ class Writer:
             if style:
                 paragraph.style = self.doc.styles[style]
             return paragraph
-        return container.add_paragraph(style=style)
+        paragraph = container.add_paragraph(style=style)
+        if container is self.doc and self.page_break:  # 0.40.3 (PR1): it starts the page
+            self.page_break = False
+            paragraph.paragraph_format.page_break_before = True
+        return paragraph
 
     def blocks(self, container, blocks: list[Block], look: tuple[RGB, RGB, str], width: float) -> None:  # noqa: ANN001
         for block in blocks:
@@ -360,17 +369,25 @@ class Writer:
         elif isinstance(block, Photo):
             self.photo(container, block, text, width)
         elif isinstance(block, Lines):
+            rule = 0.5  # pt
             for _ in range(block.drawn or block.count):  # 0.39.6: '::: lines fill' as many as the PDF drew
                 p = self._paragraph(container)
                 p.paragraph_format.space_after = Pt(0)
                 p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
-                p.paragraph_format.line_spacing = Mm(WRITING_LINE)
+                # 0.40.3 (PR1): WRITING_LINE apart with their rule, which Word adds to a line's height: 8.2 mm apart,
+                # an A4 page's 31 fill lines took 6 mm more than the PDF's and ran on to the next page
+                p.paragraph_format.line_spacing = Emu(Mm(WRITING_LINE) - Pt(rule))
                 # Word draws one border around neighbours with the same borders: "between" lines each of them.
-                line = ("single", 0.5, tint(text, 0.6))
+                line = ("single", rule, tint(text, 0.6))
                 _put(p._p.get_or_add_pPr(), _borders("w:pBdr", {"bottom": line, "between": line}))
         elif isinstance(block, PageBreak):
-            if container is self.doc:
-                self._paragraph(container).add_run().add_break(WD_BREAK.PAGE)
+            # 0.40.3 (analysis-0.40.1 codebase, PR1): the next paragraph starts the page ('page break before'). A
+            # paragraph holding the break ran on to a new page after '::: lines fill' had ruled a page to its bottom
+            # margin, and broke again: the 83-page planner's Word copy had 135 pages, 52 blank. As in the PDF, a break
+            # at a page's top (the start, another break) starts none; one at the end starts no empty page (the PDF's
+            # result warns of the one it draws)
+            if container is self.doc and len(self.doc.element.body) > 1:  # more than the section's properties
+                self.page_break = True
         elif isinstance(block, Callout):
             self.panel(container, block.blocks, look, width, tint(heading, 0.92), bar=heading)
         elif isinstance(block, Box):
@@ -393,6 +410,13 @@ class Writer:
     def _tiny(self, paragraph) -> None:  # noqa: ANN001
         paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
         paragraph.paragraph_format.line_spacing = Pt(4)
+
+    @staticmethod
+    def _hairline(paragraph) -> None:  # noqa: ANN001
+        """As small as a paragraph can be: a point high, nothing after it."""
+        paragraph.paragraph_format.space_after = Pt(0)
+        paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+        paragraph.paragraph_format.line_spacing = Pt(1)
 
     def _after_table(self, container) -> None:  # noqa: ANN001
         """A small paragraph after a table: Word needs one between two tables, and it gives the table room."""
@@ -528,6 +552,18 @@ class Writer:
 
 def _rgb(value: str) -> RGB:
     return int(value[1:3], 16), int(value[3:5], 16), int(value[5:7], 16)
+
+
+def _pages(blocks: list[Block]) -> list[list[Block]]:
+    """0.40.3 (PR6): a column's blocks split at its page breaks, as the PDF starts pages: no page for a break at a
+    page's top (the start, another break) or at the end."""
+    pages: list[list[Block]] = [[]]
+    for block in blocks:
+        if not isinstance(block, PageBreak):
+            pages[-1].append(block)
+        elif pages[-1]:
+            pages.append([])
+    return [page for page in pages if page] or [[]]
 
 
 def render(document: Document) -> bytes:
