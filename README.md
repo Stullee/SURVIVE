@@ -547,9 +547,15 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   rewrites `/data/options.json` from the options you saved.
 - **The agent's reach.** Its file tools work inside its own folders only
   (`ember/app/agent/sandbox.py`: no links, no absolute paths, size quotas). Its
-  tool handlers run with sockets, subprocesses and native libraries blocked by
-  an audit hook (`ember/app/agent/netguard.py`); in dry run the whole wake cycle
-  runs that way. The live transport only reaches `https://api.anthropic.com`
+  tool handlers, but those of the six tools that call a model (research,
+  workshop, draft, brainstorm, demand_note, printify_catalog), run with new
+  sockets, sends to an address, name lookups, subprocesses, threads and native
+  libraries loaded through ctypes blocked by an audit hook
+  (`ember/app/agent/netguard.py`); in dry run the whole wake cycle runs that way.
+  What raises no audit event stays possible even there (a send on a socket
+  connected before, `_posixsubprocess.fork_exec` called directly, work handed to
+  a thread already running, importing a native module not yet loaded), and no
+  tool handler holds a socket or a thread pool. The live transport only reaches `https://api.anthropic.com`
   and ignores proxy variables (`ember/app/economy/anthropic_transport.py`).
   The container talks to `api.anthropic.com` and, if the owner sets up Ember's
   mailbox, to the configured IMAP and SMTP hosts, over verified TLS, from
@@ -571,7 +577,10 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   it and within a daily limit, and (0.37.3) only after Ember's code read its
   mailbox since the approval, so a "stop" waiting there is seen first (0.39.5:
   also one written below the quote, or sent with a photo; 0.39.7: below a long
-  thread too); a send is recorded before it starts and never retried
+  thread too). 0.40.3: while the recipient has written again since the request
+  and the agent hasn't read that email yet, the email waits until it has, and an
+  approved email not sent within 7 days of its approval isn't sent at all. A send
+  is recorded before it starts and never retried
   (`ember/app/integrations/executor.py`). The kill switch stops whatever
   Ember's code hasn't begun, also in the middle of a round (0.37.3). A Reddit
   post becomes a link the owner opens and posts from their own account; a KDP

@@ -3484,7 +3484,9 @@ automation, for example:
   **Watchdog** so that happens automatically.
 - The agent's model calls go only to `https://api.anthropic.com` (any other
   address is refused inside the app, and proxy settings are ignored). Its
-  tools have no network access at all. If you set up Ember's mailbox, Ember's
+  tools have no network access of their own: the model calls of research, the
+  workshop, draft, brainstorm, demand notes and the Printify catalog go through
+  the same transport to `api.anthropic.com`. If you set up Ember's mailbox, Ember's
   own code also connects to the IMAP and SMTP servers in the options, over TLS
   with verified certificates, and to no other mail server. If you connect
   Etsy, Ember's code also talks to `https://api.etsy.com`, and nothing else
