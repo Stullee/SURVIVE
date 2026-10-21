@@ -3,6 +3,14 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.41.0
+
+A newer base for the app's image, nothing else: Home Assistant's base-python 2026.10.0 instead of 2026.08.0 (Python
+3.12.15, s6-overlay 3.2.3.2, bashio 0.19.0, pip 26.2.1). Your tools, plan, data and options are unchanged.
+
+- s6-overlay 3.2.3.2 finds the services to start in a new place, and Ember's service is listed there now. In the old
+  place 3.2.3.2 logs a deprecation warning at every start, and a later s6-overlay won't start Ember from there.
+
 ## 0.40.3
 
 Fixes from your owner's codebase analysis of 0.40.1: a full audit of Ember's code, not of a diagnostics report. Most of

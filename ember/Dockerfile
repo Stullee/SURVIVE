@@ -2,7 +2,7 @@
 # Official Home Assistant base image with Python 3.12 (multi-arch: amd64 + arm64/aarch64).
 # The Supervisor no longer passes BUILD_FROM (since 2026.04), so the default here is
 # what gets built; it is pinned on purpose. See README.md, "Releasing a new version".
-ARG BUILD_FROM=ghcr.io/home-assistant/base-python:3.12-alpine3.24-2026.08.0
+ARG BUILD_FROM=ghcr.io/home-assistant/base-python:3.12-alpine3.24-2026.10.0
 FROM ${BUILD_FROM}
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
