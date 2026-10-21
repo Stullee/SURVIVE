@@ -209,8 +209,19 @@ def test_service_scripts_are_executable() -> None:
     assert (service / "type").read_text().strip() == "longrun"
     for script in ("run", "finish"):
         assert os.access(service / script, os.X_OK), script
-    assert (APP_DIR / "rootfs" / "etc" / "s6-overlay" / "s6-rc.d" / "user" / "contents.d" / "ember").exists()
     assert "exec s6-setuidgid ember python3 -m app" in (service / "run").read_text()
+
+
+def test_service_is_in_the_user_bundle() -> None:
+    """0.41.0: s6-overlay 3.2.3.2 reads the user bundle from user-bundles.d, and ignores that folder (with a
+    deprecation warning) while an s6-rc.d/user folder exists. Older s6-overlays read only s6-rc.d/user, so the base
+    image must be docker-base 2026.10.0 or newer, the first with 3.2.3.2 (2026.08.0 has 3.2.3.0)."""
+    s6 = APP_DIR / "rootfs" / "etc" / "s6-overlay"
+    assert (s6 / "user-bundles.d" / "user" / "contents.d" / "ember").exists()
+    assert not (s6 / "s6-rc.d" / "user").exists()
+    dockerfile = (APP_DIR / "Dockerfile").read_text(encoding="utf-8")
+    release = re.search(r"^ARG BUILD_FROM=\S+-(\d{4})\.(\d{2})\.\d+$", dockerfile, flags=re.MULTILINE)
+    assert release and (int(release[1]), int(release[2])) >= (2026, 10)
 
 
 def test_dockerfile_pins_official_base_image() -> None:

@@ -512,6 +512,13 @@ has 52 blank pages. The shareable report no longer holds the database (it took 2
 seconds with a full mailbox) and also hides phone numbers, IBANs, the KDP author
 and the SFTP login; the website's download counts only once the zip is saved.
 
+0.41.0: the image is built on Home Assistant's base-python 2026.10.0 instead of
+2026.08.0 (Python 3.12.15, s6-overlay 3.2.3.2, bashio 0.19.0). s6-overlay 3.2.3.2
+reads the `user` bundle from `/etc/s6-overlay/user-bundles.d`, so Ember's service
+is listed there now: in `/etc/s6-overlay/s6-rc.d/user` 3.2.3.2 logs a
+deprecation warning at every start, and a later s6-overlay drops that place.
+Nothing else changes.
+
 0.42.0: the structural changes the codebase analysis of 0.40.1 left for later.
 The plan and the tools read each rule from one place, so a step a tool would
 refuse waits (with the tool's words on the Plan tab) instead of costing a cycle;
@@ -765,9 +772,12 @@ committed in 0.4.0, which has to be changed where it is used.
    Updating rebuilds the image on the device.
 
 The Docker base image is pinned in `ember/Dockerfile`
-(`ghcr.io/home-assistant/base-python:3.12-alpine3.24-2026.08.0`). Bump it
+(`ghcr.io/home-assistant/base-python:3.12-alpine3.24-2026.10.0`). Bump it
 deliberately, in its own release, after checking the
 [docker-base releases](https://github.com/home-assistant/docker-base/releases).
+The service is listed in s6-overlay's `user` bundle in
+`ember/rootfs/etc/s6-overlay/user-bundles.d`, which needs s6-overlay 3.2.3.2 or
+newer (docker-base 2026.10.0 on): an older base would not start Ember.
 Python dependencies are pinned in `ember/requirements.txt`.
 
 ## Repository layout
