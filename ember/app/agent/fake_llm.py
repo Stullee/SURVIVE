@@ -92,9 +92,10 @@ from typing import Any
 
 from ..economy.estimate import MAX_SERVER_ITERATIONS
 from ..economy.metering import Completed, FilesError, Interrupted, NotSent, Outcome, Rejected, rough_token_count
+from ..economy.pricing import thinking_modes
 from .context import PLAN_HEADING, STEP_HEADING
 from .plan import NEW_PRODUCT
-from .prompts import DRAFT_MARKER, REFLECT_MARKER
+from .prompts import DRAFT_MARKER, FINAL_MARKER, REFLECT_MARKER
 from .tools import SPECS
 
 SCENARIOS = ("founder", "idle", "drain", "flaky", "chaos", "injection")
@@ -458,16 +459,24 @@ def validate_request(request: Mapping[str, Any], canonical: str | None = None) -
         if key in request:
             return f"{key}: sampling parameters are not supported on this model"
     model = str(request.get("model") or "")
-    always_thinks = any(name in model for name in ("opus-5-5", "fable", "mythos"))
+    # 0.40.3 (analysis-0.40.1 codebase, C4): the thinking settings the model takes, from the table the request builder
+    # follows (pricing.thinking_modes): a model that refuses "disabled" (Claude Opus 5.5, Sonnet 5.5, Fable, Mythos)
+    # refuses forced tool use too
+    modes = thinking_modes(model)
     choice = request.get("tool_choice")
-    if always_thinks and isinstance(choice, Mapping) and choice.get("type") in ("any", "tool"):
+    if "disabled" not in modes and isinstance(choice, Mapping) and choice.get("type") in ("any", "tool"):
         return 'tool_choice: type "tool" and "any" are not supported for this model'
     thinking = request.get("thinking")
     if isinstance(thinking, Mapping):
-        if always_thinks and thinking.get("type") in ("disabled", "enabled"):
-            return f"thinking: type {thinking.get('type')!r} is not supported for this model; use adaptive"
+        kind = thinking.get("type")
+        if (kind in ("disabled", "between_tools", "adaptive") and kind not in modes) or (
+            kind == "enabled" and "disabled" not in modes
+        ):
+            return f"thinking: type {kind!r} is not supported for this model; use {' or '.join(modes)}"
+        if kind == "between_tools" and set(thinking) != {"type"}:
+            return "thinking: type 'between_tools' takes no other field"
         no_budget = ("sonnet-5", "opus-5", "opus-4-7", "opus-4-8")
-        if thinking.get("type") == "enabled" and any(name in model for name in no_budget):
+        if kind == "enabled" and any(name in model for name in no_budget):
             return "thinking: budget_tokens is not supported for this model; use adaptive"
     markers = canonical.count(_MARKER) if canonical is not None else count_markers(request)
     if markers > MAX_CACHE_BREAKPOINTS:
@@ -679,6 +688,17 @@ def _blocks(content: Any) -> list[Mapping[str, Any]]:
 
 def _text_of(content: Any) -> str:
     return "\n".join(str(b.get("text") or "") for b in _blocks(content) if b.get("type") == "text")
+
+
+def _last_step(request: Mapping[str, Any]) -> bool:
+    """0.40.3 (analysis-0.40.1 codebase, C3): whether the last user turn says it is the last work step (FINAL_STEP: the
+    step's tool_choice stays "auto"), which a model follows with its report."""
+    messages = request.get("messages") or []
+    last = messages[-1] if messages and isinstance(messages[-1], Mapping) else {}
+    return last.get("role") == "user" and any(
+        block.get("type") == "text" and str(block.get("text") or "").startswith(FINAL_MARKER)
+        for block in _blocks(last.get("content"))
+    )
 
 
 def _reflecting(messages: Iterable[Any]) -> bool:
@@ -1745,7 +1765,7 @@ class FakeTransport:
         crng = self._cycle_rng(conv.brief)
         idea = self._idea_of(conv, crng)
         choice = request.get("tool_choice")
-        if isinstance(choice, Mapping) and choice.get("type") == "none":
+        if (isinstance(choice, Mapping) and choice.get("type") == "none") or _last_step(request):
             return _Draft([_text(_report(conv, "This was my last step."))], note="report")
         if chaos is not None:
             return self._chaos_work(chaos, request, conv, idea, rng)

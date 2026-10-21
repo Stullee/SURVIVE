@@ -33,6 +33,7 @@ from typing import Any
 
 from ..economy.clock import Clock, from_iso, to_iso
 from ..integrations import etsy, mailstore
+from ..integrations.mail import valid_address
 from . import metrics
 from .store import AgentScope
 
@@ -47,6 +48,7 @@ CHECK_HOUR = 8  # the owner's hour a milestone's last day is noted
 SHOWN = 8  # the events one plan lists
 SINCE_KEY = "agenda.since.{mode}"  # when the agenda began: what happened before is history, not news
 TEXT_CHARS = 300
+SENDER_CHARS = 80  # 0.40.3 (analysis-0.40.1 codebase, C6): of a sender that isn't a plain address, as MAIL shows it
 
 
 def _add(
@@ -127,14 +129,19 @@ def _mail(conn: sqlite3.Connection, scope: AgentScope, since: str, now: str) -> 
         answers = {mail["in_reply_to"], *str(mail["references_"] or "").split()}
         subject = json.dumps(" ".join(str(mail["subject"] or "").split())[:80], ensure_ascii=False)
         sender = str(mail["from_addr"])
+        # 0.40.3 (analysis-0.40.1 codebase, C6): a sender that isn't a plain address JSON-quoted, as the MAIL section
+        # quotes it (context.mail_text): an authenticated sender failing mail.valid_address is stored as it came (up to
+        # 320 characters), and stood unquoted in SINCE YOUR LAST WAKE
+        start = sender if len(sender) <= SENDER_CHARS else sender[:SENDER_CHARS] + "…"
+        who = sender if valid_address(sender) else json.dumps(start, ensure_ascii=False)
         if answers & sent and mail["person"] and not mailstore.is_suppressed(conn, scope, sender):
-            kind, text = "reply", f"Email #{mail['id']} from {sender} answers one you sent: {subject}"
+            kind, text = "reply", f"Email #{mail['id']} from {who} answers one you sent: {subject}"
         elif (
             int(mail["id"]) in waiting
             and mail["read_by_agent_at"] is None
             and (ended is None or str(mail["received_at"]) > str(ended))
         ):
-            kind, text = "inquiry", f"Email #{mail['id']} from {sender} writes to you: {subject}"
+            kind, text = "inquiry", f"Email #{mail['id']} from {who} writes to you: {subject}"
         else:
             continue
         if _add(conn, scope, kind, str(mail["id"]), text, now):

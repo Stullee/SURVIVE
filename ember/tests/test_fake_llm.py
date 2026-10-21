@@ -782,8 +782,10 @@ def test_the_prompt_cache_is_simulated() -> None:
     third = usage_of(fake.send(step))
     assert third["cache_read_input_tokens"] == written and third["cache_creation_input_tokens"] > 0
 
-    # A different tool_choice keeps only the tools and system part.
-    final = usage_of(fake.send(prompts.work_request(SETTINGS, "A brief. " * 20, [], final=True)))
+    # A different tool_choice keeps only the tools and system part. (0.40.3, analysis-0.40.1 codebase, C3: the last
+    # work step no longer sends "none", but the fake still models it.)
+    none = {**prompts.work_request(SETTINGS, "A brief. " * 20, []), "tool_choice": {"type": "none"}}
+    final = usage_of(fake.send(none))
     assert 1_024 < final["cache_read_input_tokens"] < written
 
     clock.advance(301)  # past the 5-minute lifetime

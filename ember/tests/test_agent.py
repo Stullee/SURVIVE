@@ -321,7 +321,10 @@ def test_the_step_limit_answers_pending_calls_in_the_reflection(data_dir: Path) 
     end = agent.run_cycle("schedule")
     assert end.status == "completed"
     check_conversations(transport.sent)
-    assert transport.sent[2]["tool_choice"] == {"type": "none"}  # the last step can't call tools
+    # 0.40.3 (analysis-0.40.1 codebase, C3): the last step is told in text (tool_choice "none" broke the cache), and
+    # its calls aren't run
+    assert transport.sent[2]["tool_choice"] == {"type": "auto"}
+    assert transport.sent[2]["messages"][-1]["content"][-1]["text"] == prompts.FINAL_STEP
     reflect = transport.sent[3]["messages"][-1]["content"]
     assert reflect[0]["type"] == "tool_result" and reflect[-1]["text"].startswith("REFLECT PHASE")
     assert "(you used all your tool steps)" in reflect[-1]["text"]

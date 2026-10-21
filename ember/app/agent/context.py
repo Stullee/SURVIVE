@@ -163,6 +163,10 @@ LINE_FOCUS_BUDGET = 1_000
 STRATEGY_BRIEF_BUDGET = 1_200
 # 0.12.0: the brief's copy of OBLIGATIONS (the plan's is never cut), on top of the brief's budget like the owner's.
 OBLIGATIONS_BRIEF_BUDGET = 1_000
+# 0.40.3 (analysis-0.40.1 codebase, C2): the brief's copy of YOUR SOFTWARE, on top of the brief's budget too: the part
+# of the release notes the plan shows, whole (news.changelog_part cuts it to this), so what an ordinary cycle marks seen
+# its work steps saw as the plan did
+SOFTWARE_BRIEF_BUDGET = CHANGELOG_LIMIT
 # 0.12.0: the lessons the owner pinned come first in LESSONS, on top of its budget (at most memory.MAX_PINS of them).
 PINS_BUDGET = 2_000
 PLAYBOOK_SHARE = 0.6  # 0.18.0: of LESSONS' budget, the most the playbook takes
@@ -177,7 +181,8 @@ BRIEF_MAX = (
     + KNOWLEDGE_BUDGET
     + OBLIGATIONS_BRIEF_BUDGET
     + PINS_BUDGET
-    + 330
+    + SOFTWARE_BRIEF_BUDGET  # 0.40.3 (analysis-0.40.1 codebase, C2)
+    + 360
 )
 WILL_BUDGET = 4_500 + OWNER_BUDGET + 100  # the largest will context: the LAST_WILL profile is measured on it
 _QUOTED = re.compile(r'"(?:[^"\\]|\\.)*"')  # a JSON string: how the owner's and the agent's texts are quoted
@@ -1115,12 +1120,16 @@ def brief(
     learned = [(KNOWLEDGE_HEADING, cut(knowledge, KNOWLEDGE_BUDGET))] if knowledge else []
     owing = obligations.for_line(s.obligations, line) if line is not None else s.obligations  # 0.28.0
     owed = [(obligations.HEADING, cut(owing, OBLIGATIONS_BRIEF_BUDGET))] if s.obligations else []
+    # 0.40.3 (analysis-0.40.1 codebase, C2): the release notes the plan shows: they reached the planner alone, and the
+    # work steps meant to act on what they say (0.40.1's book) never saw them
+    software = [("YOUR SOFTWARE", cut(s.news.changelog, SOFTWARE_BRIEF_BUDGET))] if s.news.changelog else []
     parts = [
         *head,
         *standing,
         *owners,
         *mailed,
         *owed,  # 0.12.0: what the agent owes, with the numbers obligation_done closes
+        *software,
         *([("VENTURE CYCLE", _venture_brief(s))] if s.venture else []),
         *([("MARKETING CYCLE", MARKETING_BRIEF)] if s.marketing else []),  # 0.28.0
         *learned,  # before the FOCUS: a brief over its budget loses its end, and this section's room is its own
@@ -1136,7 +1145,7 @@ def brief(
             "the goal is reached.",
         ),
     ]
-    on_top = [*owed, *standing, *owners, *mailed, *researched, *learned]
+    on_top = [*owed, *standing, *owners, *mailed, *researched, *learned, *software]
     room = sum(json_bytes(f"\n\n== {title} ==\n{body}") - 2 for title, body in on_top)  # - 2: its own JSON quotes
     room += json_bytes(f"{pins_text(s)}\n\n") - 2 if s.pins else 0  # 0.12.0: the owner's pins are on top too
     text = cut(_sections(parts), BRIEF_BUDGET + room)

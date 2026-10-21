@@ -361,6 +361,11 @@ daily cap** for your day until **08:00** (your time), whatever wakes Ember, and 
 scheduled wake that would need it waits until 08:00: every night from 00:07 the
 cycles spent four fifths of the cap, and your decision at 07:48 got one cycle
 before the next waited for 20:00 with $0.01 to spend.
+Since 0.40.3 these waits, the wait for the daily cap to reset (until midnight)
+and the maintenance burn mode's day are worked out again each time Ember decides
+whether to wake, and never kept as the next wake: raise the daily cap, add money
+or switch event wake-ups off, and a wait whose reason is gone ends at once
+(before, it lasted until its time, under the old reason).
 Your **Wake now**, messages and decisions are never held back. The activity
 list shows an event's cycle as *woken by an event*, and the System log shows
 what was noted.

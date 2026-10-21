@@ -19,13 +19,14 @@ from urllib.parse import urlsplit
 
 from .. import paths
 from ..config import Settings
-from ..economy.pricing import THINKING_ROOM, always_thinks
+from ..economy.pricing import THINKING_ROOM, thinking_off
 from . import critic, econ, learning, library, memory, tools, ventures
 from .sandbox import NAME_CHARS
 
 # Thinking stays off: it could use up max_tokens before the answer (checked with the real API in phase 5). Models
-# that always think (Claude Opus 5.5, say) get adaptive thinking and THINKING_ROOM more output instead.
-THINKING = {"type": "disabled"}
+# that always think (Claude Opus 5.5, say) get adaptive thinking and THINKING_ROOM more output instead. 0.40.3
+# (analysis-0.40.1 codebase, C4): "off" as each model takes it (pricing.thinking_off: "disabled", or Claude Sonnet
+# 5.5's "between_tools").
 ADAPTIVE = {"type": "adaptive"}
 PLAN_MAX_TOKENS = 1_200
 # The verdicts on up to 8 projects and seven short texts (0.11.0: the roadmap), and on up to 12 milestones (0.12.0).
@@ -43,6 +44,13 @@ DRAFT_MAX_TOKENS = tools.DRAFT_MAX_TOKENS  # a long file in one call of its own 
 DRAFT_CHARS = tools.DRAFT_CHARS
 FETCH_MAX_CONTENT_TOKENS = 4_000
 REFLECT_MARKER = "REFLECT PHASE."
+# 0.40.3 (analysis-0.40.1 codebase, C3): the last work step is told in text, after the conversation, that it is the
+# last: its tool_choice stays "auto" ("none" changed the prompt cache's key, so the step wrote the conversation again)
+FINAL_MARKER = "LAST WORK STEP."
+FINAL_STEP = (
+    f"{FINAL_MARKER} This is your last tool step this cycle: call no tool now (Ember's code wouldn't run it)."
+    " Reply with a short report of what you did; your reflection comes next."
+)
 # 0.12.0: one source for every limit a prompt states: the code that parses or keeps the text reads the same constant.
 PLAN_CHARS = {"assessment": 600, "goal": 300, "money_path": 300}  # the plan's texts, cut there
 PLAN_STEPS = 6
@@ -600,10 +608,12 @@ def _text(text: str, **extra: Any) -> dict[str, Any]:
 
 
 def _thinking(model: str, max_tokens: int) -> dict[str, Any]:
-    """The request's thinking and output limit for ``model``."""
-    if always_thinks(model):
+    """The request's thinking and output limit for ``model``. 0.40.3 (analysis-0.40.1 codebase, C4): thinking off as
+    the model takes it (pricing.thinking_off): Claude Sonnet 5.5 refuses "disabled" and takes "between_tools"."""
+    off = thinking_off(model)
+    if off is None:
         return {"max_tokens": max_tokens + THINKING_ROOM, "thinking": ADAPTIVE}
-    return {"max_tokens": max_tokens, "thinking": THINKING}
+    return {"max_tokens": max_tokens, "thinking": {"type": off}}
 
 
 def workshop_model(settings: Settings) -> str:
@@ -674,7 +684,12 @@ def work_request(
     ``blog``, their blog; 0.19.0: ``bluesky``, Ember's Bluesky account; 0.25.0: ``kdp``, Amazon KDP) are the same for
     every step of a cycle, and so are ``workshop`` and ``brainstorm`` (0.15.0: whether the burn mode leaves the cycle
     workshop runs, which the owner's options must allow too, and brainstorms). 0.28.0: ``marketing``, a marketing
-    cycle's tools; ``marketing_apart``, marketing cycles run, so an ordinary cycle has no marketing tools."""
+    cycle's tools; ``marketing_apart``, marketing cycles run, so an ordinary cycle has no marketing tools. 0.40.3
+    (analysis-0.40.1 codebase, C3): ``final``, the last step, ends its last user turn with FINAL_STEP (its tool_choice
+    was "none", which the prompt cache's key includes)."""
+    messages = [{"role": "user", "content": [_text(brief)]}, *turns]
+    if final:  # the conversation always ends with a user turn (the brief, or the last step's tool results)
+        messages[-1] = {**messages[-1], "content": [*messages[-1]["content"], _text(FINAL_STEP)]}
     offered = tools.definitions(
         mail,
         workshop=workshop_on(settings) and workshop,
@@ -702,9 +717,9 @@ def work_request(
             ),
         ],
         "tools": offered,
-        "tool_choice": {"type": "none"} if final else {"type": "auto"},
+        "tool_choice": {"type": "auto"},
         "cache_control": {"type": "ephemeral"},
-        "messages": [{"role": "user", "content": [_text(brief)]}, *turns],
+        "messages": messages,
         **_effort(settings, settings.worker_model),
     }
 

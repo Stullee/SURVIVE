@@ -139,6 +139,10 @@ def cut_call(name: str) -> str:
     return CUT_CALL if name in ("workspace_write", "draft") else CUT_OTHER
 
 
+# 0.40.3 (analysis-0.40.1 codebase, C3): why a call of the last work step didn't run (prompts.FINAL_STEP asked for none)
+LAST_STEP_CALL = "it came in your last work step, which was for your report; your reflection comes next"
+
+
 STEP_CHARS = prompts.STEP_CHARS  # a plan step's length (prompts.PLANNER_RULES tells the planner)
 RESEARCH_DIGEST_CHARS = 2_000  # a research digest kept (prompts.RESEARCH_RULES asks for less)
 STEP_GROWTH_BYTES = 20_000  # the most one step can add (4 tool results and a reply): the REFLECT profile's room
@@ -270,6 +274,9 @@ class CycleRunner:
         self.kdp_on = settings.kdp_enabled  # 0.25.0: Amazon KDP: its tools and KDP section
         self.library_on = False  # the library's tools (0.12.0): set when a cycle starts with documents in it
         self.news_kept: frozenset[news.Item] = frozenset()  # 0.15.0: the owner's news marked seen once the cycle ends
+        # 0.40.3 (analysis-0.40.1 codebase, C2): the release notes an ordinary cycle's plan showed whole, marked seen
+        # once the cycle completes (_write_report)
+        self.notes_kept: news.News | None = None
         self.net_runway_days: float | None = None  # at the last snapshot (0.13.0: the knock-outs' slow rule)
         # 0.29.0: revenue less expenses and API spending over the last 30 days, as the last keeper read them
         self.money_numbers: tuple[int, int] | None = None
@@ -323,6 +330,7 @@ class CycleRunner:
         # 0.13.0: an event's wake-up is a lean reactive cycle: no venture work, review, study or critic, few steps
         self.reactive = trigger == "event"
         self.news_kept = frozenset()  # 0.15.0: set by the first work step (a cycle that plans no work keeps none)
+        self.notes_kept = None  # 0.40.3 (analysis-0.40.1 codebase, C2): set by an ordinary cycle's plan
         self.max_steps = (
             min(self.settings.max_tool_steps, agenda.REACTIVE_STEPS) if self.reactive else self.settings.max_tool_steps
         )
@@ -469,6 +477,8 @@ class CycleRunner:
             if end.sleep_minutes is not None:
                 store.update_cycle(conn, cycle_id, sleep_minutes=end.sleep_minutes)
             store.update_cycle(conn, cycle_id, phase=None, current_action=None)
+        if status in ("completed", "idle") and self.notes_kept is not None:  # 0.40.3 (analysis-0.40.1 codebase, C2)
+            news.mark_changelog_seen(self.db, self.scope, self.notes_kept)
 
     def _announce(self, cycle_id: int, end: CycleEnd, closed: bool) -> None:
         with self.db.connection() as conn:
@@ -979,8 +989,11 @@ class CycleRunner:
             shown = [i for item in snap.library.new if library.studied_line(item) in planner for i in item.ids]
             with self.db.transaction() as conn:
                 library.mark_seen(conn, cycle_id, shown)  # the documents this plan listed as newly studied
-        if planned.changelog:
-            news.mark_changelog_seen(self.db, self.scope, snap.news)
+        if planned.changelog and self.kind == lines.ORDINARY:
+            # 0.40.3 (analysis-0.40.1 codebase, C2): seen once the cycle completes (_write_report), and only an ordinary
+            # one: marked right after any plan, an event's or a marketing cycle's plan read them and planned something
+            # else, and the work steps of the cycle meant to act on them never saw them (the brief shows them now too)
+            self.notes_kept = snap.news
         if ctx.venture and self.steered is not None and self.steered.venture is not None:
             plan.focus_venture_id = self.steered.venture  # 0.37.0: Ember's code aims it at its step's venture
         notes: list[str] = []
@@ -1883,19 +1896,19 @@ class CycleRunner:
             text = _text_of(response)
             if text:
                 self._save_text(result.call_id, text, response)
-            if stop == "tool_use" and uses:
+            if stop == "tool_use" and uses and not final:
                 act.pending = self._run_tools(ctx, uses, result.call_id, "act")
                 if any(u.get("name") == "write_journal" for u in uses):
                     # 0.15.0: the agent's work is over (the journal is the last thing it does): its reflection
                     # writes it. The step after it only reported.
                     act.end_reason = "done"
                     break
-                if step == max_steps:
-                    act.end_reason = "step limit reached"
                 continue
             if uses:  # never run a tool call that may be incomplete: cut off by max_tokens, only the last one is
-                whole = _whole_calls(content, uses) if stop == "max_tokens" else []
-                ended = f"the reply ended ({stop}) before it could run"
+                # 0.40.3 (analysis-0.40.1 codebase, C3): nor one of the last step, told to call none
+                # (prompts.FINAL_STEP; its tool_choice stays "auto", which keeps the cache): the work ends there
+                whole = _whole_calls(content, uses) if stop == "max_tokens" and not final else []
+                ended = LAST_STEP_CALL if final else f"the reply ended ({stop}) before it could run"
                 act.pending = self._run_tools(ctx, whole, result.call_id, "act") if whole else []
                 act.pending += [
                     self._result_block(
@@ -1907,7 +1920,7 @@ class CycleRunner:
                             u.get("id", ""),
                             result.call_id,
                             "act",
-                            cut_call(str(u.get("name"))) if stop == "max_tokens" else ended,
+                            cut_call(str(u.get("name"))) if stop == "max_tokens" and not final else ended,
                         ),
                     )
                     for u in uses[len(whole) :]
@@ -1927,7 +1940,8 @@ class CycleRunner:
                 if not act.pending:  # the conversation must end with a user turn (no prefill)
                     act.turns.append({"role": "user", "content": [{"type": "text", "text": CUT_OFF}]})
                 continue
-            act.end_reason = f"the model stopped ({stop})"
+            # 0.40.3 (analysis-0.40.1 codebase, C3): the last step's calls weren't run (above)
+            act.end_reason = "step limit reached" if final and stop == "tool_use" else f"the model stopped ({stop})"
             break
         else:
             act.end_reason = act.end_reason or "step limit reached"
@@ -2187,6 +2201,12 @@ class CycleRunner:
                         more = self._call(cycle_id, "research", follow, venture_id)
                         response = more.response or response
                         cost += more.cost_micros
+                        if response.get("stop_reason") == "pause_turn":
+                            # 0.40.3 (analysis-0.40.1 codebase, C5): it paused again, and is continued once only: its
+                            # text read as a complete answer
+                            partial = (
+                                "\n(The search paused again and wasn't continued further. This answer may be partial.)"
+                            )
                     else:
                         partial = (
                             "\n(The search paused and wasn't continued: the money left for this cycle, today or above"
@@ -2197,6 +2217,11 @@ class CycleRunner:
                     partial = f"\n(The search paused and couldn't be continued: {reason}. This answer may be partial.)"
                 except CallFailed as exc:  # 0.15.0: paid, so it counts toward the budget too
                     cost += exc.result.cost_micros
+                    # 0.40.3 (analysis-0.40.1 codebase, C5): the answer is the paused one's, said too
+                    partial = (
+                        f"\n(The search paused and its continuation failed ({exc.result.error or exc.result.status})."
+                        " This answer may be partial.)"
+                    )
             answer = _text_of(response)
             digest = answer[:RESEARCH_DIGEST_CHARS] or "Nothing useful was found."
             sources = _sources(response)
