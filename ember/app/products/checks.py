@@ -54,6 +54,10 @@ MAX_PAGE_RATIO = 20  # a bookmark is 4 times as long as it is wide; a page 1000 
 MAX_UNPACKED_BYTES = 100 * 1024 * 1024  # what the streams of a PDF or the parts of an Office file may unpack to
 READ_BYTES = 50_000_000  # 0.15.0: at most what an Office file Ember reads (library, workspace_read) unpacks to
 MAX_PREDICTED_BYTES = 4 * 1024 * 1024  # 0.15.0: a PDF's streams whose predictor Ember undoes (about 1 s a MB)
+# 0.40.3 (analysis-0.40.1 codebase, found with P1): what a PDF's stream keywords may have Ember read, each from the
+# end of the stream before it to its own end. A real file's streams read it about once; keywords inside one stream, or
+# with no end, read it again each (88 KB of '<<>>stream ' took 2.6 s, 15 MB would take hours)
+MAX_STREAM_READ_BYTES = 128 * 1024 * 1024
 MAX_PARTS = 3_000
 MAX_RATIO = 200  # an Office part that unpacks to more than this many times its size is a zip bomb
 # PDF names that make a file act on its own (a name's #xx escapes are decoded before the comparison).
@@ -93,14 +97,20 @@ _DECODED = {
 # ... and these picture encodings stay as they are, on pictures only (as the last encoding).
 _PICTURE_FILTERS = frozenset({"DCTDecode", "DCT", "JPXDecode", "JBIG2Decode", "CCITTFaxDecode", "CCF"})
 # 0.15.0: a stream's /Filter and /DecodeParms, read as pdfium reads them (white space and comments between).
-_WS = rb"(?:[\x00\t\n\x0c\r ]|%[^\r\n]*)*"
+# 0.40.3 (analysis-0.40.1 codebase, P1): possessive, as _PDF_STREAM is. A run of '%' could be split into comments in
+# exponentially many ways: a workshop PDF with '/Filter' and then '[%%%...' froze the app (each '%' doubled the time,
+# 25 took 5 s). A comment runs to the end of its line, as pdfium reads it.
+_SPACE = rb"(?:[\x00\t\n\x0c\r ]|%[^\r\n]*+)"  # a white space character or a comment
+_WS = _SPACE + rb"*+"
 _KEY_END = rb"(?!" + _REGULAR + rb")"
 _FILTER = re.compile(rb"/Filter" + _KEY_END + _WS)
 _PARMS = re.compile(rb"/DecodeParms" + _KEY_END + _WS)
 _FILTER_NAME = rb"/" + _REGULAR + rb"+"
 _FILTER_VALUE = re.compile(_FILTER_NAME + rb"|\[(?:" + _WS + _FILTER_NAME + rb")*" + _WS + rb"\]")
 _PARMS_VALUE = re.compile(rb"null\b|<<[^<>]*>>|\[(?:[^\[\]<>]|<<[^<>]*>>)*\]")
-_REFERENCE = re.compile(rb"\d+" + _WS + rb"\d+" + _WS + rb"R" + _KEY_END)
+# 0.40.3 (P1): a number's digits are taken whole (a run of 2,000 digits took 49 s, tried as two numbers every way);
+# two numbers with nothing between them still count, as before
+_REFERENCE = re.compile(rb"(?<!\d)(?:\d++" + _SPACE + rb"++\d++|\d\d++)" + _WS + rb"R" + _KEY_END)
 _INDIRECT_TYPE = re.compile(rb"/(?:Sub)?[Tt]ype" + _KEY_END + _WS + rb"\d")
 _IMAGE = re.compile(rb"/Subtype\s*/Image\b")
 _ACTION_TYPE = re.compile(rb"/S\s*/([^\s/<>\[\]()%{}]+)")
@@ -202,15 +212,20 @@ def _pdf(data: bytes) -> bytes:
     searched = [data]
     ends: list[int] = []  # where the streams' data ended, in order
     predictable = [MAX_PREDICTED_BYTES]
+    read = 0
     for match in _PDF_STREAM.finditer(data):
         line = _LINE_END.match(data, match.end())
         end = data.find(b"endstream", line.end()) if line else -1
-        if end < 0:
-            continue  # no stream at all: pdfium reads none without an end either
         # 0.15.0: the stream's dictionary is somewhere after the last stream that ended before it. The last "N G obj"
         # before the keyword could be a false one, in a string of the dictionary itself, which hid its /Filter.
         at = bisect.bisect_right(ends, match.start(1)) - 1
-        head = data[ends[at] if at >= 0 else 0 : match.start(1)]
+        start = ends[at] if at >= 0 else 0
+        read += (end if end >= 0 else len(data)) - start
+        if read > MAX_STREAM_READ_BYTES:
+            raise Refused("the PDF has streams inside streams or without an end, more than Ember can check")
+        if end < 0:
+            continue  # no stream at all: pdfium reads none without an end either
+        head = data[start : match.start(1)]
         bisect.insort(ends, end)
         chunk = _decoded(head, data[line.end() : end], MAX_UNPACKED_BYTES - unpacked, predictable)
         if chunk is None:

@@ -114,8 +114,9 @@ PAPERBACK_SHARE = Decimal("0.6")
 PAPERBACK_SHARE_LOW = Decimal("0.5")
 PAPERBACK_FULL_SHARE_FROM = Decimal("9.99")
 # Amazon.com's printing cost of a paperback (USD): a flat cost for few pages, else a fixed cost and a cost per page,
-# by ink and trim (large or not)
-FLAT_PAGES = {"white": 110, "cream": 110, "color": 40}
+# by ink and trim (large or not). 0.40.3 (analysis-0.40.1 codebase, PR9): KDP's flat band for black ink is 24 to 108
+# pages, not 110: 110 pages cost 1.00 + 110 x 0.012 = 2.32 USD
+FLAT_PAGES = {"white": 108, "cream": 108, "color": 40}
 FLAT_COST = {
     ("white", False): Decimal("2.30"),
     ("white", True): Decimal("2.84"),

@@ -38,7 +38,9 @@ _EMAIL = re.compile(r"^[^@\s<>\"']{1,64}@[^@\s<>\"']{1,190}\.[A-Za-z]{2,63}$")
 # with the town), never a PO box or a Packstation; a phone number, if given, is one; a business ID in the VAT ID's
 # option is a Wirtschafts-Identifikationsnummer (§ 139c AO: DE, 9 digits, a dash and 5 digits).
 _POSTCODE = re.compile(r"^(?:[A-Z]{1,2}-)?\d{4,5} +\S")
-_STREET = re.compile(r"[^\W\d_].*[\s.]\d+ ?[a-zA-Z]?(?: ?[-/] ?\d+ ?[a-zA-Z]?)*$")
+# 0.40.3 (analysis-0.40.1 codebase, 6.2): the numbers after the first are taken possessively: a space between two of
+# them could end one or begin the next, so 'Main St 1' and ' -1' 20 times took 0.5 s, each one more twice as long
+_STREET = re.compile(r"[^\W\d_].*[\s.]\d+ ?[a-zA-Z]?(?: ?[-/] ?\d+ ?[a-zA-Z]?)*+$")
 _PO_BOX = re.compile(r"\b(?:postfach|postbox|p\.? ?o\.? ?box|packstation|postfiliale)\b", re.IGNORECASE)
 _PHONE = re.compile(r"^\+?[0-9 ()/.-]{6,40}$")
 _BUSINESS_ID = re.compile(r"^DE\d{9}-\d{5}$")

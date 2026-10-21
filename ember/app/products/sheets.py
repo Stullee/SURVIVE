@@ -1322,6 +1322,8 @@ def _matches(value: Any, criterion: Any) -> bool:
             text = "" if value is None else str(value)
             if op not in ("=", "<>"):
                 return False
+            if any(c in wanted for c in "*?~"):  # 0.40.3: Excel's wildcards, which match texts only
+                return (isinstance(value, str) and _like(value, wanted)) == (op == "=")
             return (text.casefold() == wanted.casefold()) == (op == "=")
         if not isinstance(value, int | float) or isinstance(value, bool):
             return op == "<>"
@@ -1329,6 +1331,38 @@ def _matches(value: Any, criterion: Any) -> bool:
     if isinstance(criterion, int | float) and not isinstance(criterion, bool):
         return isinstance(value, int | float) and not isinstance(value, bool) and float(value) == float(criterion)
     raise _Unknown
+
+
+def _like(text: str, wanted: str) -> bool:
+    """0.40.3 (analysis-0.40.1 codebase, PR7): whether a text meets a criterion with Excel's wildcards, as COUNTIF
+    tests it: the whole text, in any case; * stands for any characters, ? for one, and ~ before *, ? or ~ for that
+    character. A ~ before anything else is _Unknown (the picture shows the formula). A tracker's picture showed 0 where
+    COUNTIF(..., "*Miete*") gives 2. Matched without a regular expression, where '*a*a*a*b' takes polynomial time."""
+    parts: list[str | None] = []  # a character to match (casefolded), "" for ?, None for *
+    escaped = False
+    for char in wanted:
+        if escaped and char not in "*?~":
+            raise _Unknown
+        if escaped or char not in "*?~":
+            parts.append(char.casefold())
+        elif char != "~":
+            parts.append(None if char == "*" else "")
+        escaped = not escaped and char == "~"
+    if escaped:
+        raise _Unknown
+    position = index = 0
+    star = back = -1  # the last * passed, and how far into the text it reaches
+    while position < len(text):
+        if index < len(parts) and parts[index] is None:
+            star, back, index = index, position, index + 1
+        elif index < len(parts) and parts[index] in ("", text[position].casefold()):
+            position, index = position + 1, index + 1
+        elif star >= 0:
+            back += 1
+            position, index = back, star + 1
+        else:
+            return False
+    return all(part is None for part in parts[index:])
 
 
 def _compared(left: Any, op: str, right: Any) -> bool:
