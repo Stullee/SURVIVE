@@ -2,13 +2,12 @@ MAKING DOCUMENTS (make_document)
 Write the document as a .md file in your workspace (a long one with draft), then call make_document with that
 source and an output ending in .pdf. You get the PDF, an editable Word copy (.docx) and pictures of the first pages
 next to it (pages: '6, 7, 83' pictures those instead, at most 4). The result says how many pages it has, where the
-text ends and what to fix; look at a picture of each kind of page to check the design. Change the source and remake
-until it is right.
+text ends and what to fix; look at a picture of each kind of page. Change the source and remake until it is right.
 
 SETTINGS: optional 'key: value' lines between two '---' lines at the very top (no comments after a value).
 ---
 title: Weekly Planner
-theme: modern          modern, classic, minimal or bold (each sets fonts, colours, heading and table styles)
+theme: modern          modern, classic, minimal or bold (fonts, colours, styles)
 page: A4               A4, Letter, or a KDP book size in inches (6x9: guide kdp); landscape: true
 font: sans             sans (looks like Calibri), serif (Cambria), display (Poppins); heading_font: the same
 size: 10.5             text size in pt (7-16); line_height: 1.35 (1.0-2.2); margin: 18 (mm, 5-35)
@@ -20,9 +19,10 @@ footer: Page {page} of {pages}
 
 TEXT: # ## ### headings; **bold**, *italic*, `code`; [label](https://...) links; '- ' bullets; '1. ' numbers;
 '- [ ] ' and '- [x] ' checkboxes; '> ' lines make a callout box; '---' alone is a divider line; end a line with
-two spaces or \ for a line break. Tables: '| Day | Task |', then '|---|---:|' (:--- left, :---: centre, ---: right),
-then rows; leave the first row's cells empty for a table without a header row. A row is as tall as its text, and a
-row with no words one line (about 7 to 8 mm): a larger line_height makes each row taller, so fewer fit a page.
+two spaces or \ for a line break. Tables: '| Day | Task |', then '|---|---:|' (:--- left, :---: centre, ---: right;
+dashes of unequal length share out the width, each column at least its longest word: |---|---------|), then rows;
+leave the first row's cells empty for a table without a header row. A row with no words is one line tall (7 to 8
+mm; more at a larger line_height).
 
 LAYOUT LINES (each alone on its line):
 ::: sidebar  ...  ::: main     text for the sidebar (needs 'sidebar: left' or 'right'), then back to the main text

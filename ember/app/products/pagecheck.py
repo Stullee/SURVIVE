@@ -19,7 +19,9 @@ pages itself, free, every time, and a paperback is proposed only after a check o
 * the calendar (``calendar``): the dates the pages print, read from their text: a date that doesn't exist, a weekday
   that isn't its date's, a week whose label (KW 1, Week 1) or days aren't that calendar week's, a week missing
   between the first and the last;
-* the AI line (``ai_pages``): the pages that say AI made the book, and how many words share its page.
+* the AI line (``ai_pages``): the pages that say AI made the book, and how many words share its page;
+* placeholders (``placeholders``, 0.40.2): words in square brackets ([Verlag/Herausgeber], [Name]), "Lorem ipsum",
+  TODO: text no one filled in, which a paperback may not print (tools: propose_kdp_book refuses it).
 
 What Ember's code can't judge (whether white space is a title page's or one the owner rejected) is the agent's, on the
 pictures: the measures name the pages to look at.
@@ -112,11 +114,23 @@ class Check:
     calendar: Calendar
     readable: bool  # its pages hold text Ember's code can read
 
+    @property
+    def placeholders(self) -> list[str]:
+        """0.40.2 (analysis-0.40.1, 3.2): each placeholder the pages print, with its page ("page 67:
+        [Verlag/Herausgeber]"). Live, the Kassenbuch's last page printed "Gestaltet von [Verlag/Herausgeber]", and the
+        check, which measured its space, found nothing."""
+        return [f"page {p.number}: {m.group(0)}" for p in self.pages for m in _PLACEHOLDER.finditer(p.text)]
+
     def findings(self) -> list[str]:
-        """What Ember's code is sure of, for the owner's card too: the calendar's mistakes and a missing AI line."""
+        """What Ember's code is sure of, for the owner's card too: the calendar's mistakes, a missing AI line and
+        (0.40.2) a placeholder printed."""
         found = list(self.calendar.findings[:SHOWN])
         if self.readable and not self.ai_pages:
             found.append("no page says the book was made with AI")
+        placeholders = self.placeholders
+        if placeholders:
+            more = f" (and {len(placeholders) - SHOWN} more)" if len(placeholders) > SHOWN else ""
+            found.append(f"a placeholder printed: {', '.join(placeholders[:SHOWN])}{more}")
         return found
 
     def measures(self) -> list[str]:
@@ -144,6 +158,12 @@ class Check:
             lines.append("Calendar, AI line: its pages hold no text Ember's code can read; check them on the pictures.")
             return lines
         lines.append(f"Calendar: {self.calendar.text()}.")
+        placeholders = self.placeholders  # 0.40.2
+        lines.append(
+            f"Placeholders printed (replace each with real words): {', '.join(placeholders[:SHOWN])}."
+            if placeholders
+            else "Placeholders: none (no [words in brackets], Lorem ipsum or TODO)."
+        )
         if self.ai_pages:
             first = self.pages[self.ai_pages[0] - 1]
             last = ", the last page," if first.number == len(self.pages) else ""
@@ -361,6 +381,15 @@ _AI = re.compile(
     r"\b(?:AI|KI)\b|\bA\.I\.|(?i:\b(?:artificial intelligence|künstliche[rn]? intelligenz|intelligence"
     r" artificielle|inteligencia artificial|intelligenza artificiale|inteligência artificial|kunstmatige"
     r" intelligentie)\b)"
+)
+
+
+# --- placeholders (0.40.2) ---
+
+# a word or more in square brackets ([Verlag/Herausgeber], [Name]; not a box to tick, [ ] or [x], nor a note's number,
+# [1]), Lorem ipsum, and the marks of unfinished text
+_PLACEHOLDER = re.compile(
+    r"\[[^\[\]\n]{0,40}?[A-Za-zÄÖÜäöüß]{2}[^\[\]\n]{0,40}\]|(?i:\blorem ipsum\b)|\b(?:TODO|TBD|FIXME|XXX)\b"
 )
 
 

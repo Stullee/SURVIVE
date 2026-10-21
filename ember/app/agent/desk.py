@@ -8,7 +8,8 @@ brainstorm never ran live. So Ember's code names what each venture needs decided
 * answer: a proposed venture whose critic said test or park: answer its flaw (evidence, new numbers) or park it;
 * triage: an idea: research it or park it, while fewer than ventures.MAX_ACTIVE are researched or proposed;
 * brainstorm: while fewer than FUNNEL ideas wait and fewer than FUNNEL ventures have their numbers (0.39.1: and
-  not within BRAINSTORM_REST_DAYS of the last one while none of its ideas was researched).
+  not within BRAINSTORM_REST_DAYS of the last one while none of its ideas was researched; 0.40.2: while none of them
+  moved past triage).
 
 0.19.3 (the owner's view: a venture is something new to try; once they back it, it is a project): a backed venture
 has no next decision here (it was "build": set up its first test). Ember's code opens its project (stages.keep) and
@@ -34,7 +35,7 @@ from . import critic, knockouts, ventures
 from .store import AgentScope
 
 FUNNEL = 5  # ideas waiting, and ventures with numbers, below which a brainstorm is ready
-BRAINSTORM_REST_DAYS = 7  # 0.39.1: no new brainstorm this soon while none of the last one's ideas was researched
+BRAINSTORM_REST_DAYS = 7  # 0.39.1: no new brainstorm this soon while none of the last one's ideas moved on
 URGENT_DAYS = 7  # a venture parked by its stage's rule within this many days is urgent
 URGENT_BUDGET = 0.25  # ... and one with this share of its research budget left
 ITEM_CHARS = 220  # an item's text (YOUR STEP's "Now:", READY's until 0.36.0)
@@ -153,7 +154,10 @@ def brainstorm_rests(rows: list[sqlite3.Row], now: str) -> str:
     """0.39.1 (analysis-0.38.0, 3.3): why no brainstorm is due though the funnel is thin, or "": the last brainstorm's
     ideas (the newest cycle's that made two or more of the agent's) are under BRAINSTORM_REST_DAYS old and none was
     researched. Live, a brainstorm in the owner's "nothing new" week brought six ideas, six cycles parked them one by
-    one, and the funnel they left empty brought the next brainstorm at once: $1.76 in two days, nothing researched."""
+    one, and the funnel they left empty brought the next brainstorm at once: $1.76 in two days, nothing researched.
+    0.40.2 (analysis-0.40.1, 3.4): none moved past triage (researching, proposed or further). Live on 2026-10-21 a
+    brainstorm's six ideas were parked, one after a research call, and that call made the next brainstorm due at
+    once."""
     made_in: dict[int, list[Mapping[str, Any]]] = {}
     for v in rows:
         if v["created_by"] == "agent" and v["created_cycle_id"] is not None:
@@ -164,12 +168,12 @@ def brainstorm_rests(rows: list[sqlite3.Row], now: str) -> str:
     batch = batches[-1]
     made = min(str(v["created_at"]) for v in batch)
     ends = (date.fromisoformat(made[:10]) + timedelta(days=BRAINSTORM_REST_DAYS)).isoformat()
-    researched = any(v["researched"] or v["stage"] not in ("idea", "parked", "killed") for v in batch)
-    if researched or now[:10] >= ends:
+    moved = any(v["stage"] not in ("idea", "parked", "killed") for v in batch)
+    if moved or now[:10] >= ends:
         return ""
     return (
-        f"the last brainstorm's {len(batch)} ideas ({made[:10]}) had no research: the next brainstorm comes on {ends},"
-        " or once one of the ideas is researched"
+        f"none of the last brainstorm's {len(batch)} ideas ({made[:10]}) went on past triage: the next brainstorm comes"
+        f" on {ends}, or once one of them is being researched"
     )
 
 

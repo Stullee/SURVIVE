@@ -3,6 +3,44 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.40.2
+
+Fixes from the diagnostics report of 2026-10-21 (the analysis of 0.40.1): the Haushaltsbuch is on Amazon in German
+and English and the Kassenbuch is ready, but its last page prints a placeholder and its "Text" column is 12 mm wide.
+And from 12:06 on 10-21 a cycle came every half hour for a brainstorm, a triage and blog posts of lines your review had
+stopped.
+
+- The Kassenbuch first. propose_kdp_book now refuses a paperback that prints a placeholder (words in square brackets,
+  Lorem ipsum, TODO), and v4 prints "Gestaltet von [Verlag/Herausgeber] …" on page 67: replace that sentence with words
+  that are true ("Für Vereine, Selbstständige und kleine Unternehmen, die ihre Barkasse 2027 übersichtlich und
+  lückenlos von Hand führen möchten."; the book isn't GoBD software, as page 1 and the description say). The check
+  lists "Placeholders printed" or "Placeholders: none".
+- A table's columns take the width you give them: the dashes of the line under the header, when their lengths differ,
+  are each column's share (`|---|----|----|------------|----|----|----|`), and a column is still at least as wide as
+  its longest word. For the 48 Kassenblatt pages, "| Nr. | Datum | Beleg | Text | Ein € | Aus € | Bestand |" with those
+  dashes makes "Text" 36 mm (21 mm with Einnahme and Ausgabe written out; 12 mm now). make_document names a book's
+  column to write words in that comes out under 13 mm. On page 2, a name needs a line, not an 18 mm cell: "Name, Verein
+  / Unternehmen, Kassenprüfung durch:" and `::: lines 3`.
+- KDP's week begins on Sunday at 00:00 UTC (02:00 your owner's time on 10-25), and Ember's code counts that week, not
+  the last 7 days: the Kassenbuch can be proposed from Sunday 10-25 at 02:00, not 10-26. A refusal says when the next
+  week begins, and so does your KDP section when a format's week is full.
+- A promise of no product line (#67, the Kassenbuch by 10-25: message #204 named no line) can wait on a date:
+  plan_step wait, on date, in the cycle whose step it is, until two days before it is due. From then on it is urgent:
+  keep it, or tell your owner why you can't.
+- A step of the ventures (a brainstorm, a triage, an appraisal) cuts your sleep only when it is urgent (your owner's
+  wish, a park within days). And a brainstorm rests for a week while none of the last one's ideas went on past triage:
+  researching one and parking it no longer brings the next brainstorm at once. Of the 12 ideas of 10-14 and 10-21 you
+  parked 11; your strategy says no new ventures for now.
+- A line today's review says stop is held by Ember's code from the review on: its steps wait until your owner keeps it
+  (that lifts the hold) or drops it. Don't take a cycle to hold it. plan_step resume still lifts the hold if the line
+  has work that can't wait, and it stays lifted for that review.
+- Line #12, the coach bundle, is no KDP book: a check of the Haushaltsbuch in one of its cycles made it one on 10-19.
+  It has a product's stages again, with the critic's fix step, and the fixes in books/coach-fix-ready.md wait for the
+  ads test to end on 10-23. A propose_kdp_book check no longer re-types the line of the cycle it runs in.
+- Requests #140 and #141 were marked done without the books' links at Amazon. Your owner can add them now ("Add its
+  Amazon link" on the request), and your KDP section names a book without one. Until a book has its link, nothing of
+  yours can link it: plan no pin or post "linking to Amazon" for it.
+
 ## 0.40.1
 
 Fixes from the diagnostics report of 2026-10-18 (the analysis of 0.40.0): the Haushaltsbuch's week pages have been

@@ -1509,6 +1509,7 @@ class Drawn:
     pages: tuple[int, ...]  # the pages drawn
     count: int  # its pages in all
     findings: tuple[str, ...]  # what Ember's code is sure is wrong (pagecheck.Check.findings)
+    placeholders: tuple[str, ...] = ()  # 0.40.2: the placeholders its pages print (pagecheck.Check.placeholders)
 
 
 @dataclass(frozen=True)
@@ -2551,7 +2552,9 @@ def _plan_step(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
         # 0.39.1: a venture cycle makes a step of its ventures wait (a day, say; its variant has no other action):
         # there was no way to put one off
         line = None if ctx.venture else ctx.state.focus_project_id
-        if line is None and not ctx.venture:
+        # 0.40.2 (analysis-0.40.1, 3.4): a promise of no product line can wait on a date, in the cycle that has it
+        loose = action == "wait" and plan.owner_promise(conn, ctx.scope, step_id)
+        if line is None and not ctx.venture and not loose:
             raise ToolError("this cycle works on no product line yet: plan_step changes the plan of your step's line")
         if action in ("add", "split", "replace") and not steps:
             raise ToolError(f"{action} needs the new steps (steps)")
@@ -5734,10 +5737,10 @@ def _book(ctx: ToolContext, spec: dict[str, Any], cover_path: str) -> tuple[kdp.
 
 
 def _weekly_titles(ctx: ToolContext, conn: Any, form: str) -> int:
-    """0.25.0: the books of this format proposed in the last 7 days that KDP may still count (not rejected,
-    withdrawn, expired or failed)."""
+    """0.25.0: the books of this format proposed in KDP's week (0.40.2: since its last Sunday at 00:00 UTC; until
+    then the last 7 days, kdp.week_start) that KDP may still count (not rejected, withdrawn, expired or failed)."""
     where, params = ctx.scope.where()
-    since = to_iso(ctx.clock.now() - timedelta(days=7))
+    since = to_iso(kdp.week_start(ctx.clock.now()))
     rows = conn.execute(
         f"SELECT action FROM approvals WHERE {where} AND executor = 'kdp_package' AND created_at >= ?"
         " AND status NOT IN ('rejected', 'withdrawn', 'expired', 'failed')",
@@ -5783,8 +5786,9 @@ def _propose_kdp_book(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
         proposed = _weekly_titles(ctx, conn, book.format)
         if proposed >= kdp.WEEKLY_TITLES:
             raise ToolError(
-                f"you proposed {proposed} {book.format}s in the last 7 days, and KDP lets an account create at most "
-                f"{kdp.WEEKLY_TITLES} new {book.format}s a week: propose the next one later"
+                f"you proposed {proposed} {book.format}s this week (KDP's, from Sunday 00:00 UTC), and KDP lets an"
+                f" account create at most {kdp.WEEKLY_TITLES} new {book.format}s a week: propose the next one from"
+                f" {kdp.next_week(ctx.clock.now(), ctx.clock.tz)}"
             )
         made_request = _new_request(
             ctx,
@@ -5826,7 +5830,12 @@ def _draw_pages(ctx: ToolContext, spec: dict[str, Any], book: kdp.Book, pages: s
     before = ctx.state.drawn.get(path)
     seen = [*before.pages, *checked.shown] if before is not None and before.sha256 == sha256 else checked.shown
     ctx.state.drawn[path] = Drawn(
-        sha256, ctx.state.reply, tuple(sorted(set(seen))), len(checked.pages), tuple(checked.findings())
+        sha256,
+        ctx.state.reply,
+        tuple(sorted(set(seen))),
+        len(checked.pages),
+        tuple(checked.findings()),
+        tuple(checked.placeholders),
     )
     with ctx.db.connection() as conn:
         words = kdp.last_words(conn, ctx.scope, book.title, spec.get("project_id") or ctx.state.focus_project_id)
@@ -5944,6 +5953,11 @@ def _page_check(ctx: ToolContext, book: kdp.Book, qa: Any) -> str:
         raise ToolError(
             f"you checked {path} in this same reply, before its pages reached you: look at them, then propose it in "
             "your next reply with qa"
+        )
+    if drawn.placeholders:  # 0.40.2 (analysis-0.40.1, 3.2): live, "Gestaltet von [Verlag/Herausgeber]" on page 67
+        raise ToolError(
+            f"{path} prints a placeholder ({', '.join(drawn.placeholders[:3])}): write the real words in its source, or"
+            " take the sentence out, make it again and check it; a book never prints [words in brackets]"
         )
     said = " ".join(str(qa or "").split())
     if len(said) > QA_CHARS:

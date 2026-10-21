@@ -473,3 +473,43 @@ one.
 | "Kassenbuch 2027 proposal is coming ~10-25 (weekly publish cap)" | **Not on 0.40.1:** its code refuses until 10-26 (3.3). And it needs three fixes first (3.2) |
 | "Could you let me know if you see any KDP royalties or sales" | **Yes, by 10-27**, for milestone #21 (4.2) |
 | "should I prepare an English-language version of the Haushaltsbuch template once Kassenbuch ships" | **It exists:** #141, published 10-20 (3.7) |
+
+---
+
+## 8. What 0.40.2 does
+
+| | Change | Where |
+|---|---|---|
+| 4.3.1 | A step of the ventures (a brainstorm, a triage, an appraisal, an answer) cuts the sleep only when it is urgent. A brainstorm rests for 7 days while none of the last one's ideas went on past triage (researching, proposed or further): researched and parked, or researched and still an idea, doesn't end the rest | `agent/plan.py` (`_works`, `busy`), `agent/desk.py` (`brainstorm_rests`) |
+| 4.3.2 | A line today's review says stop is held by Ember's code: "Your review of 10-21 says stop: …". Its steps wait, the owner's decision step too. The owner's keep lifts the hold. Ember's plan_step resume lifts it as well, and it stays lifted for that review. Not held: a line on hold already, one the owner kept within a week, one with a pinned step or an open promise. The review's text says Ember's code holds the line | `agent/plan.py` (`_review_holds`, `owner_keep`), `agent/review.py` |
+| 4.3.3 | The books of a format proposed since the last Sunday 00:00 UTC count, not the last 7 days. The refusal says when the next week begins, in the owner's time ("Sunday 10-25 at 02:00"). The planner's KDP section says "its week from Sunday 00:00 UTC; proposed this week", and when the next week begins once a format is full. The guide says it too | `integrations/kdp.py` (`week_start`, `next_week`, `text`), `agent/tools.py` (`_weekly_titles`), `agent/guides/kdp.md` |
+| 4.3.4 | The check finds words in square brackets with two letters or more ("[Verlag/Herausgeber]"; not `[ ]`, `[x]` or `[1]`), "Lorem ipsum", TODO, TBD, FIXME and XXX on the pages. It lists them under the measures and among the findings, which the owner's card shows. propose_kdp_book refuses a paperback whose last check found one. On the Kassenbuch v4: "page 67: [Verlag/Herausgeber]" | `products/pagecheck.py` (`placeholders`), `agent/tools.py` (`_page_check`) |
+| 4.3.5 | When the dashes of a table's separator line differ, they are its columns' shares of the width, in the PDF and the Word copy. Each column is still at least as wide as its longest word. In a book, make_document names a column to write words in (a header word of 4 letters or more) that comes out under 13 mm, with every column's width, and says how to widen it. The guides documents and kdp say so | `products/markup.py` (`Table.widths`), `products/pdf.py` (`_narrow`), `products/word.py`, the two guides |
+| 4.3.6 | plan_step wait works on a promise of no line, in a cycle with no line, until two days before it is due (0.40.1's rule). Every other change without a line is still refused | `agent/tools.py` (`_plan_step`), `agent/plan.py` (`owner_promise`, `_line_step`) |
+| 4.3.7 | A line with an Etsy listing (its own, or moved to it) is typed by it, before the tools its cycles used. Re-typing a plain product no longer reads a propose_kdp_book check. A product made a KDP book by its tools alone is a plain product again: its line has an Etsy listing, no KDP request and no words naming a book. Its open KDP stages close with their template steps. What Ember, the owner or the code added there moves to the product's stages, the critic's fix step among them. That is line #12 at the first keep | `agent/plan.py` (`infer_template`, `_untype`, `_relay`), `agent/ventures.py` (`lists_in`) |
+| 4.3.8 | A KDP request marked done without its link takes it later: "Add its Amazon link" on the request. Migration 0098 lets a closed request take that one change. The planner's KDP section names a book without a link: "nothing can link it" | `agent/owner.py` (`add_link`), `web.py`, `web/static/js/app.js`, `migrations/0098_kdp_link.sql`, `integrations/kdp.py` |
+| 4.3.9 | The workspace's text files come from the whole workspace (up to 10,000 entries), not the tree's first 100 by path. The sources of the 3 newest PDFs make_document made in `books/` come first | `diagnostics.py` (`_workspace_texts`, `BOOK_SOURCES`) |
+
+Where 0.40.2 differs from 4.3:
+- **4.3.2:** the hold is `hold_by` "agent", logged as Ember's code's change. The database knows two holders, Ember and
+  the owner, and the review is Ember's. So Ember can resume a line its review stopped (a promise on it, say), and the
+  code doesn't hold it again for that review. A line with a step the owner pinned or a promise open isn't held: its
+  work keeps the promise.
+- **4.3.3:** `WEEKLY_TITLES` stays 2. The test proposes two ebooks on a Saturday, is refused a third at 22:00 UTC and
+  takes it at Sunday 00:00 UTC.
+- **4.3.5:** 13 mm, not 15. With "Beleg-Nr., Einnahme, Ausgabe" in the header, the dashes alone take "Text" from 12 to
+  15 mm (reproduced). A column is at least as wide as its longest word, and those words fill the 6x9 width. With "Nr. |
+  Datum | Beleg | Text | Ein € | Aus € | Bestand" and `|---|----|----|------------|----|----|----|`, "Text" is 36 mm
+  (21 mm with Einnahme and Ausgabe written out). At 15 mm the warning would also name the 14 mm "Beleg" of that fixed
+  table, where a receipt's number fits. The warning says both: shorter words in the other headers, and the dashes.
+  The CHANGELOG gives Ember that header.
+- **4.3.7:** line #12 becomes a plain product again, not an Etsy download. Re-laying a live line as an Etsy download
+  would open the research, create and release stages it did long ago. Its done stages stay done, its maintain stage
+  comes back, and the critic's fix moves there.
+- **4.3.8:** the request's done already took a link. What was missing is a way to add it afterwards, for #140 and
+  #141. The daily review's prompt is unchanged; the planner's KDP section tells Ember, and the CHANGELOG says to plan
+  no pin or post "linking to Amazon" for a book without its link. The KDP template's step is unchanged.
+- **4.3.9:** the sources are found by `made_pdfs` (the newest PDFs made in `books/`), not by reading each spec. A spec
+  names its PDF; `made_pdfs` knows the file that PDF was made from.
+- **The CHANGELOG** names the Kassenbuch's three fixes for Ember: the sentence on page 67, the header and dashes of
+  the Kassenblatt, the name lines on page 2. It covers the case where the message of 4.1 isn't sent before the upgrade.

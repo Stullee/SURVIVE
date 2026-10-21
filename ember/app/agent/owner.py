@@ -306,6 +306,34 @@ class Owner:
 
         return _reply(run)
 
+    def add_link(self, approval_id: int, body: Any, who: str | None) -> Reply:
+        """0.40.2 (analysis-0.40.1, 3.1): the link of a KDP book at Amazon, for a request marked done without one.
+        Live, both Haushaltsbuch books were marked done with "published" alone, and the daily review planned pins and
+        posts "linking to Amazon" that nothing could make. Ember sees it on its next wake (the KDP section names it)."""
+
+        def run() -> Reply:
+            data = _body(body, {"result_link", "expected_version"})
+            link = _text(data, "result_link", 2_048, required=True)
+            if link is None or not re.match(r"^https?://[^\s@/]+(/\S*)?$", link):
+                raise OwnerError("result_link", "use a plain http(s) link without spaces or user names")
+            with self.db.transaction() as conn:
+                row = self._approval(conn, approval_id)
+                self._check_version(row, data)
+                if row["executor"] != "kdp_package" or row["status"] != "done":
+                    raise OwnerError("id", "only a KDP book you marked done takes its link here", 409)
+                if row["result_link"]:
+                    raise OwnerError("result_link", "this book has its link already", 409)
+                conn.execute(
+                    "UPDATE approvals SET result_link = ?, version = version + 1, seen_cycle_id = NULL"
+                    " WHERE id = ? AND version = ?",
+                    (link, approval_id, row["version"]),
+                )
+                said = f"{who or 'The owner'} added the link of request #{approval_id}"
+                events.record(self.db, "info", "owner", said)
+                return Reply(200, {"approval": self._approval_json(self._approval(conn, approval_id))})
+
+        return _reply(run)
+
     @staticmethod
     def _check_version(row: sqlite3.Row, data: dict[str, Any]) -> None:
         expected = data.get("expected_version")

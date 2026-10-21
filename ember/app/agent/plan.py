@@ -164,11 +164,18 @@ def _close(conn: sqlite3.Connection, node_id: int, now: str, status: str, result
 # --- laying a product out ---
 
 
+KDP_WORDS = re.compile(r"\b(kdp|amazon|paperback|ebook|e-book)\b")  # a line's words that name a KDP book
+
+
 def infer_template(
     conn: sqlite3.Connection, scope: AgentScope, project: Mapping[str, Any], records_only: bool = False
 ) -> templates.Template:
     """A product line's type, from its records first (its requests to the owner, its tools), then its words.
-    ``records_only`` (0.35.0, a generic product re-typed): its requests and the tools of one type only."""
+    ``records_only`` (0.35.0, a generic product re-typed): its requests and the tools of one type only. 0.40.2
+    (analysis-0.40.1, 3.5): a propose_kdp_book check proposes nothing, and may be another line's book: re-typing reads
+    the KDP requests only; and a line with an Etsy listing (made for it or moved to it) is no KDP book or Printify
+    product by its tools. Live, line #12, the coach licence bundle's Etsy listing, became a KDP book on 10-19: a
+    check of the Haushaltsbuch had run in one of its cycles."""
     pid = project["id"]
     where, params = scope.where("a")
     executors = {
@@ -189,7 +196,7 @@ def infer_template(
         if executor in executors:
             return template
     text = f"{project['title']} {project['hypothesis']}".lower()
-    if re.search(r"\b(kdp|amazon|paperback|ebook|e-book)\b", text):
+    if KDP_WORDS.search(text):
         return templates.KDP_BOOK
     used = {
         r[0]
@@ -199,7 +206,9 @@ def infer_template(
             (pid, scope.session, 1 if scope.simulated else 0),
         )
     }
-    if "propose_kdp_book" in used:
+    if ventures.lists_in(conn, "etsy_listings", pid):  # 0.40.2: its listing says what it is
+        return templates.ETSY_DIGITAL if not records_only or "propose_etsy_listing" in used else templates.GENERIC
+    if "propose_kdp_book" in used and not records_only:
         return templates.KDP_BOOK
     if used & {"propose_printify_product", "printify_catalog"}:
         return templates.PRINTIFY_POD
@@ -352,21 +361,38 @@ def _retemplate(
     conn: sqlite3.Connection, scope: AgentScope, product: Mapping[str, Any], project: Mapping[str, Any], now: str
 ) -> list[str]:
     """0.35.0: a product laid out as generic (its words named no type, and its line had no records yet) takes the
-    template its line's records name once they do (its first request to the owner, the tools its cycles used). Its
-    open generic stages close, and that type's stages and steps take their place under the same product (a stage
-    done before stays done): what Ember, the owner or Ember's code added there moves along (to the type's next stage
-    when it has none of that name: a site post has no create stage), a promise's or a decision's step stays where it
-    is (it is taken in any stage). A node's place is fixed, so the product stays under its first project: the owner's
-    Plan tab shows it under its type's."""
+    template its line's records name once they do (its first request to the owner, the tools its cycles used), laid
+    out anew (``_relay``). A node's place is fixed, so the product stays under its first project: the owner's Plan tab
+    shows it under its type's."""
     if templates.by_key(product["template"]).name != templates.GENERIC.name:
         return []
     template = infer_template(conn, scope, project, records_only=True)
     if template.name == templates.GENERIC.name:
         return []
     line = int(project["id"])
+    _relay(conn, scope, product, line, template, f"Ember's code: its type is {template.title} now", now)
+    why = f"its records show its type, {template.title}: that type's stages and steps"
+    change(conn, scope, int(product["id"]), None, "code", "replace", why, now)
+    return [
+        f"Plan tree: line #{line}'s records show its type, {template.title}: it takes that type's stages and steps."
+    ]
+
+
+def _relay(
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    product: Mapping[str, Any],
+    line: int,
+    template: templates.Template,
+    moved: str,
+    now: str,
+) -> None:
+    """A product laid out as ``template`` (0.35.0, from _retemplate; 0.40.2: _untype too): its open stages close, and
+    the template's stages and steps take their place under the same product (a stage done before stays done): what
+    Ember, the owner or Ember's code added there moves along (to the type's next stage when it has none of that name: a
+    site post has no create stage), a promise's or a decision's step stays where it is (it is taken in any stage)."""
     audience = str(product["audience"] or "both")
     old = {str(s["stage"]): s for s in _stages(conn, scope, product["id"]) if s["status"] != "dropped"}
-    moved = f"Ember's code: its type is {template.title} now"
     made: dict[str, int] = {}
     for seq, stage in enumerate(template.stages):
         row = old.get(stage.stage)
@@ -403,10 +429,35 @@ def _retemplate(
         _close(conn, row["id"], now, "dropped", moved)
     _update(conn, product["id"], now, template=template.key)
     _platform(conn, scope, template.platform, now)  # its type's project, where the owner's tab shows it
-    why = f"its records show its type, {template.title}: that type's stages and steps"
+
+
+def _untype(
+    conn: sqlite3.Connection, scope: AgentScope, product: Mapping[str, Any], project: Mapping[str, Any], now: str
+) -> list[str]:
+    """0.40.2 (analysis-0.40.1, 3.5): a product re-typed a KDP book by a propose_kdp_book check alone (until 0.40.2,
+    infer_template), whose line has an Etsy listing, no KDP request and no words naming a KDP book, is the generic
+    product it was again (``_relay``): the KDP stages it hadn't done close with their steps of the template, and what
+    Ember, the owner or Ember's code added there moves to its product's stages. Live, line #12 (the coach licence
+    bundle's Etsy listing) became a KDP book on 10-19, with a blog step "naming the book", and its critic's fix moved
+    under the KDP stages."""
+    if templates.by_key(product["template"]).name != templates.KDP_BOOK.name:
+        return []
+    pid = int(project["id"])
+    where, params = scope.where("a")
+    asked = conn.execute(
+        "SELECT 1 FROM approvals a LEFT JOIN cycles y ON y.id = a.cycle_id"
+        f" WHERE {where} AND COALESCE(a.project_id, y.project_id) = ? AND a.executor = 'kdp_package' LIMIT 1",
+        (*params, pid),
+    ).fetchone()
+    words = f"{project['title']} {project['hypothesis']}".lower()
+    if asked is not None or KDP_WORDS.search(words) or not ventures.lists_in(conn, "etsy_listings", pid):
+        return []
+    why = "Ember's code: its line is an Etsy listing's, not a KDP book's"
+    _relay(conn, scope, product, pid, templates.GENERIC, why, now)
     change(conn, scope, int(product["id"]), None, "code", "replace", why, now)
     return [
-        f"Plan tree: line #{line}'s records show its type, {template.title}: it takes that type's stages and steps."
+        f"Plan tree: line #{pid} holds an Etsy listing: it is no KDP book. Its KDP stages are closed, and the steps"
+        " added there move to its product's stages."
     ]
 
 
@@ -623,7 +674,7 @@ def keep(
     for product in nodes(conn, scope, "level = 'product' AND status = 'open'"):
         project = conn.execute("SELECT * FROM projects WHERE id = ?", (product["project_id"],)).fetchone()
         if project is not None:
-            retyped = _retemplate(conn, scope, product, project, now)
+            retyped = _untype(conn, scope, product, project, now) or _retemplate(conn, scope, product, project, now)
             if retyped:
                 said += retyped
                 product = node(conn, scope, int(product["id"])) or product
@@ -644,6 +695,7 @@ def keep(
     said += _ventures(conn, scope, now)  # 0.37.0: each venture a node, its next decision a step
     said += _owner_owed(conn, scope, now)  # 0.37.0: and what is owed to the owner of no product
     said += _review_stops(conn, scope, now, today)  # 0.39.1: a line the review says stop is the owner's to close
+    said += _review_holds(conn, scope, now, today)  # 0.40.2: and it waits on hold until they decide
     said += _review_changes(conn, scope, now, today)  # 0.39.6: and a change it decides is a step of the line's
     said += _lift_waits(conn, scope, now, today)
     _clocks(conn, scope, now, today, channels, day_start)
@@ -719,7 +771,7 @@ def _ventures(conn: sqlite3.Connection, scope: AgentScope, now: str) -> list[str
     """The Ventures project with a node for each venture being explored and its next decision as a step (the step
     before it closed once its stage moved on), the node closed once the venture is backed or live (done: its work is
     its product line's) or parked or killed (dropped); and a brainstorm step while the funnel is thin
-    (desk.brainstorm_due; 0.39.1: not while the last brainstorm's ideas had no research, desk.brainstorm_rests).
+    (desk.brainstorm_due; 0.39.1: not while none of the last brainstorm's ideas went on, desk.brainstorm_rests).
     Kept before every plan."""
     top_id = _platform(conn, scope, "ventures", now)
     first = not nodes(conn, scope, "level = 'venture'")
@@ -762,7 +814,7 @@ def _ventures(conn: sqlite3.Connection, scope: AgentScope, now: str) -> list[str
             conn, scope, now, parent_id=here_id, level="step", kind=kind, template=template, title=title, source="code"
         )
     due = desk.brainstorm_due(rows)
-    rest = desk.brainstorm_rests(rows, now) if due else ""  # 0.39.1: not while the last one's ideas had no research
+    rest = desk.brainstorm_rests(rows, now) if due else ""  # 0.39.1: not while none of the last one's ideas went on
     if rest:
         due = ""
     brainstorms = nodes(conn, scope, "level = 'step' AND status = 'open' AND template = ?", (BRAINSTORM_TEMPLATE,))
@@ -1789,6 +1841,57 @@ def _review_stops(conn: sqlite3.Connection, scope: AgentScope, now: str, today: 
     return said
 
 
+REVIEW_HOLD = "Your review of"  # 0.40.2: how the hold a review's stop puts on its line begins (_review_holds)
+
+
+def _review_holds(conn: sqlite3.Connection, scope: AgentScope, now: str, today: date) -> list[str]:
+    """0.40.2 (analysis-0.40.1, 3.4): a line today's review says stop is held by Ember's code until the owner keeps it
+    (owner_keep lifts the hold) or drops it: its steps wait, and no cycle has to take one of them to hold it. Live on
+    2026-10-21 two cycles ($0.37) took the monthly blog post of a line whose review had said stop, only to hold the
+    line, and each cut the sleep before it to 30 minutes. The hold is Ember's (hold_by 'agent': the review is hers, and
+    plan_step resume lifts it, and it stays lifted for that review), made by her code. Not a line on hold already,
+    one the owner kept within STOP_ASK_DAYS, nor one with a step the owner pinned or a promise open (its work keeps the
+    promise)."""
+    where, params = scope.where()
+    row = conn.execute(
+        f"SELECT day, created_at, verdicts FROM reviews WHERE {where} AND day = ? AND status = 'ok'"
+        " ORDER BY id DESC LIMIT 1",
+        (*params, today.isoformat()),
+    ).fetchone()
+    try:
+        verdicts = json.loads(row["verdicts"] or "[]") if row is not None else []
+    except ValueError:
+        return []
+    said: list[str] = []
+    recent = (today - timedelta(days=STOP_ASK_DAYS)).isoformat()
+    for v in verdicts if isinstance(verdicts, list) else []:
+        if not isinstance(v, dict) or v.get("verdict") != "stop" or not isinstance(v.get("project_id"), int):
+            continue
+        line = int(v["project_id"])
+        project = store.project(conn, scope, line)
+        product = nodes(conn, scope, "level = 'product' AND status = 'open' AND project_id = ?", (line,))
+        if project is None or project["status"] not in OPEN_STATUSES or not product or product[0]["hold_reason"]:
+            continue
+        if owner_decision(conn, scope, line, recent) == "kept":
+            continue
+        kept = "project_id = ? AND level = 'step' AND status = 'open' AND (pinned = 1 OR kind = 'promise')"
+        if nodes(conn, scope, kept, (line,)):
+            continue
+        resumed = conn.execute(  # since this review: plan_step resume, or the owner's
+            "SELECT 1 FROM plan_changes WHERE node_id = ? AND action = 'resume' AND created_at >= ? LIMIT 1",
+            (product[0]["id"], row["created_at"]),
+        ).fetchone()
+        if resumed is not None:
+            continue
+        why = " ".join(str(v.get("why") or "").split())
+        hold_why = _cut(f"{REVIEW_HOLD} {str(row['day'])[5:]} says stop: {why}", 200)
+        _update(conn, product[0]["id"], now, hold_reason=hold_why, hold_by="agent")
+        until = f"{hold_why} (until your owner keeps or drops it)"
+        change(conn, scope, product[0]["id"], None, "code", "hold", until, now)
+        said.append(f"Plan tree: line #{line} is on hold until your owner keeps or drops it: {hold_why}")
+    return said
+
+
 REVIEW_CHANGE = "review/change"  # 0.39.6: the template of a change today's review decided for a line
 
 
@@ -2739,15 +2842,16 @@ def busy(conn: sqlite3.Connection, scope: AgentScope, steered: Steer, now: str, 
     on a limit of the owner's as the cycle ends (``limits``): its own request or message may have used it up, and the
     tool would refuse the next cycle's (a step waiting on one when the cycle began was no candidate). One the cycle
     closed waits on nothing: the steps after it may be ready now. 0.39.6: only work (``_works``): not a chore, a
-    report, nor a step of a channel at its floor, unless something makes it urgent."""
+    report, nor a step of a channel at its floor, unless something makes it urgent. 0.40.2: nor a step of the
+    ventures (a brainstorm, a triage), unless it is urgent."""
     tried = {c.step.id for c in steered.found if c.tried}
     own = steered.step.id if steered.step is not None else None
     facts = Facts(conn, scope, now)
     found = limits(conn, scope, steered.day_start or _midnight(from_iso(now).date()))
     for step, parts in steered.pick.ranked:
-        if not _works(parts):
-            continue
         row = node(conn, scope, step.id)
+        if not _works(parts, venture=row is not None and row["template"] in VENTURE_TEMPLATES):
+            continue
         if row is not None and row["status"] == "open" and _limited(facts, row, found) is not None:
             continue
         if step.id == own:
@@ -2760,15 +2864,20 @@ def busy(conn: sqlite3.Connection, scope: AgentScope, steered: Steer, now: str, 
     return False
 
 
-def _works(parts: weights.Parts) -> bool:
+def _works(parts: weights.Parts, venture: bool = False) -> bool:
     """0.39.6 (analysis-0.39.5, 4.2.1): whether a ready step is work worth cutting the agent's sleep for (``busy``):
     urgent (a promise or decision near its day, a defect, a missed views bar, a launch's first marketing, a step due
     today), or of a kind that makes or ships (not a chore or a report) on a channel above its floor. Live on 2026-10-15
     every sleep the agent chose (mostly 4 to 6 hours) was cut to 30 minutes: 16 cycles from 00:07 to 07:55 spent $5.59
     of the $7 cap, five of them on the critic's chores for listings 1 to 3 people had seen and one on a views
-    baseline, and the owner's decision at 07:48 waited for 20:00. A venture's step still cuts it: exploring is work."""
+    baseline, and the owner's decision at 07:48 waited for 20:00. 0.40.2 (analysis-0.40.1, 3.4): a step of the
+    ventures (``venture``: a brainstorm, a triage, an appraisal) only when urgent (the owner's wish, a park within
+    days). Live on 2026-10-21 a brainstorm and a triage cut every sleep to 30 minutes: 6 ideas, all 6 parked, and the
+    next brainstorm ready at once."""
     if parts.urgency > 0:
         return True
+    if venture:
+        return False
     # 0.39.8 (analysis-0.39.6, 3.4): a channel clearly above its floor (weights.CHANNEL_WORKS): Bluesky at 0.21 cut
     # 7 of 12 sleeps on 10-16 with a listing view for every five posts
     return parts.kind >= weights.KIND["create"] and parts.channel >= weights.CHANNEL_WORKS
@@ -3448,15 +3557,25 @@ def _open_product(conn: sqlite3.Connection, scope: AgentScope, line: int) -> sql
     return found[0]
 
 
+def owner_promise(conn: sqlite3.Connection, scope: AgentScope, step_id: int | None) -> bool:
+    """0.40.2 (analysis-0.40.1, 3.4): whether ``step_id`` keeps a promise of no product line (the Owner project's): a
+    cycle on it has no line, and plan_step wait was refused ("this cycle works on no product line yet"). Live, the
+    promise to propose the Kassenbuch by 10-25, which KDP's weekly limit held until then, could only be tried and
+    refused, a cycle a day."""
+    row = node(conn, scope, step_id) if step_id is not None else None
+    return row is not None and row["level"] == "step" and row["kind"] == "promise" and row["project_id"] is None
+
+
 def _line_step(conn: sqlite3.Connection, scope: AgentScope, step_id: int | None, line: int | None) -> sqlite3.Row:
-    """An open step of product line ``line``; 0.39.1: with no line (a venture cycle's wait), a step of the Ventures."""
+    """An open step of product line ``line``; 0.39.1: with no line (a venture cycle's wait), a step of the Ventures;
+    0.40.2: or a promise of no product line (``owner_promise``)."""
     if step_id is None:
         raise PlanError("step_id", "name the step (step_id)")
     row = node(conn, scope, step_id)
     if row is None or row["level"] != "step":
         raise PlanError("step_id", f"there is no step #{step_id}", 404)
     if line is None:
-        if row["template"] not in VENTURE_TEMPLATES:
+        if row["template"] not in VENTURE_TEMPLATES and not owner_promise(conn, scope, step_id):
             raise PlanError("step_id", f"step #{step_id} isn't a step of your ventures: a venture cycle changes those")
     elif row["project_id"] != line:
         raise PlanError(
@@ -3996,7 +4115,13 @@ def owner_keep(conn: sqlite3.Connection, scope: AgentScope, node_id: int, why: s
     words = " ".join(why.split())[:200] or "keep it"
     _close(conn, row["id"], now, "done", f"Your owner kept it: {words}", by="owner")
     change(conn, scope, row["id"], None, "owner", "close", f"{(who or 'your owner')[:60]} kept it: {words}", now)
-    return int(row["project_id"])
+    line = int(row["project_id"])
+    for product in nodes(conn, scope, "level = 'product' AND status = 'open' AND project_id = ?", (line,)):
+        # 0.40.2: the hold a review's stop put on the line (_review_holds) ends with the owner's keep
+        if product["hold_by"] == "agent" and str(product["hold_reason"] or "").startswith(REVIEW_HOLD):
+            _update(conn, product["id"], now, hold_reason=None, hold_by=None)
+            change(conn, scope, product["id"], None, "owner", "resume", f"{(who or 'your owner')[:60]} kept it", now)
+    return line
 
 
 CLOSED_WORDS = {"close": "closed", "drop": "dropped", "resume": "resumed"}

@@ -82,6 +82,7 @@ def test_the_rebuilt_tree_keeps_its_nodes_and_an_existing_hold_is_embers(tmp_pat
         95,
         96,
         97,
+        98,
     ]
     conn = sqlite3.connect(db_file)
     conn.row_factory = sqlite3.Row
@@ -139,7 +140,17 @@ def test_the_current_instructions_become_the_first_rules_one_a_paragraph_or_a_li
     conn.execute(said, ("dry_run", 1, "2026-10-02T10:00:00Z", None, ""))  # cleared: no rules
     conn.commit()
     conn.close()
-    assert migrate(db_file, discover_migrations(), backup_dir=tmp_path / "backups") == [90, 91, 92, 93, 94, 95, 96, 97]
+    assert migrate(db_file, discover_migrations(), backup_dir=tmp_path / "backups") == [
+        90,
+        91,
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+    ]
     conn = sqlite3.connect(db_file)
     conn.row_factory = sqlite3.Row
     rules = [dict(r) for r in conn.execute("SELECT mode, session, place, created_at, entered_by, text FROM rules")]

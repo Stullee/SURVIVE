@@ -175,11 +175,10 @@ def test_the_haushaltsbuch_v14_month_is_named_and_a_month_that_fits_is_not() -> 
 def test_the_guides_say_what_a_week_page_holds_and_the_renderer_agrees() -> None:
     kdp = " ".join(tools.guide_text("kdp").split())
     assert (
-        "a 6x9 page at size 12.5 holds about 20 empty rows, 10 with a heading, a 3-row total and 4 writing lines;"
-        " fewer at a larger line_height"
+        "a 6x9 page at size 12.5 holds about 20 empty rows, 10 with a heading, a 3-row total and 4 writing lines."
     ) in kdp
     documents = " ".join(tools.guide_text("documents").split())
-    assert "a row with no words one line (about 7 to 8 mm): a larger line_height makes each row taller" in documents
+    assert "A row with no words is one line tall (7 to 8 mm; more at a larger line_height)" in documents  # 0.40.2
     assert rendered(book(week(10, 4))).pages == 1
     assert OVERRUN.format(pages=1) in rendered(book(week(11, 4))).warnings
     assert rendered(book(week(15, 0))).pages == 1 and rendered(book(week(16, 0))).pages == 2

@@ -3318,6 +3318,8 @@
       }
       return tools.concat([panelButton(it, "done", "Mark done"), panelButton(it, "failed", "Mark failed")]);
     }
+    // 0.40.2: a KDP book marked done without its link at Amazon takes it later
+    if (a.status === "done" && executor === "kdp_package" && !a.result_link) return [panelButton(it, "link", "Add its Amazon link")];
     return [];
   }
 
@@ -3420,6 +3422,16 @@
         return "Approved. Carry it out, then mark it done or failed.";
       };
       return spec;
+    }
+    if (mode === "link") {
+      return {
+        mode: mode, title: "Add the book's link at Amazon", submit: "Add link",
+        intro: [h("p", { text: name + " names the book by this link (its posts and pins can then link it); it reads it on its next wake." })],
+        fields: [{ name: "result_link", label: "Link to the book at Amazon", inputmode: "url", check: linkProblem, required: true, missing: "Paste the book's link." }],
+        url: url + "link",
+        body: function (v) { return { result_link: v.result_link, expected_version: version }; },
+        done: function () { return "Link added. " + name + " sees it on its next wake."; },
+      };
     }
     var failed = mode === "failed";
     if (executor === "etsy_listing" && failed) {

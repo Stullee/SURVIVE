@@ -843,8 +843,10 @@ class CycleRunner:
                         " post's numbers."
                     )
                 blog_text = ""
-            books = (  # 0.25.0
-                kdp.text(conn, self.scope, self.clock.now(), self.settings.kdp_author) if self.kdp_on else ""
+            books = (  # 0.25.0; 0.40.2: the owner's time zone says when KDP's next week begins
+                kdp.text(conn, self.scope, self.clock.now(), self.settings.kdp_author, self.clock.tz)
+                if self.kdp_on
+                else ""
             )
             return context.snapshot(
                 conn,
