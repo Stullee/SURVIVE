@@ -3,5 +3,8 @@
 pytest==9.1.1
 # The tests in parallel, one worker per CPU (python -m pytest -n auto).
 pytest-xdist==3.8.0
+# 0.41.0: line coverage in CI, with a floor (python -m pytest -n auto --cov=app).
+pytest-cov==7.1.0
+coverage==7.16.2
 PyYAML==6.0.3
 ruff==0.16.9
