@@ -111,7 +111,7 @@ def test_the_maskers_pattern_has_only_the_words_a_text_has() -> None:
     report_like = '| 412 | ok | workspace_write | {"path": "books/x-v18.md"} | Woche 12 Montag Bilanz ⏎ \n' * 2500
     begun = time.perf_counter()
     assert masker(report_like) == report_like
-    assert time.perf_counter() - begun < 2
+    assert time.perf_counter() - begun < 5  # 7.8 s before here (0.12 s now); generous for a busy CI runner
 
 
 @contextmanager

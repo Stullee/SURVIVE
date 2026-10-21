@@ -55,7 +55,7 @@ def test_a_workshop_pdf_with_40_percent_signs_is_checked_at_once(head: bytes, me
     started = time.perf_counter()
     with pytest.raises(checks.Refused, match=message):
         checks.check("report.pdf", a_pdf(head))
-    assert time.perf_counter() - started < 0.5
+    assert time.perf_counter() - started < 5  # days before; generous for a busy CI runner
 
 
 def test_a_stream_named_indirectly_is_still_found() -> None:
@@ -76,7 +76,7 @@ def test_a_workshop_pdf_of_stream_keywords_without_an_end_is_refused_at_once() -
     ):
         with pytest.raises(checks.Refused, match="streams inside streams or without an end"):
             checks.check("report.pdf", data)
-    assert time.perf_counter() - started < 3
+    assert time.perf_counter() - started < 20  # hours before; generous for a busy CI runner
 
 
 # --- 2. PR2: headings and layout lines ---
@@ -87,7 +87,7 @@ def test_a_heading_or_layout_line_with_thousands_of_spaces_is_read_at_once() -> 
     source = "---\ntitle: T\n---\n" + ("# a" + " " * 1_500 + "x ##\n\n") * 40 + "::: space" + " " * 16_000 + "8\n"
     started = time.perf_counter()
     document = markup.parse(source)
-    assert time.perf_counter() - started < 0.5
+    assert time.perf_counter() - started < 5  # 267 s before; generous for a busy CI runner
     headings = [b for b in document.main if isinstance(b, markup.Heading)]
     assert len(headings) == 40 and markup.plain(headings[0].runs) == "a" + " " * 1_500 + "x"
     assert document.main[-1] == markup.Space(8.0)
@@ -101,10 +101,20 @@ def test_a_heading_or_layout_line_with_thousands_of_spaces_is_read_at_once() -> 
 
 
 def test_a_paragraph_of_unpaired_emphasis_is_read_at_once() -> None:
-    """A closing '_' looked through every open '*' before it: 16,000 of each took 7 s."""
-    started = time.perf_counter()
+    """A closing '_' looked through every open '*' before it: 16,000 of each took 7 s. Timed by how the time grows
+    (four times the text: four to six times as long, where it was seventeen), not by a bound in seconds: on CI's
+    runner the linear version took 1.05 s once, where it takes 0.3 s here."""
+
+    def took(count: int) -> float:
+        best = float("inf")
+        for _ in range(3):
+            started = time.perf_counter()
+            markup.inline("*a_ " * count)
+            best = min(best, time.perf_counter() - started)
+        return best
+
+    assert took(16_000) < 10 * took(4_000) + 0.1  # linear: 4 to 6 here; the quadratic version: 17
     runs = markup.inline("*a_ " * 16_000)
-    assert time.perf_counter() - started < 1
     assert markup.plain(runs) == "*a_ " * 16_000
     assert markup.inline("**bold _and_ more** *x") == [
         markup.Run("bold ", bold=True),
@@ -165,7 +175,7 @@ def test_a_spreadsheet_picture_counts_with_excel_s_wildcards() -> None:
     assert not sheets._matches(None, "*") and sheets._matches(None, "<>*")
     started = time.perf_counter()
     assert not sheets._like("a" * 20_000, "*aaaaaaaaaab")
-    assert time.perf_counter() - started < 0.5
+    assert time.perf_counter() - started < 5  # generous for a busy CI runner
 
 
 # --- 5. PR9: KDP's printing cost ---
@@ -275,7 +285,7 @@ def _patterns() -> dict[str, re.Pattern[Any]]:
 def test_every_pattern_of_the_products_and_the_integrations_takes_linear_time() -> None:
     """P1 and PR2 were patterns that backtracked on a long run of one character, holding the app: each pattern of
     these modules (their module's constants) gets long runs after what leads into each of its repetitions, and must
-    answer in 0.5 s. A pattern only ever matched at one place is timed so; one only applied to short texts is listed
+    answer in 2 s. A pattern only ever matched at one place is timed so; one only applied to short texts is listed
     in BOUNDED, with why."""
     patterns = _patterns()
     assert len(patterns) > 100 and set(ANCHORED) | set(BOUNDED) <= set(patterns)
@@ -288,7 +298,7 @@ def test_every_pattern_of_the_products_and_the_integrations_takes_linear_time() 
             started = time.perf_counter()
             apply(text)
             took = time.perf_counter() - started
-            if took > 0.5:
+            if took > 2:  # a backtracking pattern takes many seconds on 20,000 characters; a busy CI runner less than 2
                 slow.append(f"{name}: {took:.1f} s on {text[:24]!r}... ({len(text):,} characters)")
     assert not slow, "\n".join(slow)
 
@@ -298,6 +308,6 @@ def test_a_street_with_many_numbers_is_read_at_once() -> None:
     further ' -1' doubled the time (20 took 0.5 s; site_address takes 300 characters)."""
     started = time.perf_counter()
     assert not site._STREET.match("Main St 1" + " -1" * 95 + "!")
-    assert time.perf_counter() - started < 0.1
+    assert time.perf_counter() - started < 2  # each ' -1' doubled the time before; generous for a busy CI runner
     assert site._STREET.match("Hauptstraße 5 - 7a") and site._STREET.match("Am Markt 12/3 b")
     assert not site._STREET.match("Postfach") and not site._STREET.match("Main St 1 -")
