@@ -1145,7 +1145,9 @@ def test_the_mail_section_shows_unread_mail_as_data(data_dir: Path) -> None:
         " answer: #1 (today): answer with propose_email and reply_to_email_id (guide 'email'), or inquiry_done when"
         " none is needed."
     )
-    assert f"== MAIL ==\n{section}\n\n{waiting}\n\n== FOCUS ==" in brief
+    # 0.40.3 (analysis-0.40.1 codebase, C2): the release notes (YOUR SOFTWARE) may come between them and FOCUS
+    assert f"== MAIL ==\n{section}\n\n{waiting}\n\n" in brief
+    assert brief.index(waiting) < brief.index("== FOCUS ==")
     assert all(r["messages"][0] == transport.sent[1]["messages"][0] for r in transport.sent[1:])  # byte-stable
 
     snap = context.Snapshot(
