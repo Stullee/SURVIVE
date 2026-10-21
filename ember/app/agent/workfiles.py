@@ -85,6 +85,21 @@ def filed(conn: sqlite3.Connection, scope: AgentScope) -> dict[str, sqlite3.Row]
     return {str(r["path"]): r for r in rows}
 
 
+def lines_of(conn: sqlite3.Connection, scope: AgentScope, paths: list[str]) -> dict[str, int]:
+    """0.42.1 (analysis-0.40.1 codebase, 6.2 "Your hold, on files too"): the product line each of ``paths`` is filed
+    under, by path (one filed under none, or not filed, left out): tools._held_files refuses to write, make or pay a
+    model to build on a held line's file."""
+    if not paths:
+        return {}
+    marks = ", ".join("?" for _ in paths)
+    rows = conn.execute(
+        "SELECT path, project_id FROM workspace_files WHERE mode = ? AND session = ? AND project_id IS NOT NULL"
+        f" AND path IN ({marks}) ORDER BY path",
+        (scope.mode, scope.session, *paths),
+    ).fetchall()
+    return {str(r["path"]): int(r["project_id"]) for r in rows}
+
+
 def backfill(conn: sqlite3.Connection, scope: AgentScope, jail: Jail, now: str) -> int:
     """The files in the workspace from before 0.26.0, filed under the focus of the cycle whose tool call first wrote
     them (and the cycle and tool that wrote them last); once per mode and session. Returns how many were filed."""

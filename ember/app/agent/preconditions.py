@@ -28,12 +28,12 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, tzinfo
+from datetime import date, datetime, tzinfo
 from functools import partial
 
 from ..economy.clock import owner_timezone, to_iso
 from ..integrations import kdp, publish_queue
-from . import demand, obligations, store
+from . import demand, obligations, paid, store
 from .store import AgentScope
 
 
@@ -54,6 +54,7 @@ class Facts:
     # a message that answers one of the owner's, or reports a promise they heard nothing of since (``untold``): the
     # day's limit lets it through
     answers: bool = False
+    listing: int | None = None  # 0.42.1: the listing a change is for (a paid test's leaves it as it is, ``_paid``)
 
 
 @dataclass(frozen=True)
@@ -160,6 +161,23 @@ def _kdp_week(facts: Facts) -> str | None:
     )
 
 
+def _paid(facts: Facts) -> str | None:
+    """0.42.1 (analysis-0.40.1 codebase, 6.2 "A paid test in the plan"): no change of a listing in the owner's paid test
+    while it runs (paid.running): what the ads bring is judged on the listing as it was. STATUS asked Ember to leave
+    it alone and no tool refused a change, so the plan made the critic's fixes for it ready: live, a cycle spent one of
+    Ember's two waits a day to keep the coach bundle as it was. Renewing or deactivating it isn't a change."""
+    if facts.listing is None:
+        return None
+    test = paid.running(facts.conn, facts.scope, facts.now.astimezone(facts.tz).date()).get(facts.listing)
+    if test is None:
+        return None
+    ends = date.fromisoformat(test["ends_on"])
+    return (
+        f"listing #{facts.listing} is in your owner's paid test (request #{test['approval_id']}): leave it as it is"
+        f" until the test ends on {ends:%m-%d}, then judge it and change it"
+    )
+
+
 def untold(conn: sqlite3.Connection, scope: AgentScope, obligation_id: int) -> bool:
     """0.15.0: whether ``obligation_id`` is an open promise the owner heard nothing of since the message that made it:
     a message reporting on it goes through the day's limit (``answers``), so obligation_done can close it (live: the
@@ -185,6 +203,7 @@ UNREAD = Rule("UNREAD", "unread", _unread)
 MESSAGES = Rule("MESSAGES", "messages", _told)
 DEMAND = Rule("DEMAND", "blocked", _demand)
 KDP_WEEK = Rule("KDP_WEEK", "blocked", _kdp_week)
+PAID = Rule("PAID", "paid", _paid)  # 0.42.1
 
 # Each tool's preconditions, in the order it checks them (a request type's cap last: tools._new_request checks it)
 TOOLS: dict[str, tuple[Rule, ...]] = {
@@ -195,8 +214,8 @@ TOOLS: dict[str, tuple[Rule, ...]] = {
     "propose_reddit_post": (PUBLISH,),
     "propose_etsy_listing": (DEMAND, SELL),
     "propose_printify_product": (DEMAND, SELL),
-    "propose_etsy_edit": (SELL,),
-    "propose_printify_edit": (SELL,),
+    "propose_etsy_edit": (PAID, SELL),
+    "propose_printify_edit": (PAID, SELL),
     "propose_kdp_book": (KDP_WEEK, SELL),
     "propose_email": (ROOM["contact"],),
     "message_owner": (UNREAD, MESSAGES),

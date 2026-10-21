@@ -84,6 +84,7 @@ from . import (
     metrics,
     netguard,
     obligations,
+    paid,
     plan,
     policy,
     preconditions,
@@ -1798,6 +1799,7 @@ def _run(
                 raise ToolError(f"{other[0]} is set in a venture cycle; here {name} takes {', '.join(spec.fields)}")
         cut_notes: list[str] = []
         args = validate(spec, unleaked(spec, raw_input, cut_notes, leaked), cut_notes)
+        _held_files(ctx, name, args)  # 0.42.1: a held line's files, and listings
         handler = HANDLERS[name]
         if name in CALLING_TOOLS:  # model calls: network, and no transaction held meanwhile
             outcome = _noted(handler(ctx, args), cut_notes)
@@ -2513,7 +2515,8 @@ def _project_update(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcom
     work = status in ("idea", "active") or bool(args.get("bet")) or args.get("venture_id") is not None
     work = work or args.get("listing_id") is not None  # 0.39.8: a listing moved to it is the line's work
     # 0.39.3: the record of a line the owner holds is kept like another line's: no cycle takes the line for it
-    keeps = not work and plan.line_held(conn, ctx.scope, int(row["id"])) is not None
+    # (0.42.1: or a review's stop holds, _held)
+    keeps = not work and _held(conn, ctx.scope, int(row["id"]), "update") is not None
     if work or (ctx.state.focus_project_id is None and not keeps):
         _line(ctx, conn, int(row["id"]), "update")
     if status in ("idea", "active") and status != row["status"]:
@@ -2670,7 +2673,7 @@ def _plan_step(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     # 0.39.1 (analysis-0.38.0, 3.6): a step to say done, wait, split or replace is YOUR STEP unless one is named. Live,
     # four calls were refused for naming none (or the step in ref), each meaning the cycle's own.
     step_id = args.get("step_id")
-    if step_id is None and action in ("split", "replace", "done", "wait", "skip"):
+    if step_id is None and action in ("split", "replace", "done", "wait", "skip", "decline"):
         step_id = ctx.state.step_id
     if action == "resume":
         line = args.get("project_id")
@@ -2728,6 +2731,11 @@ def _plan_step(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
             text = plan.hold(conn, ctx.scope, line, why, ctx.cycle_id, now)
         elif action == "skip":  # 0.39.8: a recurring pin, post or blog post, for its period
             text = plan.skip_step(conn, ctx.scope, line, step_id, why, ctx.cycle_id, now)
+        elif action == "decline":  # 0.42.1: a rework of a request the owner rejected, with why they see
+            text = plan.decline_step(conn, ctx.scope, line, step_id, why, ctx.cycle_id, now)
+            events.record(
+                ctx.db, "info", "agent", f"Ember declined the rework of plan step #{step_id} (line #{line}): {why}"
+            )
         else:
             text = plan.resume(conn, ctx.scope, line, why, ctx.cycle_id, now)
     except plan.PlanError as exc:
@@ -3271,15 +3279,12 @@ def _line(ctx: ToolContext, conn: Any, project_id: int | None, what: str) -> Non
     which no cycle takes: a cycle without a line took the first one it worked on, a held one too, and no tool read
     the owner's hold. 0.39.7 (analysis-0.39.1, 9.2): in every cycle, and before another line's refusal: a venture
     cycle, which isn't one line's, filed a request about a held line, and a cycle on another line heard that the held
-    line's work waits for a cycle of its own."""
+    line's work waits for a cycle of its own. 0.42.1: and for a line a review's stop holds (``_held``)."""
     if project_id is None:
         return
-    held = plan.line_held(conn, ctx.scope, int(project_id))
+    held = _held(conn, ctx.scope, int(project_id), what)
     if held is not None:
-        raise ToolError(
-            f"your owner holds product line #{project_id} ({_cut(held, 80)}): no {what} for it until they resume it, "
-            "not even for a promise about it; work on what doesn't need it"
-        )
+        raise ToolError(held)
     if not ctx.state.one_line:
         return
     line = ctx.state.focus_project_id
@@ -3290,6 +3295,74 @@ def _line(ctx: ToolContext, conn: Any, project_id: int | None, what: str) -> Non
         )
     if line is None:
         ctx.state.touched = int(project_id)
+
+
+def _held(conn: Any, scope: AgentScope, project_id: int, what: str) -> str | None:
+    """0.39.3 (analysis-0.39.1, 4.4): why ``what`` is refused for product line ``project_id`` while the owner holds it
+    (plan.line_held), None while nothing holds it. 0.42.1 (analysis-0.40.1 codebase, 6.2 "Your hold, on files too"):
+    and while a review's stop holds it (plan.review_held, 0.40.2), until the owner keeps it or Ember lifts the hold
+    with plan_step resume. A hold Ember put on a line herself refuses nothing: she resumes it when its work can't
+    wait."""
+    held = plan.line_held(conn, scope, project_id)
+    if held is not None:
+        return (
+            f"your owner holds product line #{project_id} ({_cut(held, 80)}): no {what} for it until they resume it, "
+            "not even for a promise about it; work on what doesn't need it"
+        )
+    held = plan.review_held(conn, scope, project_id)
+    if held is not None:
+        return (
+            f"product line #{project_id} is on hold ({_cut(held, 80)}): no {what} for it until your owner keeps it;"
+            f" if its work can't wait, lift the hold first (plan_step resume with project_id {project_id} and why)"
+        )
+    return None
+
+
+# 0.42.1 (analysis-0.40.1 codebase, 6.2 "Your hold, on files too"): the fields of the tools that write, make or pay a
+# model to build on workspace files, or propose what a text names, and what such a call is in a refusal
+# (``_held_files``)
+HELD_FILES: dict[str, tuple[str, tuple[str, ...]]] = {
+    "draft": ("draft", ("path", "sources")),
+    "workspace_write": ("change to its files", ("path",)),
+    "workshop": ("workshop run", ("files", "script", "task")),  # a task's file in its folder is replaced
+    "make_document": ("document", ("source", "output")),
+    "make_spreadsheet": ("spreadsheet", ("source", "output")),
+    "make_image": ("picture", ("output", "pages")),
+    "resize_image": ("print file", ("source", "output")),
+    "make_cost_statement": ("cost statement", ("source", "output")),
+    "propose_blog_post": ("blog post", ("source",)),
+    "request_approval": ("request", ("title", "description", "payload")),
+    "propose_email": ("email", ("subject", "body")),
+}
+HELD_LISTINGS = frozenset({"request_approval", "propose_email"})  # and the listings their texts name (paid.py's way)
+_AROUND = "()[]{}<>'\"`.;:!?"  # what stands around a path in a text
+
+
+def _held_files(ctx: ToolContext, name: str, args: dict[str, Any]) -> None:
+    """0.42.1 (analysis-0.40.1 codebase, 6.2 "Your hold, on files too"): no call that writes a held line's workspace
+    file, makes one from it or pays a model to build on it, nor a request or an email naming one of its listings
+    (``_held``: the owner's hold, or a review's). The hold was kept only where a call names a project or a listing
+    (``_line``), so draft, the workshop, the make_ tools, workspace_write, a request without a project, a blog post
+    recommending no listing and an email could still spend money on a held line. A file's line is the one it is
+    filed under (workfiles.py); one filed under none, or under a line nothing holds, is free, and reading one is too.
+    A path in a field is the field (a comma list too; 'shop/cv.pdf#2@top' is shop/cv.pdf), or a word of a text."""
+    what, fields = HELD_FILES.get(name, ("", ()))
+    texts = [str(args[f]) for f in fields if isinstance(args.get(f), str)]
+    if not texts:
+        return
+    words = {w.split("#")[0].split("@")[0].strip(_AROUND) for t in texts for w in re.split(r"[\s,]+", t)}
+    with ctx.db.connection() as conn:
+        filed = workfiles.lines_of(conn, ctx.scope, sorted(w for w in words if "." in w))  # a file has its suffix
+        named = [(f"{path} is a file of product line #{line}", line) for path, line in filed.items()]
+        if name in HELD_LISTINGS:
+            for listing in paid.listings_named(conn, ctx.scope, "\n".join(texts)):
+                line = ventures.listing_project(conn, ctx.scope, listing)
+                if line is not None:
+                    named.append((f"listing #{listing} is product line #{line}'s", line))
+        for thing, line in named:
+            held = _held(conn, ctx.scope, line, what)
+            if held is not None:
+                raise ToolError(f"{thing}, and {held}")
 
 
 def _listing_line(ctx: ToolContext, conn: Any, listing_id: int, what: str) -> None:
@@ -4844,6 +4917,8 @@ def _propose_etsy_edit(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Out
         raise ToolError("deactivate on its own: a change to a listing that leaves the shop helps nobody")
     if not changes and action is None:
         raise ToolError("nothing changes: give a part that differs from the listing now (etsy_listing shows it)")
+    if changes:  # 0.42.1: the owner's paid test leaves it as it is (renewing or deactivating it stays possible)
+        _refuse(ctx, conn, preconditions.PAID, listing=listing_id)
     edit = etsy.Edit(listing_id=listing_id, currency=now.currency, state=action, **changes)
     reason = args["reason"].strip()
     verb = {"renew": "Renew", "deactivate": "Deactivate"}.get(action or "", "Change")
@@ -5466,6 +5541,7 @@ def _propose_printify_edit(ctx: ToolContext, args: dict[str, Any], conn: Any) ->
         raise ToolError(f"#{listing_id} isn't live at Etsy ({row['state']}): a change of it reaches no buyer")
     _listing_stopped(conn, ctx.scope, listing_id, "change")
     _listing_line(ctx, conn, listing_id, "change")
+    _refuse(ctx, conn, preconditions.PAID, listing=listing_id)  # 0.42.1: the owner's paid test leaves it as it is
     waiting = printify_publisher.open_edit(conn, ctx.scope, listing_id)
     if waiting is not None:
         raise ToolError(f"request #{waiting} already changes #{listing_id}; you hear its result first")
