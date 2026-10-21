@@ -34,6 +34,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from ..config import Settings
 from ..economy.clock import Clock, from_iso, to_iso
 from ..logging_setup import register_secret
+from . import retry
 from .etsy import Upload
 
 API_HOST = "api.pinterest.com"
@@ -59,6 +60,11 @@ class PinterestError(Exception):
 
 class NotSent(PinterestError):
     """Pinterest refused it: nothing changed there."""
+
+
+class Busy(retry.Busy, NotSent):
+    """0.42.0 (M3): Pinterest asked Ember's code to come back later (HTTP 429, or 503 with Retry-After): nothing
+    changed."""
 
 
 class Unclear(PinterestError):

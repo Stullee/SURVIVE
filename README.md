@@ -519,6 +519,22 @@ is listed there now: in `/etc/s6-overlay/s6-rc.d/user` 3.2.3.2 logs a
 deprecation warning at every start, and a later s6-overlay drops that place.
 Nothing else changes.
 
+0.42.0: the structural changes the codebase analysis of 0.40.1 left for later.
+The plan and the tools read each rule from one place, so a step a tool would
+refuse waits (with the tool's words on the Plan tab) instead of costing a cycle;
+notes Ember writes are cut instead of refused; and each work step shows how much
+of the cycle's conversation is used. Ember keeps 1 GB free on its device, prunes
+the kept texts of deleted files, and Home Assistant backups skip the pre-upgrade
+database copies. The Python process runs as the unprivileged user `ember`, which
+can read its options but not change them. A rate-limited listing, pin or post
+stays approved and is retried, and a card whose file changed can't be approved.
+On the dashboard, "Treat usage.X as standard price" settles an episode of
+uncertain bills once you have checked the Console, **Keep as charged** hides the
+small interrupted-calls warning, and a 401 from Home Assistant's Ingress after the
+page sat idle is retried quietly instead of reading "Ember refused the request".
+CI measures coverage with a floor, pins its actions, audits the dependencies
+(Pillow 13 fixes eight advisories) and runs weekly.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
@@ -564,13 +580,28 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   in `ember/app/security.py`.
 - **Least privilege.** `homeassistant_api: false`, `hassio_api: false`, no host
   network, no mapped folders besides the app's own `/data`, no published ports.
-  `ember/tests/test_manifest.py` fails if any of this is loosened.
+  `ember/tests/test_manifest.py` fails if any of this is loosened. Since 0.42.0
+  the Python process runs as the unprivileged user `ember` (UID and GID 1000),
+  not root: the s6 run script, as root, prepares `/data` and then starts Python
+  with `s6-setuidgid`. At each start it gives every file in `/data` that isn't
+  `ember`'s yet to `ember` (the database, its backups, the 0600 token files,
+  the workspace, as earlier versions wrote them as root), changing a link
+  itself and never what it points to. The app's code (`/opt/ember`, the Python
+  packages) is root's and read-only to it, PID 1's environment is unreadable to
+  it, and it has no capabilities. Enforced in `ember/tests/test_entrypoint.py`
+  and by CI's image smoke test.
 - **Options can't be changed from inside.** The Supervisor hands every app a
   token that can change the app's own options or uninstall it, even with
-  `hassio_api: false`; the s6 run script deletes it before Python starts. And
+  `hassio_api: false`; the s6 run script deletes it before Python starts, from
+  the s6 copy of the environment too (which is root's only since 0.42.0). And
   whenever the Python process exits, the whole container stops instead of
   restarting in place, so a restart always goes through the Supervisor, which
-  rewrites `/data/options.json` from the options you saved.
+  rewrites `/data/options.json` from the options you saved. Since 0.42.0 the
+  process can read `/data/options.json` but not change it: the run script
+  keeps the file root's (group `ember`, mode 0640) after the Supervisor writes
+  it, and `/data` itself is root's too (group `ember`, writable and sticky, mode
+  1775), so Ember can make and remove its own files there but can't remove or
+  replace the options.
 - **The agent's reach.** Its file tools work inside its own folders only
   (`ember/app/agent/sandbox.py`: no links, no absolute paths, size quotas). Its
   tool handlers, but those of the six tools that call a model (research,
@@ -597,6 +628,12 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   (0.19.0), Ember's code logs in to `bsky.social` with the account's app
   password and posts what the owner approved to the account's own server at
   Bluesky, and nowhere else (`ember/app/integrations/bluesky_live.py`).
+  All of this runs in-process, so code that got past it would hold what the
+  process holds: since 0.42.0 that is the user `ember` (see Least privilege),
+  which can change Ember's data and read its tokens, but not its options or its
+  code; besides `/data` it can write only temporary folders (`/tmp`,
+  `/var/tmp`, `/dev/shm`) and its home, which last only as long as the
+  container.
 - **Outside actions.** The agent has no tool that sends or posts anything. An
   email it proposes is sent by Ember's code only after the owner approves it,
   exactly as approved, once, to one recipient, with a footer saying an AI wrote
@@ -607,7 +644,15 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   and the agent hasn't read that email yet, the email waits until it has, and an
   approved email not sent within 7 days of its approval isn't sent at all. A send
   is recorded before it starts and never retried
-  (`ember/app/integrations/executor.py`). The kill switch stops whatever
+  (`ember/app/integrations/executor.py`). 0.42.0: when Etsy, Pinterest or
+  Bluesky answers "too many requests" (429, or 503 with Retry-After) before
+  anything changed (no draft, no part of a change, no new board, no post), an
+  approved listing, change, pin or post stays approved and Ember's code tries it
+  again when the service said (1 minute to 6 hours later, at most 3 times),
+  through every check again (`ember/app/integrations/retry.py`). Nothing that may
+  have changed something is tried again, nor anything an unlock approved, nor an
+  email. A card whose file changed since it was proposed says so, and its
+  Approve is refused. The kill switch stops whatever
   Ember's code hasn't begun, also in the middle of a round (0.37.3). A Reddit
   post becomes a link the owner opens and posts from their own account; a KDP
   book (0.25.0) becomes a package the owner publishes at KDP from their own
@@ -644,8 +689,9 @@ EMBER_DATA_DIR=../dev/data-local EMBER_DEV_MODE=1 python -m app
 ```
 
 `EMBER_DATA_DIR` replaces `/data` (a different folder from the one docker-compose
-uses, whose files belong to root); `EMBER_DEV_MODE=1` turns off the Ingress IP
-filter (there is no Ingress proxy locally). Never set it inside Home Assistant.
+uses, whose files belong to the container's user, UID 1000, and root);
+`EMBER_DEV_MODE=1` turns off the Ingress IP filter (there is no Ingress proxy
+locally). Never set it inside Home Assistant.
 In dev mode the server listens on 127.0.0.1 only (override with `EMBER_HOST`)
 and answers only requests addressed to `localhost`, `127.0.0.1` or `[::1]`, which
 stops other machines and DNS-rebinding web pages from reaching it.
@@ -661,6 +707,13 @@ docker compose up --build
 The container is the same image Home Assistant builds; `dev/data` plays the role
 of the app's `/data` folder (edit `dev/data/options.json` to change options). The
 port is bound to localhost only, because the dashboard has no login of its own.
+
+As in Home Assistant, the app runs as the container's user `ember` (UID and GID
+1000), and each start prepares the folder as root (0.42.0): the files in
+`dev/data` become owned by UID 1000, `dev/data` itself and `options.json` by
+root (group 1000; `options.json` mode 0640, so the app can read it but not
+change it). So once the app has started, edit `dev/data/options.json` with
+`sudo`, and remove `dev/data` with `sudo` too.
 
 In the dashboard, **System → Preview** switches the preview data between the
 alive, paused, critical and dead states (the dead state shows the memorial).

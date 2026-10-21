@@ -20,13 +20,14 @@ jobs:
       run:
         working-directory: ember
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
       - run: pip install -r requirements-dev.txt
       # One worker per CPU (pytest-xdist): every test has its own data folder (tests/conftest.py).
-      - run: python -m pytest -W error -n auto
+      # 0.42.0: with line coverage and a floor under it (93.9% at 0.40.1, the codebase analysis of 0.40.1, 5.7).
+      - run: python -m pytest -W error -n auto --cov=app --cov-report=term:skip-covered --cov-fail-under=92
       - run: ruff check app tests
       - run: ruff format --check app tests
 
@@ -35,12 +36,12 @@ jobs:
     timeout-minutes: 20
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           # Every commit, not only the newest: this repository is public, and a secret
           # removed in a later commit is still in its history.
           fetch-depth: 0
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: stable
           cache: false
@@ -48,6 +49,21 @@ jobs:
       - run: go install github.com/zricethezav/gitleaks/v8@v8.30.1
       - name: Scan every commit (rules in .gitleaks.toml, known old findings in .gitleaksignore)
         run: '"$(go env GOPATH)/bin/gitleaks" git --redact --verbose --no-banner .'
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # 0.42.0: known vulnerabilities in the pinned dependencies (the codebase analysis of 0.40.1, 5.7). It reports and
+    # doesn't block: a new advisory against a pin shouldn't stop a release on its own; bump the pin deliberately.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - run: pip install pip-audit==2.10.1
+      - run: pip-audit --strict --requirement ember/requirements.txt
 
   image:
     name: Build and smoke-test image (${{ matrix.platform }})
@@ -58,9 +74,9 @@ jobs:
       matrix:
         platform: [linux/amd64, linux/arm64]
     steps:
-      - uses: actions/checkout@v5
-      - uses: docker/setup-qemu-action@v4
-      - uses: docker/setup-buildx-action@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - name: Build (as the Supervisor does, but without its extra labels)
         run: >-
           docker buildx build ember
@@ -68,13 +84,17 @@ jobs:
           --build-arg BUILD_VERSION=ci
           --tag local/ember:ci
           --load
+      # 0.42.0: as the app's user (ember), as the app runs: the libraries need nothing they can't write.
       - name: Make a PDF, Word, Excel and PNG file with the image's libraries
         run: >-
-          docker run --rm --platform ${{ matrix.platform }} --entrypoint python3 local/ember:ci
+          docker run --rm --platform ${{ matrix.platform }} --user ember --entrypoint python3 local/ember:ci
           -m app.products.selftest
       - name: Start in dev mode and check the API
         run: |
-          mkdir -p "$RUNNER_TEMP/data"
+          # Options, and a 0600 token file as an earlier version left it; both owned by the runner's user, not ember.
+          mkdir -p "$RUNNER_TEMP/data/etsy"
+          cp dev/options.example.json "$RUNNER_TEMP/data/options.json"
+          echo '{}' > "$RUNNER_TEMP/data/etsy/tokens.json" && chmod 600 "$RUNNER_TEMP/data/etsy/tokens.json"
           docker run -d --name ember --platform ${{ matrix.platform }} \
             -e EMBER_DEV_MODE=1 -e EMBER_HOST=0.0.0.0 -v "$RUNNER_TEMP/data:/data" -p 8099:8099 local/ember:ci
           for i in $(seq 1 60); do
@@ -86,15 +106,38 @@ jobs:
           curl -fsS http://127.0.0.1:8099/api/dashboard > /dev/null
           curl -fsS http://127.0.0.1:8099/ | grep -q '<base href="/">'
           test -f "$RUNNER_TEMP/data/ember.db"
+      - name: The app runs as the user ember, which can read its options but not change them
+        run: |
+          # A part of the command line, not all of it: under QEMU (arm64) the emulator stands in front of it.
+          pid=$(docker exec ember pgrep -o -f "python3 -m app")
+          docker exec ember cat "/proc/$pid/status" > "$RUNNER_TEMP/app-status"
+          grep -E '^(Uid|Gid|Groups):' "$RUNNER_TEMP/app-status"
+          # Real, effective, saved and filesystem UID and GID: all ember's (1000), none root's.
+          grep -qE '^Uid:[[:space:]]+1000[[:space:]]+1000[[:space:]]+1000[[:space:]]+1000$' "$RUNNER_TEMP/app-status"
+          grep -qE '^Gid:[[:space:]]+1000[[:space:]]+1000[[:space:]]+1000[[:space:]]+1000$' "$RUNNER_TEMP/app-status"
+          [ "$(docker exec ember stat -c %U:%G /data/ember.db)" = ember:ember ]
+          [ "$(docker exec ember stat -c %U:%G /data/etsy/tokens.json)" = ember:ember ]
+          [ "$(docker exec ember stat -c %U:%G:%a /data/options.json)" = root:ember:640 ]
+          docker exec -u ember ember test -r /data/options.json
+          docker exec -u ember ember test ! -w /data/options.json
+          # /data is sticky: ember can't replace the options file either. Nor read PID 1's environment.
+          if docker exec -u ember ember mv /data/options.json /data/options.moved; then
+            echo "ember could move options.json"; exit 1
+          fi
+          if docker exec -u ember ember cat /proc/1/environ > /dev/null; then
+            echo "ember could read /proc/1/environ"; exit 1
+          fi
       - name: Without dev mode, direct connections are refused
         run: |
           docker run -d --name ember-strict --platform ${{ matrix.platform }} -p 8098:8099 local/ember:ci
           for i in $(seq 1 60); do
             code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8098/ || true)
-            [ "$code" = "403" ] && exit 0
+            [ "$code" = "403" ] && break
             sleep 2
           done
-          echo "expected 403, got $code"; exit 1
+          [ "$code" = "403" ] || { echo "expected 403, got $code"; exit 1; }
+          # Without a mounted /data, the run script makes it, and the database is ember's.
+          [ "$(docker exec ember-strict stat -c %U /data/ember.db)" = ember ]
       - name: Container logs
         if: always()
         run: for c in ember ember-strict; do echo "== $c"; docker logs "$c" || true; done

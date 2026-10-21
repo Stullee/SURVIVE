@@ -11,7 +11,7 @@ fpdf2==2.8.8
 python-docx==1.2.0
 openpyxl==3.1.5
 pypdfium2==5.13.0
-pillow==12.3.0
+pillow==13.0.0
 # The blog on the owner's website (0.14.0): SFTP to their web host.
 paramiko==5.0.0
 # Transitive (pinned too):

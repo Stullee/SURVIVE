@@ -26,6 +26,9 @@ log = logging.getLogger(__name__)
 
 ROUND_SECONDS = 60.0
 PRUNE_EVERY_SECONDS = 300.0
+# 0.42.0 (analysis-0.40.1 codebase, 6.2 disk): the kept texts of deleted files (Agent.prune_versions), at the first
+# round and then once a day: it looks up their files and sums the kept texts' sizes
+VERSIONS_EVERY_SECONDS = 86_400.0
 STOP_WAIT_SECONDS = 8.0  # Home Assistant kills the app 10 s after asking it to stop
 
 
@@ -43,6 +46,7 @@ class Scheduler:
         # 0.31.0: the first round prunes, however short the machine's uptime (time.monotonic counts from its boot:
         # 0.0 skipped it on a machine up for less than PRUNE_EVERY_SECONDS)
         self._last_prune = -math.inf
+        self._last_versions = -math.inf
 
     def start(self) -> None:
         self._loop = asyncio.get_running_loop()
@@ -87,6 +91,12 @@ class Scheduler:
                         await asyncio.to_thread(self.db.prune_texts, self.economy.clock.now())
                     except Exception:  # noqa: BLE001 - pruning must not stop the wake cycles
                         log.exception("Pruning old texts failed")
+                    if self.agent is not None and time.monotonic() - self._last_versions > VERSIONS_EVERY_SECONDS:
+                        try:
+                            await asyncio.to_thread(self.agent.prune_versions)
+                        except Exception:  # noqa: BLE001 - pruning must not stop the wake cycles
+                            log.exception("Pruning the kept texts of deleted files failed")
+                        self._last_versions = time.monotonic()
                     self._last_prune = time.monotonic()
                 if self.agent is not None and not self._stopping:
                     try:  # 0.13.0: the owner's unlocks first: what their veto windows let through, and revocations

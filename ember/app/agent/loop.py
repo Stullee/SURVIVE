@@ -116,6 +116,10 @@ MAX_TOOL_CALLS_PER_TURN = tools.MAX_TOOL_CALLS_PER_TURN
 # 0.40.1 (analysis-0.40.0, 3.3): at 64,000 four of the five cycles on the KDP book ended before they could propose it,
 # and a book's page check (0.40.0) takes about 20,000 of it: six pages and its measures; a fix needs two checks.
 MAX_CONVERSATION_BYTES = 96_000
+# 0.42.0 (analysis-0.40.1 codebase, 6.2): each work step is told how much of it is used (room_line), and warned from
+# this share on
+ROOM_MARKER = "Room: "
+ROOM_SHORT = 0.75
 MAX_EMPTY_NUDGES = 1
 RETRY_DELAY_SECONDS = 5.0
 NUDGE = "Continue with the plan, or reply with a short report of what you did."
@@ -137,6 +141,37 @@ CUT_OTHER = (
 def cut_call(name: str) -> str:
     """Why a call of a reply cut off by max_tokens didn't run, and how its next try fits."""
     return CUT_CALL if name in ("workspace_write", "draft") else CUT_OTHER
+
+
+def room_line(size: int) -> str:
+    """0.42.0 (analysis-0.40.1 codebase, 6.2): how much of MAX_CONVERSATION_BYTES the work conversation (``size``
+    bytes, as _size counts them) uses, and from ROOM_SHORT on a warning. The worker couldn't see it: 4 of the 5 cycles
+    on the KDP book ran out of room unannounced before 0.40.1 raised the limit, and a page check takes about 20 KB."""
+    line = f"{ROOM_MARKER}{size // 1_000} of {MAX_CONVERSATION_BYTES // 1_000} KB of this cycle's conversation used."
+    if size >= ROOM_SHORT * MAX_CONVERSATION_BYTES:
+        line += " Room is short: finish, or save your work in a file before it runs out."
+    return line
+
+
+def _with_room(turns: list[dict[str, Any]], size: int) -> list[dict[str, Any]]:
+    """0.42.0: ``turns`` with the room line at the end of the newest user turn (the step's tool results), where it
+    stays as it was sent: each later step reads it from the prompt cache with the turns before its own. In the system
+    prompt, the tools or an earlier turn it would change the cached prefix at every step. None before the first reply
+    (the brief starts the conversation), and one a turn (a nudge comes after the line its turn has)."""
+    if not turns or turns[-1]["role"] != "user" or any(_is_room(block) for block in turns[-1]["content"]):
+        return turns
+    last = turns[-1]
+    return [*turns[:-1], {**last, "content": [*last["content"], {"type": "text", "text": room_line(size)}]}]
+
+
+def _is_room(block: Any) -> bool:
+    return isinstance(block, dict) and block.get("type") == "text" and str(block.get("text")).startswith(ROOM_MARKER)
+
+
+def _carried(block: Any) -> bool:
+    """What the reflection keeps of a trailing user turn: its tool results, which answer the calls before it, and
+    (0.42.0) its room line, so the prefix the last step cached stays the reflection's; its prompt replaces a nudge."""
+    return (isinstance(block, dict) and block.get("type") == "tool_result") or _is_room(block)
 
 
 # 0.40.3 (analysis-0.40.1 codebase, C3): why a call of the last work step didn't run (prompts.FINAL_STEP asked for none)
@@ -1847,9 +1882,11 @@ class CycleRunner:
                 act.end_reason = "too many refused file operations"
                 break
             turns = self._with_pending(act)
-            if _size(turns) > MAX_CONVERSATION_BYTES:
+            size = _size(turns)
+            if size > MAX_CONVERSATION_BYTES:
                 act.end_reason = "the conversation got too long"
                 break
+            turns = _with_room(turns, size)  # 0.42.0 (analysis-0.40.1 codebase, 6.2)
             final = step == max_steps
             request = prompts.work_request(self.settings, brief, turns, final=final, **self._flags(ctx))
             if not self._affordable(cycle_id, request, brief, turns, ctx):
@@ -1980,7 +2017,7 @@ class CycleRunner:
         # The reflection as _reflect sends it: a trailing user turn's tool results come with its prompt.
         past, pending = list(turns), []
         if past and past[-1]["role"] == "user":
-            pending = [b for b in past.pop()["content"] if isinstance(b, dict) and b.get("type") == "tool_result"]
+            pending = [b for b in past.pop()["content"] if _carried(b)]
         longest = "ä" * prompts.ENDED_CHARS  # the reflection is told why the work ended: priced with the longest reason
         reflect = prompts.reflect_request(
             self.settings,
@@ -2052,8 +2089,8 @@ class CycleRunner:
         pending = list(act.pending)
         if turns and turns[-1]["role"] == "user":
             # A trailing user turn (tool results plus a nudge, or a nudge alone): keep its tool results,
-            # which answer the tool calls before it, and let the reflect prompt replace the rest.
-            kept = [b for b in turns.pop()["content"] if isinstance(b, dict) and b.get("type") == "tool_result"]
+            # which answer the tool calls before it, and let the reflect prompt replace the rest (_carried).
+            kept = [b for b in turns.pop()["content"] if _carried(b)]
             pending = [*kept, *pending]
         with self.db.connection() as conn:
             undone = digest.undone(conn, cycle_id)  # 0.12.0: what its work didn't do, so it isn't reported as done

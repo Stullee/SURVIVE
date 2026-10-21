@@ -32,16 +32,17 @@ from datetime import UTC, datetime
 from importlib import metadata
 from typing import TYPE_CHECKING, Any
 
-from . import privacy
+from . import paths, privacy
 from .agent import library, plan, ventures
 from .agent.context import RESEARCH_HEADING
 from .agent.sandbox import kind_of
 from .agent.tools import LIBRARY_TOOLS
-from .db import utcnow
+from .db import MAX_BACKUPS, utcnow
 from .economy.clock import to_iso
 from .economy.costs import micros_to_usd
 from .economy.ledger import Scope
-from .economy.metering import STUDY
+from .economy.metering import STUDY, standard_usage
+from .economy.service import KEPT_KEY
 from .integrations import etsy_publisher, publish_queue
 from .logging_setup import redact
 from .version import app_version, build_id
@@ -537,8 +538,8 @@ def _versions(names: tuple[str, ...]) -> dict[str, str]:
 
 def _database(state: AppState) -> str:
     if state.db_error:
-        return f"unavailable: {state.db_error}"
-    lines = [f"file: {state.db.path} ({_size(state.db.path)})"]
+        return f"unavailable: {state.db_error}\n{_disk()}"
+    lines = [f"file: {state.db.path} ({_size(state.db.path)})", _disk()]
     with state.db.connection() as conn:
         lines.append(f"schema version: {conn.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0]}")
         for table in TABLES:
@@ -550,6 +551,33 @@ def _database(state: AppState) -> str:
         integrity = conn.execute("PRAGMA quick_check").fetchone()[0]
     lines.append(f"quick_check: {integrity}")
     return "\n".join(lines)
+
+
+def _disk() -> str:
+    """0.42.0 (analysis-0.40.1 codebase, 6.2 disk): the free space on the data folder's disk against the floor that
+    refuses workspace writes and workshop files, and the database's copies kept before its upgrades."""
+    disk = paths.storage()
+    if disk["free_bytes"] is None:
+        line = f"disk: free space unknown ({disk['error']})"
+    else:
+        low = "; LOW: workspace writes and workshop files are refused" if disk["low"] else ""
+        line = (
+            f"disk: {paths.size_text(disk['free_bytes'])} free on the data folder's disk (Ember keeps "
+            f"{paths.size_text(disk['floor_bytes'])} free{low})"
+        )
+    copies = sorted(paths.backups_dir().glob("ember-schema*.db"))
+    size = sum(_bytes(copy) for copy in copies)
+    return (
+        f"{line}\nbackups: {len(copies)} copies from before upgrades, {size / 1024:.0f} KB (the newest {MAX_BACKUPS}"
+        " are kept)"
+    )
+
+
+def _bytes(path: Any) -> int:
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return 0
 
 
 def _size(path: Any) -> str:
@@ -587,7 +615,7 @@ def _economy(state: AppState) -> str:
             "note": status.runway.note,
             "window_spend_usd": micros_to_usd(status.runway.window_spend),
             "active_days": status.runway.active_days,
-            "balance_usd": micros_to_usd(status.runway.balance),  # 0.40.3 (E1): the balance it is judged on
+            "balance_usd": micros_to_usd(status.judged_balance),  # 0.40.3 (E1): the balance it is judged on
         },
         "today_local": economy.clock.today().isoformat(),
         "tz": str(economy.clock.tz),
@@ -603,6 +631,10 @@ def _economy(state: AppState) -> str:
         "totals": {k: micros_to_usd(v) for k, v in books.totals(scope).items()},
         "health": {"lock_held": economy.health.lock_held, "broken": economy.health.broken},
         "warnings": economy.warnings(),
+        # 0.42.0 (analysis-0.40.1 codebase, 6.2 bills): the owner's choices on the uncertain bills, and what is offered
+        "standard_usage": standard_usage(state.db),
+        "kept_as_charged": state.db.get_meta(KEPT_KEY),
+        "uncertain_bills": economy.uncertain_bills(),
         "session": {"dry_run_session": economy.life.session(), "sim_mark": scope.sim_mark},
     }
     return _json(data)
@@ -1218,12 +1250,18 @@ def _agent(state: AppState, full: bool = True) -> str:
             + _rows(ranking, ["step", "line", "weight", "title", "why"])
         )
         waiting = [
-            {"step": c.step.id, "line": c.step.product, "waiting": c.waiting, "title": c.step.title}
+            {
+                "step": c.step.id,
+                "line": c.step.product,
+                "waiting": f"blocked ({c.refused})" if c.waiting == "blocked" else c.waiting,  # 0.42.0: in its words
+                "title": c.step.title,
+            }
             for c in found
             if c.waiting not in (None, "step")
         ]
         with state.db.connection() as conn:
-            limits = plan.limits(conn, scope, to_iso(agent.clock.day_start(agent.clock.today())))
+            day_start = to_iso(agent.clock.day_start(agent.clock.today()))
+            limits = plan.limits(conn, scope, day_start, to_iso(agent.clock.now()))
         out.append(
             "-- plan tree: steps that wait (on the owner, a channel, an upgrade, a hold; 0.36.0: the Explore step"
             " also on its date, the burn mode or an owner's message first, an empty READY; 0.37.6: 'tried', taken"
@@ -1232,7 +1270,8 @@ def _agent(state: AppState, full: bool = True) -> str:
             " day's message limit would refuse; 0.38.1: 'sales', a listing, a change of one, a Printify product or"
             " a KDP book the sell requests waiting for the owner would refuse; 0.39.8: 'listing', a weekly pin or"
             " post of a line with no listing of its own, and 'floor', one of a channel at its floor; every one,"
-            f" 0.39.8: the first 15 left the KDP book's 'tried' out. Now: {limits.text()})\n"
+            " 0.39.8: the first 15 left the KDP book's 'tried' out; 0.42.0: 'blocked', what its tool would refuse"
+            f" now by another rule of its own, in the tool's words. Now: {limits.text()})\n"
             + _rows(waiting, ["step", "line", "waiting", "title"])
         )
     except Exception as exc:  # noqa: BLE001 - the report goes on without it

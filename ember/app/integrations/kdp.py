@@ -779,26 +779,42 @@ def next_week(now: datetime, tz: tzinfo = UTC) -> str:
     return f"Sunday {begins:%m-%d} at {begins:%H:%M}"
 
 
+def weekly(conn: sqlite3.Connection, scope: AgentScope, now: datetime) -> dict[str, int]:
+    """The books of each format proposed in KDP's week holding ``now`` (``week_start``) that KDP may still count (not
+    rejected, withdrawn, expired or failed): what WEEKLY_TITLES holds. 0.42.0 (analysis-0.40.1 codebase, 6.2.1): one
+    count, which propose_kdp_book refuses by and the plan waits on (agent/preconditions.py) and the KDP section shows
+    (``text``); each counted them on its own."""
+    where, params = scope.where()
+    rows = conn.execute(
+        f"SELECT action FROM approvals WHERE {where} AND executor = ? AND created_at >= ?"
+        " AND status NOT IN ('rejected', 'withdrawn', 'expired', 'failed')",
+        (*params, EXECUTOR, to_iso(week_start(now))),
+    ).fetchall()
+    counted = dict.fromkeys(FORMATS, 0)
+    for r in rows:
+        form = json.loads(r["action"] or "{}").get("format")
+        if form in counted:
+            counted[form] += 1
+    return counted
+
+
 def text(conn: sqlite3.Connection, scope: AgentScope, now: datetime, author: str, tz: tzinfo = UTC) -> str:
     """The plan's KDP section: how the owner publishes, this week's room under KDP's limit (0.40.2: KDP's week, from
     Sunday 00:00 UTC; ``tz``: the owner's, for when the next one begins), and the newest books."""
     where, params = scope.where()
     rows = conn.execute(
-        f"SELECT id, status, action, created_at, decision_comment, result_note, result_link FROM approvals"
+        f"SELECT id, status, action, decision_comment, result_note, result_link FROM approvals"
         f" WHERE {where} AND executor = ? ORDER BY id DESC",
         (*params, EXECUTOR),
     ).fetchall()
-    since = to_iso(week_start(now))
-    counted = {form: 0 for form in FORMATS}
+    counted = weekly(conn, scope, now)
     lines = []
     for r in rows:
+        if len(lines) >= SHOWN:
+            break
         try:
             book = book_from_action(r["action"])
         except KdpError:
-            continue
-        if r["created_at"] >= since and r["status"] not in ("rejected", "withdrawn", "expired", "failed"):
-            counted[book.format] = counted.get(book.format, 0) + 1
-        if len(lines) >= SHOWN:
             continue
         what = f"{book.trim}, {book.pages} pages, " if book.format == "paperback" else ""
         line = f"#{r['id']} {book.format} {_quoted(book.title, 80)} ({what}{book.price} {CURRENCY}): "

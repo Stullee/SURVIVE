@@ -3,6 +3,33 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.42.0
+
+The structural changes your owner's codebase analysis of 0.40.1 left for later. What changes for you:
+
+- Your plan and your tools read each rule from one place: a step whose tool would refuse it now waits instead of
+  being taken, and cuts no sleep. "Propose the book" waits while KDP's week already holds 2 new titles of its format
+  (until Sunday 00:00 UTC), and a first listing waits until it has a demand note from the last 14 days. YOUR STEP
+  names such a wait in the tool's own words: do what it says (write the note), or turn to other work. The platforms'
+  daily limits hold nothing back: propose, and what your owner approves goes out the next day.
+- Notes you write for yourself or your owner (reasons, a plan step's title, a brainstorm's theme, a promise's
+  commits, a request's title and expected benefit, a KDP book's qa, which keeps 900 characters) are cut to their
+  length with a note instead of refused: an over-long one no longer costs a tool step. Listing, post and email texts,
+  file contents, briefs, research questions, paths and ids are still refused, with how much to cut.
+- From your second work step on, each step ends with "Room: N of 96 KB of this cycle's conversation used.", and from
+  72 KB it warns that room is short: finish, or save what your next cycle needs in a file.
+- If Etsy, Pinterest or Bluesky asks your owner's code to wait (429, or 503 with Retry-After) before anything was
+  made, your approved listing, change, pin or post stays approved and goes out when the service allows (at most 3
+  retries): don't propose it again. A request whose files changed after you proposed it can't be approved: propose
+  it again with the file as it is now.
+- Ember keeps 1 GB free on its device for the database: a workspace write or workshop file that would leave less is
+  refused, with the free space and what to do (delete files you no longer need with workspace_write delete, or ask
+  your owner). A deleted file's text stays restorable for 14 days.
+- When an answer carries a usage field Ember's code doesn't know, your owner can treat its value as standard price
+  from the dashboard: those calls are refunded down to their price once. Your burn mode's move back up is judged on
+  the same settled balance as your runway.
+- Ember's code now runs as an unprivileged user: it can read its options but not change them.
+
 ## 0.41.0
 
 A newer base for the app's image, nothing else: Home Assistant's base-python 2026.10.0 instead of 2026.08.0 (Python

@@ -17,7 +17,8 @@ Ember's code gives each one a slot (``schedule``):
 
 The publishers make only what is due, one at a time (``due``); the Approvals tab, the agent's news, its tools and its
 plan say when each one goes out, and the agent proposes no more for a channel while WAITING of its requests there wait
-for the owner or for their slot (``waiting``).
+for the owner or for their slot (``waiting``). 0.42.0 (M3): a request whose service asked to wait (retry.py) is in the
+queue again, its slot no earlier than that.
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ from typing import Any
 
 from ..agent.store import AgentScope
 from ..economy.clock import Clock, from_iso, to_iso
-from . import bluesky, pinterest
+from . import bluesky, pinterest, retry
 
 CHANNELS = ("pinterest", "bluesky")
 EXECUTORS = {"pinterest": "pinterest_pin", "bluesky": "bluesky_post"}
@@ -50,6 +51,7 @@ WAITING = 3  # a channel's requests waiting for the owner or for their slot: the
 DAYS_AHEAD = 14  # how far ahead a slot is looked for
 APPROVED = ("approved", "approved_with_changes")
 THINGS = {"pinterest": ("pin", "pins"), "bluesky": ("post", "posts")}
+SERVICES = {"pinterest": "Pinterest", "bluesky": "Bluesky"}
 _LISTING = re.compile(r"etsy\.com/(?:[a-z]{2}(?:-[a-z]{2})?/)?listing/(\d{1,18})", re.IGNORECASE)
 
 
@@ -61,6 +63,7 @@ class Item:
     links: tuple[str, ...]  # the listings and pages it links (``keys``)
     language: str  # a post's ("de" or "en"); "" for a pin
     approved_at: datetime
+    retry_at: datetime | None = None  # 0.42.0 (M3): its service asked to wait until then
 
 
 @dataclass(frozen=True)
@@ -75,7 +78,7 @@ class Made:
 class Slot:
     approval_id: int
     at: datetime  # UTC: it goes out at the first round from then on
-    why: str  # what set it: 'now', 'gap', 'link', 'hours' or 'limit'
+    why: str  # what set it: 'now', 'gap', 'link', 'hours', 'limit' or (0.42.0) 'retry'
     language: str = ""  # a post's, whose hours it has
 
 
@@ -139,6 +142,8 @@ def _earliest(
         moment = bound + shift
     else:
         why = "now"
+    if item.retry_at is not None and item.retry_at > moment:  # 0.42.0 (M3): not before its service's wait ends
+        moment, why = item.retry_at, "retry"
     first, end = hours(channel, item.language)
     for _ in range(DAYS_AHEAD):
         day = moment.astimezone(clock.tz).date()
@@ -186,24 +191,28 @@ def _parsed(channel: str, raw: str | None) -> tuple[tuple[str, ...], str]:
 
 
 def _not_begun(alias: str, channel: str) -> str:
+    """SQL: Ember's code hasn't begun request ``alias``, or (0.42.0, M3) its service asked to wait, nothing made."""
     return (
-        f"NOT EXISTS (SELECT 1 FROM action_journal j WHERE j.approval_id = {alias}.id)"
-        f" AND NOT EXISTS (SELECT 1 FROM {MADE_IN[channel]} p WHERE p.approval_id = {alias}.id)"
+        f"((NOT EXISTS (SELECT 1 FROM action_journal j WHERE j.approval_id = {alias}.id)"
+        f" AND NOT EXISTS (SELECT 1 FROM {MADE_IN[channel]} p WHERE p.approval_id = {alias}.id))"
+        f" OR {retry.waiting_sql(alias)})"
     )
 
 
 def queued(conn: sqlite3.Connection, scope: AgentScope, channel: str) -> list[Item]:
-    """A channel's approved requests that Ember's code hasn't begun to carry out."""
+    """A channel's approved requests that Ember's code hasn't begun to carry out (0.42.0: or whose service asked to
+    wait, with when)."""
     where, params = scope.where("a")
     rows = conn.execute(
-        f"SELECT a.id, a.action, a.decided_at, a.created_at FROM approvals a WHERE {where} AND a.executor = ?"
-        f" AND a.status IN {APPROVED} AND {_not_begun('a', channel)} ORDER BY a.id",
+        f"SELECT a.id, a.action, a.decided_at, a.created_at, {retry.retry_at_sql('a')} AS retry_at FROM approvals a"
+        f" WHERE {where} AND a.executor = ? AND a.status IN {APPROVED} AND {_not_begun('a', channel)} ORDER BY a.id",
         (*params, EXECUTORS[channel]),
     ).fetchall()
     found = []
     for r in rows:
         links, language = _parsed(channel, r["action"])
-        found.append(Item(int(r["id"]), links, language, from_iso(str(r["decided_at"] or r["created_at"]))))
+        approved = from_iso(str(r["decided_at"] or r["created_at"]))
+        found.append(Item(int(r["id"]), links, language, approved, from_iso(r["retry_at"]) if r["retry_at"] else None))
     return found
 
 
@@ -329,6 +338,7 @@ def why(channel: str, cause: str, per_day: int, language: str = "") -> str:
         "link": f"a listing or page gets at most one {one} in {LINK_DAYS} days",
         "hours": f"{many} go out from {first}:00 to {end}:00",
         "limit": f"at most {per_day} {many} a day",
+        "retry": f"{SERVICES[channel]} asked to wait",  # 0.42.0 (M3)
     }.get(cause, "")
 
 

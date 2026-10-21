@@ -964,6 +964,86 @@ def _never(conn: sqlite3.Connection, r: sqlite3.Row) -> list[str]:
     return [never.CLASSES[k] for k in never.reasons(conn, r)]
 
 
+# 0.42.0 (analysis-0.40.1 codebase, M4): a card shows a request's files as the workspace holds them now, and Ember's
+# code uploads only the bytes whose SHA-256 the request froze. Every card of a request that uploads such files says
+# which one changed since it was proposed, as the KDP book's did (0.25.0), and the owner's Approve of it is refused
+# (web.py): approved, it would fail at the run ("changed after you approved it"), the approval wasted.
+HASHES_KEPT = 500  # the workspace files' SHA-256 kept in memory, by path, size and time
+_hashes: OrderedDict[tuple[str, str, float, int], str] = OrderedDict()
+_hashes_lock = threading.Lock()
+
+
+def _uploads(executor_name: str | None, action: Any) -> tuple[etsy.Upload, ...]:
+    """0.42.0 (M4): the workspace files a request's executor uploads only as the SHA-256 frozen in it says (a changed
+    one makes it refuse the request); none for a request that uploads none."""
+    try:
+        if executor_name == "etsy_listing":
+            listing = etsy.listing_from_action(action)
+            return listing.photos + listing.files
+        if executor_name == "etsy_edit":
+            edit = etsy.edit_from_action(action)
+            return (edit.photos or ()) + (edit.files or ())
+        if executor_name in ("pinterest_pin", pinterest_publisher.TEST_EXECUTOR):
+            return (pinterest.pin_from_action(action).image,)
+        if executor_name == "bluesky_post":  # a card's photo that changed is left out of the post, not refused
+            image = bluesky.post_from_action(action).image
+            return (image,) if image is not None else ()
+        if executor_name == "printify_product":
+            return (printify.product_from_action(action).image,)
+        if executor_name == "printify_edit":
+            image = printify.edit_from_action(action).image
+            return (image,) if image is not None else ()
+    except (etsy.EtsyError, pinterest.PinterestError, bluesky.BlueskyError, printify.PrintifyError):
+        return ()
+    return ()
+
+
+def _unchanged(workspace: Jail, upload: etsy.Upload, kept: bool = True) -> bool:
+    """Whether the workspace still holds the bytes whose SHA-256 a request froze (False: changed, deleted or no longer
+    readable). ``kept``: a file's SHA-256 is kept by its path, size and time, so the dashboard's polls hash nothing
+    twice (the owner's Approve hashes it afresh)."""
+    try:
+        modified, size = workspace.modified(upload.path), workspace.size_of(upload.path)
+        if modified is None or size is None:
+            return False
+        key = (str(workspace.root), upload.path, modified, size)
+        with _hashes_lock:
+            digest = _hashes.get(key) if kept else None
+        if digest is None:
+            digest = hashlib.sha256(workspace.read_bytes(upload.path)).hexdigest()
+            with _hashes_lock:
+                _hashes[key] = digest
+                while len(_hashes) > HASHES_KEPT:
+                    _hashes.popitem(last=False)
+    except SandboxError:
+        return False
+    return digest == upload.sha256
+
+
+def _frozen(agent: Agent, r: sqlite3.Row, uploads: tuple[etsy.Upload, ...]) -> list[dict[str, Any]]:
+    """The files a request froze, each with whether the workspace still holds it as proposed (None once the request
+    is closed: nothing reads it again). 0.25.0 for a KDP book; 0.42.0 (M4) for every request that uploads files."""
+    workspace, _ = agent.roots()
+    open_ = r["status"] in ("pending", "approved", "approved_with_changes")
+    return [
+        {"path": u.path, "bytes": u.bytes, "unchanged": _unchanged(workspace, u) if open_ else None} for u in uploads
+    ]
+
+
+def changed_files(agent: Agent, approval_id: int) -> list[str]:
+    """0.42.0 (M4): the files of a request waiting for the owner that changed since it was proposed (hashed afresh),
+    for their Approve; none for one that uploads none."""
+    where, params = agent.scope().where()
+    with agent.db.connection() as conn:
+        row = conn.execute(
+            f"SELECT status, executor, action FROM approvals WHERE id = ? AND {where}", (approval_id, *params)
+        ).fetchone()
+    if row is None or row["status"] != "pending" or not row["action"]:
+        return []
+    workspace, _ = agent.roots()
+    return [u.path for u in _uploads(row["executor"], row["action"]) if not _unchanged(workspace, u, kept=False)]
+
+
 def _kdp_view(agent: Agent, r: sqlite3.Row, action: dict[str, Any]) -> dict[str, Any] | None:
     """0.25.0: what a KDP book's card adds: where the owner publishes it, how they answer KDP's question on AI, what
     one sale earns, and, while it is theirs to publish, whether each file in the workspace is still the one proposed
@@ -972,16 +1052,8 @@ def _kdp_view(agent: Agent, r: sqlite3.Row, action: dict[str, Any]) -> dict[str,
         book = kdp.book_from_action(action)
     except kdp.KdpError:
         return None
-    workspace, _ = agent.roots()
-    files = []
-    for role, upload in (("manuscript", book.manuscript), ("cover", book.cover)):
-        unchanged = None
-        if r["status"] in ("pending", "approved", "approved_with_changes"):
-            try:
-                unchanged = hashlib.sha256(workspace.read_bytes(upload.path)).hexdigest() == upload.sha256
-            except SandboxError:
-                unchanged = False  # deleted (or no longer readable)
-        files.append({"role": role, "path": upload.path, "bytes": upload.bytes, "unchanged": unchanged})
+    frozen = _frozen(agent, r, (book.manuscript, book.cover))
+    files = [{"role": role, **f} for role, f in zip(("manuscript", "cover"), frozen, strict=True)]
     return {
         "bookshelf_url": kdp.BOOKSHELF_URL,
         "ai_answer": kdp.AI_ANSWER,
@@ -1083,6 +1155,7 @@ def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope
         "execution": execution,
         "reddit_url": reddit_url,
         "kdp": book,
+        "files": _frozen(agent, r, _uploads(r["executor"], action)) if action is not None else [],  # 0.42.0 (M4)
         "editable": editable,
         "closed_by": r["closed_by"],
     }

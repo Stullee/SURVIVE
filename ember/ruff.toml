@@ -2,7 +2,7 @@ line-length = 120
 target-version = "py312"
 
 [lint]
-select = ["E", "F", "W", "I", "B", "UP", "SIM", "S", "BLE"]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "S", "BLE", "C90"]
 ignore = [
   "S101",  # assert is how pytest works
   "S608",  # the one dynamic SQL builds placeholders, never values
@@ -10,3 +10,8 @@ ignore = [
 
 [lint.per-file-ignores]
 "tests/**" = ["S104", "S105", "S106", "B017"]
+
+# 0.42.0: a ceiling, not a target: the two most complex functions (the fake model's _stage_call and
+# tools._milestone_update) are at 46; nothing may grow past them (the codebase analysis of 0.40.1, 5.6).
+[lint.mccabe]
+max-complexity = 46

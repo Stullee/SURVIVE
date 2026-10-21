@@ -1,0 +1,13 @@
+# 0.42.0: an update process for what is pinned (the codebase analysis of 0.40.1, 5.7). Dependabot opens a pull request
+# a week per ecosystem; CI must pass on it like on any change, and the README's release steps still apply.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /ember
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3

@@ -35,6 +35,7 @@ from urllib.parse import urlsplit
 
 from ..config import Settings
 from ..economy.clock import Clock, from_iso, to_iso
+from . import retry
 from .etsy import Upload
 
 API_HOST = "bsky.social"  # the entryway of the accounts Bluesky hosts: logins go there
@@ -90,6 +91,11 @@ class NotSent(BlueskyError):
 
 class Refused(NotSent):
     """Bluesky refused the login: the handle or the app password (or the account) isn't right."""
+
+
+class Busy(retry.Busy, NotSent):
+    """0.42.0 (M3): Bluesky asked Ember's code to come back later (HTTP 429, or 503 with Retry-After): nothing
+    changed."""
 
 
 class Unclear(BlueskyError):

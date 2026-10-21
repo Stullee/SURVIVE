@@ -5,7 +5,10 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/base-python:3.12-alpine3.24-2026.10.0
 FROM ${BUILD_FROM}
 
+# Python runs as a user that can't write /opt/ember: no bytecode files there, and
+# no user site-packages from its (writable) home either.
 ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONNOUSERSITE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -16,6 +19,14 @@ WORKDIR /opt/ember
 # instead of trying to compile on a Raspberry Pi.
 COPY requirements.txt ./
 RUN pip3 install --only-binary=:all: -r requirements.txt
+
+# 0.42.0: Ember's process runs as this unprivileged user, not root. The s6 run
+# script (as root) prepares /data, then starts Python with s6-setuidgid; the
+# container itself still starts as root, as s6-overlay needs. A fixed UID and
+# GID, free in the base image, so the files in /data keep their owner from one
+# image to the next. The home only holds caches (it isn't kept or backed up).
+RUN addgroup -S -g 1000 ember \
+    && adduser -S -D -u 1000 -G ember -h /home/ember -s /sbin/nologin ember
 
 # config.yaml holds the version the app reports; CHANGELOG.md is what the agent
 # reads to learn about its own upgrades.

@@ -28,6 +28,7 @@ import logging
 import math
 import os
 import re
+import sqlite3
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
@@ -50,7 +51,7 @@ from .estimate import (
     plan_request,
     worst_case_micros,
 )
-from .ledger import OUTSIDE_CYCLE_CAP, Books
+from .ledger import OUTSIDE_CYCLE_CAP, Books, EntryError
 from .life import Life, LifeStatus
 from .pricing import (
     SAFETY_FADE_DAYS,
@@ -105,7 +106,6 @@ _KNOWN_USAGE_KEYS = frozenset(
 # charged at its worst case, about four times its price ($15.94 booked for $3.87 on 10-16), and the booked runway would
 # have made Ember critical on money that was still there.
 STANDARD_SPEEDS = frozenset({"standard"})
-SPEED_NOTE = "unknown usage field speed"  # what such a call's error says (the calls settle_speed settles)
 _KNOWN_SERVER_TOOLS = frozenset({"web_search_requests", "web_fetch_requests", "code_execution_requests"})
 # Workshop calls (code execution, 0.7.0) have their own cap per run and count toward the daily cap and the balance,
 # but not toward the cycle cap: one run can cost more than a whole wake cycle may. The daily review (0.7.1), once a
@@ -469,81 +469,238 @@ def recover_interrupted(db: Database, clock: Clock, boot_id: str) -> int:
 
 SPEED_SETTLED_KEY = "economy.speed_settled"  # 0.39.8: the newest call settle_speed settled
 SPEED_NETTED_KEY = "economy.speed_netted"  # 0.39.8: the owner's own refunds (micros) it counted against them
+# 0.42.0 (analysis-0.40.1 codebase, 6.2 bills): the usage fields Ember's code doesn't know, with the values the owner
+# treats as standard-priced, from the dashboard: {"<field>": ["<value>", ...]}. An answer whose bill is uncertain only
+# for such a field with such a value costs the price table's price, and the calls already charged at their worst case
+# for it are settled once (settle_usage). Each new field took a release and a one-off settlement (usage.speed, 0.39.8),
+# and meanwhile the owner's refunds typed from the Console. Only the owner adds one (accept_usage, an owner route the
+# agent has no tool for); Ember's code never does, and any other value of the field stays at its worst case.
+STANDARD_USAGE_KEY = "economy.standard_usage"
+USAGE_FIELD = re.compile(r"[a-z][a-z0-9_]{0,63}")  # fullmatch: what a usage field's name can be
+USAGE_VALUE = re.compile(r"[ -~]{1,64}")  # fullmatch: a text value, printable ASCII (a number may be a count)
+_NO_PENDING = 2**63 - 1
 
 
-def settle_speed(db: Database, clock: Clock) -> int:
-    """0.39.8 (analysis-0.39.6, 3.1): at startup, the live calls charged at their worst case only for usage.speed
-    "standard" (SPEED_NOTE), settled at what they cost: their known cost is their price, since "standard" is the price
-    the table holds. One refund (a negative API cost correction, Ember's code's) for each day they were made on, so the
-    runway counts each day at what it cost. A refund the owner recorded since the first such call (the System warning
-    asked for one) counts first, from the newest day back, so nothing is refunded twice. Returns the micros refunded.
-    The calls stay as they were answered (a finalized call never changes); the refunds settle the excess the balance
-    held for them, as the owner's refunds do."""
+@dataclass(frozen=True)
+class UsageSettlement:
+    """0.42.0 (6.2 bills): what settling the calls charged at their worst case for usage.``key`` = ``value`` alone does
+    now: ``calls`` of them, charged ``excess`` over their price, ``owners`` of which the owner's own refunds already
+    cover, and Ember's code's refunds (``refunds``: per day, its calls and micros). The dashboard shows it before the
+    owner confirms; ``_book`` records it."""
+
+    key: str
+    value: str
+    calls: int = 0
+    excess: int = 0
+    owners: int = 0
+    refunds: dict[str, tuple[int, int]] = field(default_factory=dict)
+    newest: int = 0  # the newest call settled
+    netted: int = 0  # the owner's refunds counted against this field and value, these included
+
+    @property
+    def refund(self) -> int:
+        return sum(micros for _, micros in self.refunds.values())
+
+
+class UsageChanged(Exception):
+    """0.42.0 (6.2 bills): settling would now refund more than the owner was shown (calls answered since): nothing
+    changed."""
+
+    def __init__(self, plan: UsageSettlement) -> None:
+        super().__init__("it would refund more than you were shown")
+        self.plan = plan
+
+
+def standard_usage(db: Database) -> dict[str, list[str]]:
+    """0.42.0 (6.2 bills): the usage fields and values the owner treats as standard-priced (STANDARD_USAGE_KEY). A value
+    that can't be read counts as none (fail-closed: those answers stay at their worst case)."""
+    try:
+        stored = json.loads(db.get_meta(STANDARD_USAGE_KEY) or "{}")
+    except ValueError:
+        stored = None
+    if not isinstance(stored, dict):
+        return {}
+    return {
+        key: [value for value in values if isinstance(value, str) and USAGE_VALUE.fullmatch(value)]
+        for key, values in stored.items()
+        if USAGE_FIELD.fullmatch(key) and key not in _KNOWN_USAGE_KEYS and isinstance(values, list)
+    }
+
+
+def _settled_keys(key: str, value: str) -> tuple[str, str]:
+    """Where settle_usage keeps, for usage.``key`` = ``value``, the newest call it settled and the owner's refunds it
+    counted (0.39.8's keys for usage.speed "standard")."""
+    if key == "speed" and value in STANDARD_SPEEDS:
+        return SPEED_SETTLED_KEY, SPEED_NETTED_KEY
+    return f"economy.usage_settled.{key}={value}", f"economy.usage_netted.{key}={value}"
+
+
+def _usage_settlement(conn: sqlite3.Connection, key: str, value: str) -> UsageSettlement:
+    """What settle_usage would settle for usage.``key`` = ``value`` now (nothing is written)."""
+    settled_key, netted_key = _settled_keys(key, value)
+    note, path = f"unknown usage field {key}", f"$.{key}"
+    done = conn.execute("SELECT value FROM meta WHERE key = ?", (settled_key,)).fetchone()
+    # 0.42.0: a call still in flight may be answered before the owner's choice counts for it, so the calls from it on
+    # wait for the next settlement: the newest call settled never passes over one that may still need it
+    pending = conn.execute("SELECT MIN(id) FROM llm_calls WHERE status = 'pending' AND simulated = 0").fetchone()[0]
+    rows = conn.execute(
+        "SELECT c.id, c.local_day, c.cost_micros - c.floor_micros AS excess FROM llm_calls c"
+        " JOIN ledger l ON l.llm_call_id = c.id AND l.type = 'api_cost'"
+        " WHERE c.id > ? AND c.id < ? AND c.simulated = 0 AND c.status = 'ok' AND c.billing_uncertain = 1"
+        " AND c.error = ? AND json_type(c.usage_raw, ?) = 'text' AND json_extract(c.usage_raw, ?) = ?"
+        " AND c.cost_micros > c.floor_micros"
+        " AND NOT EXISTS (SELECT 1 FROM ledger k WHERE k.type = 'api_cost_correction' AND k.llm_call_id = c.id)"
+        " ORDER BY c.id",
+        (int(done["value"]) if done else 0, pending or _NO_PENDING, note, path, path, value),
+    ).fetchall()
+    if not rows:
+        return UsageSettlement(key, value)
+    since = conn.execute("SELECT MIN(finished_at) FROM llm_calls WHERE simulated = 0 AND error = ?", (note,)).fetchone()
+    owners = conn.execute(
+        "SELECT COALESCE(-SUM(amount_micros), 0) FROM ledger WHERE type = 'api_cost_correction' AND simulated = 0"
+        " AND amount_micros < 0 AND llm_call_id IS NULL AND created_by = 'owner' AND ts >= ?",
+        (since[0],),
+    ).fetchone()[0]
+    netted = conn.execute("SELECT value FROM meta WHERE key = ?", (netted_key,)).fetchone()
+    before = int(netted["value"]) if netted else 0
+    days: dict[str, list[int]] = {}
+    for row in rows:
+        days.setdefault(str(row["local_day"]), []).append(int(row["excess"]))
+    total = sum(sum(v) for v in days.values())
+    offset = min(max(int(owners) - before, 0), total)
+    left, refunds = offset, {}
+    for day in sorted(days, reverse=True):  # the owner's refund counts against the newest days first
+        excess = sum(days[day])
+        counted = min(left, excess)
+        left -= counted
+        if excess > counted:
+            refunds[day] = (len(days[day]), excess - counted)
+    return UsageSettlement(key, value, len(rows), total, offset, refunds, int(rows[-1]["id"]), before + offset)
+
+
+def _book(db: Database, conn: sqlite3.Connection, plan: UsageSettlement, now: str) -> None:
+    """Record ``plan``: one refund for each day, where it got to and the System log's line (nothing without calls)."""
+    if not plan.calls:
+        return
+    usage = f'usage.{plan.key} "{plan.value}"'
+    for day, (calls, micros) in plan.refunds.items():
+        conn.execute(
+            "INSERT INTO ledger (ts, occurred_on, type, amount_micros, simulated, source, note, created_by)"
+            " VALUES (?, ?, 'api_cost_correction', ?, 0, ?, ?, 'system')",
+            (
+                now,
+                day,
+                -micros,
+                f"usage.{plan.key}",
+                f"{calls} call(s) of this day charged at their worst case for {usage}, the standard price: settled at"
+                " what they cost",
+            ),
+        )
+    settled_key, netted_key = _settled_keys(plan.key, plan.value)
+    for key, value in ((settled_key, plan.newest), (netted_key, plan.netted)):
+        conn.execute(
+            "INSERT INTO meta (key, value, updated_at) VALUES (?, ?, ?)"
+            " ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            (key, str(value), now),
+        )
+    counted = f", ${micros_to_usd(plan.owners):.2f} of it refunded by your own correction" if plan.owners else ""
+    events.record(
+        db,
+        "info",
+        "economy",
+        f"{plan.calls} call(s) charged at their worst case for {usage} (the standard price) were settled at what they"
+        f" cost: ${micros_to_usd(plan.excess):.2f} too much{counted}, ${micros_to_usd(plan.refund):.2f} refunded now",
+        {"calls": plan.calls, "refunded_micros": plan.refund, "owner_micros": plan.owners, "field": plan.key},
+    )
+
+
+def settle_usage(db: Database, clock: Clock, key: str, value: str) -> int:
+    """0.39.8 (analysis-0.39.6, 3.1), as settle_speed for usage.speed "standard"; 0.42.0 (6.2 bills), for any usage
+    field and value held standard-priced: the live calls charged at their worst case only for usage.``key`` = ``value``
+    ("unknown usage field <key>"), settled at what they cost: their known cost is their price, since the standard price
+    is the one the table holds. One refund (a negative API cost correction, Ember's code's) for each day they were made
+    on, so the runway counts each day at what it cost. A refund the owner recorded since the first such call (the System
+    warning asked for one) counts first, from the newest day back, so nothing is refunded twice. Once: the newest call
+    settled is kept. Returns the micros refunded. The calls stay as they were answered (a finalized call never changes);
+    the refunds settle the excess the balance held for them, as the owner's refunds do."""
+    with db.transaction() as conn:
+        plan = _usage_settlement(conn, key, value)
+        _book(db, conn, plan, to_iso(clock.now()))
+    return plan.refund
+
+
+def settle_standard_usage(db: Database, clock: Clock) -> int:
+    """At startup: settle_usage for usage.speed "standard" (0.39.8) and, 0.42.0, for each field and value the owner
+    holds standard-priced (a call answered while they chose). Returns the micros refunded."""
+    pairs = [("speed", speed) for speed in sorted(STANDARD_SPEEDS)]
+    pairs += [(key, value) for key, values in standard_usage(db).items() for value in values]
+    return sum(settle_usage(db, clock, key, value) for key, value in pairs)
+
+
+def usage_offers(db: Database) -> list[UsageSettlement]:
+    """0.42.0 (6.2 bills): for each usage field Ember's code doesn't know, and each text value of it that alone left
+    live answers charged at their worst case, what treating it as standard-priced would settle now (the dashboard's
+    offer). Only text values: a number or an object may be a count the price depends on."""
+    prefix = "unknown usage field "
+    offers: list[UsageSettlement] = []
+    with db.connection() as conn:
+        notes = conn.execute(
+            "SELECT DISTINCT error FROM llm_calls WHERE simulated = 0 AND status = 'ok' AND billing_uncertain = 1"
+            " AND error LIKE 'unknown usage field %' AND cost_micros > floor_micros ORDER BY error"
+        ).fetchall()
+        for (note,) in notes:
+            key = str(note)[len(prefix) :]
+            if not USAGE_FIELD.fullmatch(key) or key in _KNOWN_USAGE_KEYS:
+                continue  # another note besides it, or a field Ember's code prices itself
+            path = f"$.{key}"
+            values = conn.execute(
+                "SELECT DISTINCT json_extract(usage_raw, ?) FROM llm_calls WHERE simulated = 0 AND status = 'ok'"
+                " AND billing_uncertain = 1 AND error = ? AND json_type(usage_raw, ?) = 'text' ORDER BY 1",
+                (path, note, path),
+            ).fetchall()
+            for (value,) in values:
+                plan = _usage_settlement(conn, key, value) if USAGE_VALUE.fullmatch(value) else None
+                if plan is not None and plan.calls:
+                    offers.append(plan)
+    return offers
+
+
+def accept_usage(db: Database, clock: Clock, key: Any, value: Any, most: int, who: str) -> UsageSettlement | None:
+    """0.42.0 (6.2 bills): the owner (``who``) treats usage.``key`` = ``value`` as standard-priced from now on, and the
+    calls charged at their worst case for it alone are settled (settle_usage), in one transaction. Only a field Ember's
+    code doesn't know, and a value of it the owner already holds or that has calls to settle (else None: nothing
+    changed); and only when it refunds at most ``most``, what the dashboard showed them (else UsageChanged). Again for
+    the same field and value it settles what is left, usually nothing."""
+    if not isinstance(key, str) or not USAGE_FIELD.fullmatch(key) or key in _KNOWN_USAGE_KEYS:
+        raise EntryError("field", "name a usage field Ember's code doesn't know")
+    if not isinstance(value, str) or not USAGE_VALUE.fullmatch(value):
+        raise EntryError("value", "the value must be text of 1 to 64 characters")
     now = to_iso(clock.now())
     with db.transaction() as conn:
-        done = conn.execute("SELECT value FROM meta WHERE key = ?", (SPEED_SETTLED_KEY,)).fetchone()
-        rows = conn.execute(
-            "SELECT c.id, c.local_day, c.cost_micros - c.floor_micros AS excess FROM llm_calls c"
-            " JOIN ledger l ON l.llm_call_id = c.id AND l.type = 'api_cost'"
-            " WHERE c.id > ? AND c.simulated = 0 AND c.status = 'ok' AND c.billing_uncertain = 1 AND c.error = ?"
-            " AND json_extract(c.usage_raw, '$.speed') = 'standard' AND c.cost_micros > c.floor_micros"
-            " AND NOT EXISTS (SELECT 1 FROM ledger k WHERE k.type = 'api_cost_correction' AND k.llm_call_id = c.id)"
-            " ORDER BY c.id",
-            (int(done["value"]) if done else 0, SPEED_NOTE),
-        ).fetchall()
-        if not rows:
-            return 0
-        since = conn.execute(
-            "SELECT MIN(finished_at) FROM llm_calls WHERE simulated = 0 AND error = ?", (SPEED_NOTE,)
-        ).fetchone()[0]
-        owners = conn.execute(
-            "SELECT COALESCE(-SUM(amount_micros), 0) FROM ledger WHERE type = 'api_cost_correction' AND simulated = 0"
-            " AND amount_micros < 0 AND llm_call_id IS NULL AND created_by = 'owner' AND ts >= ?",
-            (since,),
-        ).fetchone()[0]
-        netted = conn.execute("SELECT value FROM meta WHERE key = ?", (SPEED_NETTED_KEY,)).fetchone()
-        before = int(netted["value"]) if netted else 0
-        days: dict[str, list[int]] = {}
-        for row in rows:
-            days.setdefault(str(row["local_day"]), []).append(int(row["excess"]))
-        total = sum(sum(v) for v in days.values())
-        offset = min(max(int(owners) - before, 0), total)
-        left, refunded = offset, 0
-        for day in sorted(days, reverse=True):  # the owner's refund counts against the newest days first
-            excess = sum(days[day])
-            counted = min(left, excess)
-            left -= counted
-            if excess - counted <= 0:
-                continue
-            refunded += excess - counted
-            conn.execute(
-                "INSERT INTO ledger (ts, occurred_on, type, amount_micros, simulated, source, note, created_by)"
-                " VALUES (?, ?, 'api_cost_correction', ?, 0, 'usage.speed', ?, 'system')",
-                (
-                    now,
-                    day,
-                    -(excess - counted),
-                    f'{len(days[day])} call(s) of this day charged at their worst case for usage.speed "standard",'
-                    " the standard price: settled at what they cost (0.39.8)",
-                ),
-            )
-        for key, value in ((SPEED_SETTLED_KEY, max(int(r["id"]) for r in rows)), (SPEED_NETTED_KEY, before + offset)):
+        held = standard_usage(db)
+        accepted = value in held.get(key, [])
+        plan = _usage_settlement(conn, key, value)
+        if not plan.calls and not accepted:
+            return None
+        if plan.refund > most:
+            raise UsageChanged(plan)
+        if not accepted:
+            held[key] = [*held.get(key, []), value]
             conn.execute(
                 "INSERT INTO meta (key, value, updated_at) VALUES (?, ?, ?)"
                 " ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-                (key, str(value), now),
+                (STANDARD_USAGE_KEY, json.dumps(held, sort_keys=True), now),
             )
-        counted_text = f", ${micros_to_usd(offset):.2f} of it refunded by your own correction" if offset else ""
-        events.record(
-            db,
-            "info",
-            "economy",
-            f'{len(rows)} call(s) charged at their worst case for usage.speed "standard" (the standard price) were'
-            f" settled at what they cost: ${micros_to_usd(total):.2f} too much{counted_text},"
-            f" ${micros_to_usd(refunded):.2f} refunded now",
-            {"calls": len(rows), "refunded_micros": refunded, "owner_micros": offset},
-        )
-    return refunded
+            events.record(
+                db,
+                "info",
+                "economy",
+                f'{who} treats usage.{key} "{value}" as the standard price: answers with it cost the'
+                " price table's price from now on; another value stays at its worst case",
+                {"field": key, "value": value},
+            )
+        _book(db, conn, plan, now)
+    return plan
 
 
 def event_reserve(settings: Settings, clock: Clock, trigger: str, working: int = 0) -> int:
@@ -1541,7 +1698,7 @@ class MeteredModel:
                 summed = summed.plus(Usage.from_api(item, _remainder_ttl(res.plan)))
             usage = Usage(**{k: max(v, getattr(summed, k)) for k, v in asdict(usage).items()})
         for key, value in raw.items():
-            if key not in _KNOWN_USAGE_KEYS and value not in (None, 0, {}, [], ""):
+            if key not in _KNOWN_USAGE_KEYS and value not in (None, 0, {}, [], "") and not self._standard(key, value):
                 notes.append(f"unknown usage field {key}")
         for key, value in (raw.get("server_tool_use") or {}).items():
             if key not in _KNOWN_SERVER_TOOLS and value:
@@ -1592,6 +1749,11 @@ class MeteredModel:
             expected=expected,
             iterations=samplings,
         )
+
+    def _standard(self, key: str, value: Any) -> bool:
+        """0.42.0 (analysis-0.40.1 codebase, 6.2 bills): whether the owner treats usage.``key`` = ``value`` as
+        standard-priced (STANDARD_USAGE_KEY): exactly that text value, nothing else of the field."""
+        return isinstance(value, str) and value in standard_usage(self.db).get(key, [])
 
     def _container_minutes(self, res: Reservation) -> int:
         """Container time to book for a call that ran code: how long the call took, at least the 5 minutes

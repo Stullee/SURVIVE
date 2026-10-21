@@ -27,7 +27,7 @@ from ..db import Database
 from ..economy.clock import Clock, to_iso
 from ..economy.life import KILLED_KEY
 from ..economy.service import Economy, Reply
-from ..integrations import etsy, executor, mailstore
+from ..integrations import etsy, executor, mailstore, retry
 from ..integrations.mail import BODY_MAX, valid_address
 from . import audit, knockouts, library, memory, metrics, plan, policy, predictions, roadmap, stages, store, ventures
 from .store import AgentScope
@@ -260,6 +260,8 @@ class Owner:
                 self._check_version(row, data)
                 if row["status"] not in ("approved", "approved_with_changes"):
                     raise OwnerError("id", f"only an approved request can be closed (it is {row['status']})", 409)
+                # 0.42.0 (analysis-0.40.1 codebase, M3): one whose service asked to wait is begun, but nothing changed
+                waits = retry.waiting(conn, approval_id) is not None
                 if row["executor"] == "email":
                     # In the same transaction as the executor's check: either this cancels it or Ember sends it.
                     if conn.execute("SELECT 1 FROM email_actions WHERE approval_id = ?", (approval_id,)).fetchone():
@@ -268,13 +270,15 @@ class Owner:
                         raise OwnerError("outcome", "Ember sends approved emails itself; to stop this one, cancel it")
                     note = note or CANCELLED
                 elif row["executor"] == "etsy_listing":
-                    if conn.execute("SELECT 1 FROM etsy_listings WHERE approval_id = ?", (approval_id,)).fetchone():
+                    started = conn.execute("SELECT 1 FROM etsy_listings WHERE approval_id = ?", (approval_id,))
+                    if started.fetchone() and not waits:
                         raise OwnerError("id", "Ember is already creating this listing; it reports the result", 409)
                     if outcome == "done":
                         raise OwnerError("outcome", "Ember creates approved listings itself; to stop one, cancel it")
                     note = note or LISTING_CANCELLED
                 elif row["executor"] == "etsy_edit":
-                    if conn.execute("SELECT 1 FROM etsy_edits WHERE approval_id = ?", (approval_id,)).fetchone():
+                    started = conn.execute("SELECT 1 FROM etsy_edits WHERE approval_id = ?", (approval_id,))
+                    if started.fetchone() and not waits:
                         raise OwnerError("id", "Ember is already making this change; it reports the result", 409)
                     if outcome == "done":
                         raise OwnerError("outcome", "Ember makes approved changes itself; to stop one, cancel it")
@@ -288,7 +292,7 @@ class Owner:
                         " UNION ALL SELECT 1 FROM action_journal WHERE approval_id = ?",
                         (approval_id, approval_id, approval_id, approval_id, approval_id),
                     ).fetchone()
-                    if started:
+                    if started and not waits:
                         raise OwnerError("id", "Ember is already carrying this out; it reports the result", 409)
                     if outcome == "done":
                         what = _AS_IS_WHAT[row["executor"].split("_")[0]][1]

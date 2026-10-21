@@ -21,6 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Res
 from . import diagnostics
 from . import events as event_log
 from .agent import owner as owner_side
+from .agent import views
 from .agent.views import WorkspaceFileError
 from .db import utcnow
 from .economy.ledger import OWNER_KINDS
@@ -269,6 +270,30 @@ def reset_estimates(request: Request) -> JSONResponse:
     return _reply(reply)
 
 
+@router.post("/api/economy/usage/standard")
+def accept_standard_usage(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """0.42.0 (analysis-0.40.1 codebase, 6.2 bills): the owner treats a usage field's value as standard-priced, and the
+    calls charged at their worst case for it alone are settled once (the dashboard's offer on the uncertain bills). The
+    agent has no tool for it."""
+    economy = _economy(request)
+    if economy is None:
+        return UNAVAILABLE
+    reply = economy.accept_usage(body, _owner(request))
+    if reply.status == 200:
+        _poke(request)  # a refund may end a critical state, and its dormancy
+    return _reply(reply)
+
+
+@router.post("/api/economy/uncertain/keep")
+def keep_as_charged(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """0.42.0 (analysis-0.40.1 codebase, 6.2 bills): the owner keeps the calls charged at their worst case that the
+    System warning names as charged: the warning names only what is charged so after them, and no money moves."""
+    economy = _economy(request)
+    if economy is None:
+        return UNAVAILABLE
+    return _reply(economy.keep_as_charged(body, _owner(request)))
+
+
 @router.post("/api/control/pause")
 def pause(request: Request) -> JSONResponse:
     return _control(request, paused=True)
@@ -432,6 +457,12 @@ def decide_approval(request: Request, approval_id: ItemId, body: Annotated[Any, 
     actions = _owner_actions(request)
     if actions is None:
         return NO_AGENT
+    approving = isinstance(body, dict) and body.get("decision") in ("approve", "approve_with_changes")
+    changed = views.changed_files(_state(request).agent, approval_id) if approving else []
+    if changed:  # 0.42.0 (analysis-0.40.1 codebase, M4): the owner saw other bytes than Ember's code would upload
+        name = _state(request).loaded.settings.agent_name
+        why = f"{', '.join(changed)} changed since {name} proposed this: reject it and ask {name} to propose it again"
+        return JSONResponse({"error": why, "field": "decision"}, status_code=409)
     reply = actions.decide(approval_id, body, _owner(request))
     _poke_executor(request, reply)
     rejected = reply.status == 200 and reply.body["approval"]["status"] == "rejected"

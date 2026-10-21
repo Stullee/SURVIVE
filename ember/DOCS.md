@@ -1328,7 +1328,14 @@ as may wait for you wait"): "Propose the listing" (the product, the book),
 proposing one again, and the critic's fixes, which are a change of the listing.
 Since 0.40.3 a report also waits while five of Ember's messages are unread, when
 she can't write to you at all ("5 of Ember's messages to you are unread"), until
-you read them.
+you read them. Since 0.42.0 each of these rules is written once, and both the
+tool and the plan read it; two more rules of Ember's tools are read the same way:
+KDP's limit of 2 new titles of a format a week, and the demand note a line's
+first listing needs. A step whose tool would refuse it for one of them waits
+too, and cuts no sleep ("Ember's tool would refuse it now", with the tool's
+words), until the next KDP week or a new note. The platforms' daily limits (a
+day's listings, pins, posts, emails) aren't among them: Ember may propose more,
+and what you approve goes out the next day.
 The limits themselves stay as they are. The [diagnostics](#diagnostics) report
 lists each step's wait with the limits as they stand ('queue', 'messages',
 'sales'). Since 0.39.1 the agent's STATUS lists the day's messages that count
@@ -1684,6 +1691,19 @@ no longer shown); a study that failed three times stops until you press
   Ember's code can undo it. A listing, or a change to one, with fewer than 5
   photos (the one **QA** number: the Etsy guide, the plan's defects and the
   `qa_clean` metric read it too) says so on its card before you decide.
+  Since 0.42.0 the card of a listing, a change, a pin, a post or a Printify
+  product says which of its files changed since it was proposed (as a KDP
+  book's does): Ember uploads only the files as proposed, so **Approve** is
+  refused for it; reject it and ask the agent to propose it again.
+- **Asked to wait** (0.42.0): when Etsy, Pinterest or Bluesky answers "too many
+  requests" (or "down for now, come back later") before anything changed (no
+  draft, no part of a change, no new board, no post yet), the approved request
+  stays approved: Ember tries it again when the service said, at least a minute
+  and at most 6 hours later, with every check again (the kill switch, a pause,
+  the files, the daily limit, the publishing queue), at most 3 times, then it
+  fails as before. Its card says when; **Cancel** still stops it. A request your
+  unlock approved isn't tried again (the agent proposes it again), nor is an
+  email, nor anything that may have changed something.
 - **Autonomy** (0.13.0): on the Plan tab, each open product (0.35.0) and each
   open milestone's card has an **Autonomy** box. There you can let Ember's code carry out a few small kinds
   of request for that milestone without your click. Each is off (**Ask me**)
@@ -3018,7 +3038,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.41.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.42.0 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3093,7 +3113,8 @@ own account. Ember never logs in to Amazon or reads its pages.
   request you rejected or approved with changes, or your note on one KDP
   refused. The agent proposes a paperback only in a later reply of the same
   cycle as a check of that very file, with `qa`: what it saw on the pages,
-  point by point. A check from an earlier cycle, or of the file before it
+  point by point (since 0.42.0, a longer one is cut to 900 characters, not
+  refused). A check from an earlier cycle, or of the file before it
   changed, doesn't count: twice the Haushaltsbuch went back to you on pictures
   of an older version or a checklist passed days before. The request shows you
   its **Page check**: the pages drawn, the agent's words and what Ember's code
@@ -3116,7 +3137,9 @@ own account. Ember never logs in to Amazon or reads its pages.
   spent its first steps finding out which file was the book. A cycle's work
   conversation holds 96,000 bytes (64,000 until 0.40.1), room for two checks of
   six pages each: four of the five cycles on the book before 0.40.0 ended at
-  64,000 without proposing it.
+  64,000 without proposing it. Since 0.42.0 each work step is told how much of
+  it is used ("Room: 61 of 96 KB of this cycle's conversation used."), with a
+  warning from three quarters on.
 - **Placeholders** (0.40.2, the analysis of 0.40.1): the check finds words in
   square brackets ("[Verlag/Herausgeber]", "[Name]"; not a box to tick, `[ ]` or
   `[x]`, nor a note's number, `[1]`), "Lorem ipsum" and TODO on the pages, and the
@@ -3235,7 +3258,20 @@ On the dashboard you can record:
 - **Expense**: real-world money you spent on Ember's behalf (a domain, a fee).
 - **Adjustment**: add to or subtract from the balance for anything else.
 - **API cost correction**: if Anthropic's Console shows a different cost than
-  Ember computed, record the difference here.
+  Ember computed, record the difference here. Since 0.42.0, when answers were
+  charged at their worst case only because of a usage field Ember's code
+  doesn't know, the dashboard offers **Treat usage.X = "Y" as standard price**,
+  with how many calls that settles and what it refunds. Confirm it once the
+  Console shows those calls at the standard price: answers with exactly that
+  value cost the price table's price from then on, and the calls already
+  charged are settled once, with one refund of Ember's code for each day (your
+  own refunds since the first of them count first). Any other value of the
+  field stays at its worst case, and only you can accept one; it stays
+  accepted (a call answered while you confirmed is settled at the next start,
+  or with **Settle**). For small amounts not worth looking up, **Keep as
+  charged** on the System warning about calls charged at their worst case
+  hides it for what it names now: it comes back only for calls charged so
+  later. No money moves, and you can still record a correction.
 - **Correct** on an earlier grant, revenue or expense reduces it (up to its full
   amount, which voids it).
 
@@ -3491,10 +3527,11 @@ automation, for example:
 - The app has no access to the Home Assistant API, runs without host
   networking and maps no folders besides its own `/data`. The Supervisor gives
   every app a token for a few Supervisor endpoints about itself (such as its own
-  options); Ember removes that token at startup. When Ember's process exits,
-  the app stops completely instead of restarting by itself, so every restart
-  goes through Home Assistant, which rewrites the options you saved. Turn on
-  **Watchdog** so that happens automatically.
+  options); Ember removes that token at startup. Ember's process runs as its own
+  unprivileged user, not root: it can read its options but not change them.
+  When Ember's process exits, the app stops completely instead of restarting by
+  itself, so every restart goes through Home Assistant, which rewrites the
+  options you saved. Turn on **Watchdog** so that happens automatically.
 - The agent's model calls go only to `https://api.anthropic.com` (any other
   address is refused inside the app, and proxy settings are ignored). Its
   tools have no network access of their own: the model calls of research, the
@@ -3542,4 +3579,14 @@ folders, and the same two folders for dry
 run under `dry_run` (started fresh with every dry-run session). Home Assistant backups include
 it. The app is stopped briefly while a backup is taken so the database is copied
 in a consistent state. Before a database upgrade, Ember also keeps a copy in
-`/data/backups`.
+`/data/backups` (the newest 10). Home Assistant's backups leave these copies
+out: each backup holds the database itself, and the backup Home Assistant
+offers before an app update holds it as it was before the upgrade.
+
+Ember keeps 1 GB free on the disk that holds `/data`, for its database: a file
+the agent writes in its workspace, or a workshop run's file, that would leave
+less is refused, and the agent is told to delete files it no longer needs or to
+ask you. The dashboard (System) shows the free space and warns below 1 GB. The
+text a workspace file held before the agent overwrote or deleted it is kept for
+`restore`: a deleted file's for 14 days, and all of them together take at most
+50 MB.

@@ -7,6 +7,11 @@
   var POLL_RUNNING_MS = 3000;
   var POLL_IDLE_MS = 30000;
   var POLL_ERROR_MS = 15000;
+  // 0.42.0: Home Assistant's Ingress session for this page runs out while the tab sleeps (the Supervisor answers 401,
+  // never Ember); its frontend renews it within a minute, so the dashboard retries quietly that long before it asks
+  // for a reload (live, "Ember refused the request (HTTP 401: 401: Unauthorized)" after the page sat idle).
+  var SESSION_RETRY_MS = 5000;
+  var SESSION_GRACE_MS = 120000;
   // After "Wake now" the cycle starts within seconds; poll fast until it shows up (or this runs out).
   var WAKE_FAST_POLL_MS = 20000;
   // Neither Ingress hop times out on its own, so a hung backend would otherwise freeze the page.
@@ -28,6 +33,7 @@
     timer: null,
     seq: 0,              // only the response to the latest dashboard request is used
     fetchError: null,
+    sessionLostSince: 0,  // Date.now() of the first 401 in a row (0.42.0): Ingress's session ran out
     rendered: {},        // section name -> JSON of the data it was last rendered from
     sectionErrors: {},
     bannerKey: null,
@@ -496,6 +502,9 @@
     var detail = "";
     if (isObject(res.data) && typeof res.data.error === "string") detail = res.data.error;
     else if (res.text && res.text.length <= 200 && res.text.indexOf("<") < 0) detail = res.text.trim();
+    if (res.status === 401) {  // 0.42.0: the Supervisor's Ingress, not Ember (see SESSION_RETRY_MS)
+      return new RequestError("http", "Home Assistant's session for this page ran out (HTTP 401): wait a moment and try again, or reload the page", 401);
+    }
     return new RequestError("http", "HTTP " + res.status + (detail ? ": " + detail : ""), res.status);
   }
 
@@ -523,6 +532,7 @@
       if (followServerBuild(d)) { next = null; return; }
       ui.data = d;
       ui.fetchError = null;
+      ui.sessionLostSince = 0;
       document.body.removeAttribute("data-stale");
       render();
       var running = !!(d.agent && d.agent.cycle_running) || !!(isObject(d.now) && d.now.running);
@@ -536,6 +546,14 @@
       }
       ui.fetchError = err;
       document.body.setAttribute("data-stale", "true");
+      if (err.kind === "http" && err.status === 401) {
+        // 0.42.0: Ingress's session ran out; Home Assistant renews it, and the system log would answer 401 too
+        if (!ui.sessionLostSince) ui.sessionLostSince = Date.now();
+        next = SESSION_RETRY_MS;
+        safely("banners", renderBanners);
+        return;
+      }
+      ui.sessionLostSince = 0;
       safely("banners", renderBanners);
       // The server answered, so the system log (which says what went wrong) is probably readable.
       if (err.kind === "http" || err.kind === "malformed") loadEvents(seq);
@@ -744,6 +762,10 @@
     if (err) {
       if (err.kind === "http" && err.status >= 500) {
         list.push({ kind: "error", icon: "✕", title: "Ember had an error (" + err.message + ")." + retry + " The System log has the details." });
+      } else if (err.kind === "http" && err.status === 401 && Date.now() - ui.sessionLostSince < SESSION_GRACE_MS) {
+        list.push({ kind: "warning", icon: "!", title: "Home Assistant's session for this page ran out while it sat idle. Home Assistant renews it within a minute; retrying." });
+      } else if (err.kind === "http" && err.status === 401) {
+        list.push({ kind: "error", icon: "✕", title: "Home Assistant's session for this page ran out and wasn't renewed (HTTP 401). Reload the page; if that doesn't help, open Ember again from the Home Assistant sidebar." });
       } else if (err.kind === "http") {
         list.push({ kind: "error", icon: "✕", title: "Ember refused the request (" + err.message + "). Reload the page; if that doesn't help, open Ember again from the Home Assistant sidebar." });
       } else if (err.kind === "malformed") {
@@ -784,6 +806,10 @@
     if (arr(sys.config_corrections).length) {
       list.push({ kind: "error", icon: "✕", title: "Some app options don't fit together, so " + name + " corrected them until you fix them in the app's Configuration tab.", items: sys.config_corrections });
     }
+    // 0.42.0 (analysis-0.40.1 codebase, 6.2 disk)
+    if (isObject(sys.storage) && sys.storage.low) {
+      list.push({ kind: "warning", icon: "!", title: "The device is low on space (" + byteSize(sys.storage.free_bytes) + " free on /data). " + name + " keeps " + byteSize(sys.storage.floor_bytes) + " free for its database, so it refuses new workspace files and workshop output until there is room: free space on the device, or ask " + name + " in the Inbox to delete files it no longer needs." });
+    }
     if (arr(sys.price_warnings).length) {
       list.push({ kind: "warning", icon: "!", title: "Some prices in the app options look too low, so costs would be under-counted. Check the price table in the app's Configuration tab.", items: sys.price_warnings });
     }
@@ -793,11 +819,39 @@
       list.push({ kind: "warning", icon: "!", title: "Everyone who can open " + name + " in Home Assistant counts as its owner: they can grant money, approve emails and use the kill switch. To let only you in, put your Home Assistant user ID in the app's owner_user_ids option (Configuration tab) and restart the app.",
         items: owner.user_id ? ["Your user ID: " + String(owner.user_id)] : [] });
     }
-    // economy_broken is also among the agent's warnings; it already has its own banner.
-    var warnings = arr(agent.warnings).filter(function (w) { return !(sys.economy_broken && String(w).indexOf(String(sys.economy_broken)) >= 0); });
+    // economy_broken is also among the agent's warnings; it already has its own banner. 0.42.0: so is the warning on the
+    // calls charged at their worst case, with its Keep as charged (it hides the advice only: no money moves).
+    var held = isObject(agent.held_warning) ? agent.held_warning : null;
+    var warnings = arr(agent.warnings).filter(function (w) {
+      return !(sys.economy_broken && String(w).indexOf(String(sys.economy_broken)) >= 0) && !(held && String(w) === String(held.text));
+    });
     if (warnings.length) {
       list.push({ kind: "warning", icon: "!", title: warnings.length === 1 ? String(warnings[0]) : "Please check:", items: warnings.length === 1 ? null : warnings });
     }
+    if (held) {
+      list.push({ kind: "warning", icon: "!", title: String(held.text),
+        action: { label: "Keep as charged", post: "api/economy/uncertain/keep", body: { held_micros: held.held_micros },
+          confirm: "Keep " + usd(held.held_usd) + " as charged? The warning goes away until a call is charged at its worst case again. The balance stays as it is; you can still record a correction." } });
+    }
+    // 0.42.0: answers charged at their worst case only for a usage field Ember's code doesn't know: the owner treats its
+    // value as standard price, after seeing what that settles (the refund shown is the most it may refund)
+    arr(agent.uncertain_bills).forEach(function (b) {
+      var usage = "usage." + b.field + ' = "' + b.value + '"';
+      var calls = plural(b.calls, "call");
+      var refund = usd(b.refund_usd);
+      list.push({ kind: "warning", icon: "!",
+        title: b.accepted ? "Standard price for " + usage + ": settles " + calls + " more, refunds " + refund
+          : "Treat " + usage + " as standard price: settles " + calls + ", refunds " + refund,
+        items: [
+          calls + " answered with " + usage + ", a usage field " + name + "'s code doesn't know, so each was charged at its worst case: " + usd(b.excess_usd) + " more than at the standard price.",
+          num(b.owner_usd) > 0 ? "Your own API cost refunds since then count first: " + usd(b.owner_usd) + " of it." : null,
+          "Only if the Anthropic Console shows these calls at the standard price. From then on such answers cost the price table's price; another value of the field stays at its worst case.",
+        ].filter(Boolean),
+        action: { label: b.accepted ? "Settle" : "Treat as standard price", post: "api/economy/usage/standard",
+          body: { field: b.field, value: b.value, refund_micros: b.refund_micros },
+          confirm: (b.accepted ? "Settle " : "Treat " + usage + " as standard price from now on, and settle ") + calls +
+            "? " + name + "'s code refunds " + refund + " once." } });
+    });
     // 0.12.0: estimates scaled up after a call cost more than estimated; they come down again, or the owner resets them.
     var factors = arr(agent.estimate_factors);
     if (factors.length) {
@@ -826,9 +880,10 @@
       action = h("button", { type: "button", class: "btn banner-action", text: spec.action.label });
       action.addEventListener("click", function () {
         if (!spec.action.post) { openLedgerForm(spec.action.form); return; }
+        if (spec.action.confirm && !window.confirm(spec.action.confirm)) return;  // 0.42.0
         var btn = this;
         btn.disabled = true;
-        request("POST", spec.action.post, {}).then(function (res) {
+        request("POST", spec.action.post, spec.action.body || {}).then(function (res) {
           if (!res.ok) throw httpError(res);
         }).catch(function (err) {
           if (!(err instanceof RequestError)) console.error(err);
@@ -989,7 +1044,7 @@
     setBadge("badge-roadmap", c.overdue, "▲", "overdue milestones");
     setBadge("badge-roadmap-proposals", c.proposals, "◔", "proposed dates waiting for your decision");
     var sys = d.system;
-    setBadge("badge-system", arr(sys.config_errors).length + arr(sys.config_corrections).length + (isObject(sys.database) && sys.database.ok === false ? 1 : 0) + (sys.economy_broken ? 1 : 0), "!", "need attention");
+    setBadge("badge-system", arr(sys.config_errors).length + arr(sys.config_corrections).length + (isObject(sys.database) && sys.database.ok === false ? 1 : 0) + (sys.economy_broken ? 1 : 0) + (isObject(sys.storage) && sys.storage.low ? 1 : 0), "!", "need attention");
   }
 
   function isUnread(m) { return isObject(m) && m.sender === "agent" && !m.read_at; }
@@ -2780,6 +2835,7 @@
   var LISTING_EXECUTION = {
     waiting: { icon: "◔", label: "Waiting to be listed", tone: "accent" },
     waiting_limit: { icon: "◔", label: "Waiting for tomorrow's listing limit", tone: "warning" },
+    retrying: { icon: "◷", label: "Etsy asked to wait", tone: "warning" },
     running: { icon: "●", label: "Being created at Etsy", tone: "accent" },
     active: { icon: "✓", label: "Live on Etsy", tone: "good" },
     draft: { icon: "!", label: "A draft at Etsy: finish it there", tone: "warning" },
@@ -2789,6 +2845,7 @@
 
   var CHANGE_EXECUTION = {
     waiting: { icon: "◔", label: "Waiting to be made", tone: "accent" },
+    retrying: { icon: "◷", label: "Etsy asked to wait", tone: "warning" },
     running: { icon: "●", label: "Being made at Etsy", tone: "accent" },
     done: { icon: "✓", label: "Changed at Etsy", tone: "good" },
     partial: { icon: "!", label: "Partly changed: check it at Etsy", tone: "warning" },
@@ -2848,6 +2905,7 @@
         h("strong", { text: "Never automatic: " }), arr(a.never).join("; ") + ". It waits for you, whatever you unlocked.") : null,
       arr(a.qa).length ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "! " }),
         h("strong", { text: "QA (Ember's code): " }), arr(a.qa).join("; ") + ".") : null,
+      changedFilesBox(a, name),  // 0.42.0 (M4)
       executor === "email" && a.first_contact ? h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "! " }),
         h("strong", { text: "First email to this address." }), " Cold advertising emails are illegal in Germany (§ 7 UWG). Approve only if this person asked to hear from you.") : null,
       note ? h("p", { class: "todo-note" }, h("span", { "aria-hidden": "true", text: "☐ " }), note) : null,
@@ -2914,6 +2972,23 @@
       h("pre", { class: "payload capped", tabindex: "0", "data-copy": "body", text: asText(action.body) }));
   }
 
+  // 0.25.0 (a KDP book's), 0.42.0 (M4: every card whose files Ember's code uploads only as proposed): a file the
+  // workspace no longer holds as it was proposed, so what the card shows of it isn't what the request carries.
+  function changedMark(f, advice) {
+    return f && f.unchanged === false ? h("strong", { class: "kdp-changed", text: " changed or deleted since it was proposed: " + advice }) : null;
+  }
+
+  // 0.42.0 (M4): the files of a card (a listing's, a change's, a pin's, a post's, a product's) that changed since it was
+  // proposed, each with the KDP card's mark: the owner can't approve other bytes than Ember's code would upload.
+  function changedFilesBox(a, name) {
+    var changed = arr(a.files).filter(function (f) { return isObject(f) && f.unchanged === false; });
+    if (!changed.length) return null;
+    var advice = a.status === "pending" ? "it can't be approved: reject it and ask " + name + " to propose it again"
+      : name + " uploads only what you approved, so it won't carry this out";
+    return h("p", { class: "warn-box" }, h("span", { "aria-hidden": "true", text: "! " }),
+      changed.map(function (f, i) { return [i ? h("br") : null, String(f.path), changedMark(f, advice)]; }));
+  }
+
   // 0.25.0: a book for Amazon KDP, which the owner publishes from their account: every field as KDP asks for it, the
   // files as they are in the workspace now (a file changed since it was proposed is flagged), and KDP's AI question.
   function kdpDraft(a) {
@@ -2936,7 +3011,7 @@
         h("dt", { text: "Files" }), h("dd", null, files.map(function (f, i) {
           var role = f.role === "cover" ? "Cover" : paperback ? "Interior" : "Manuscript";
           return [i ? h("br") : null, role + ": ", h("a", { href: wsProductUrl(String(f.path), false), text: String(f.path) }), " (" + byteSize(num(f.bytes) || 0) + ")",
-            f.unchanged === false ? h("strong", { class: "kdp-changed", text: " changed or deleted since it was proposed: check it, or reject and ask for it again" }) : null];
+            changedMark(f, "check it, or reject and ask for it again")];
         }), files.length ? [h("br"), workspaceButton(files.map(function (f) { return f.path; }))] : null),
         h("dt", { text: "AI content" }), h("dd", { text: "KDP asks whether AI tools made the book: " + asText(info.ai_answer) })),
       !paperback && files.length > 1 ? h("div", { class: "etsy-photos kdp-cover" }, h("a", { href: wsProductUrl(String(files[1].path), true), target: "_blank", rel: "noopener" },
@@ -2965,6 +3040,7 @@
     var detail;
     if (st === "waiting") detail = [name + " creates it by itself shortly; it checks for approved listings every few minutes."];
     else if (st === "waiting_limit") detail = [name + " has created its listings for today, so this one waits for tomorrow's limit."];
+    else if (st === "retrying") detail = retryDetail(ex, "Etsy");
     else if (st === "running") detail = ex.started_at ? ["Creating it at Etsy since ", timeEl(ex.started_at), "."] : ["Creating it now."];
     else if (st === "active") detail = ["Live since ", timeEl(ex.finished_at || ex.started_at), ex.url ? [": ", etsyLink(ex.url, ex.url)] : "."];
     else if (st === "draft") detail = [ex.result ? endSentence(sentence(ex.result)) : "It stayed a draft at Etsy: finish it there."];
@@ -2978,7 +3054,7 @@
   }
 
   // A listing the agent proposed: its words, and its photos and files as they are in the workspace now (Ember
-  // uploads them only if they are still exactly the ones proposed).
+  // uploads them only if they are still exactly the ones proposed; 0.42.0: the card marks one that isn't).
   function etsyDraft(action, final) {
     var photos = arr(action.photos);
     var files = arr(action.files);
@@ -3006,6 +3082,7 @@
     var name = agentName();
     var detail;
     if (st === "waiting") detail = [name + " makes it by itself shortly; it checks for approved changes every few minutes."];
+    else if (st === "retrying") detail = retryDetail(ex, "Etsy");
     else if (st === "running") detail = ex.started_at ? ["Changing it at Etsy since ", timeEl(ex.started_at), "."] : ["Changing it now."];
     else if (st === "done") detail = ["Changed ", timeEl(ex.finished_at || ex.started_at), ex.url ? [": ", etsyLink(ex.url, ex.url)] : "."];
     else if (ex.result) detail = [endSentence(sentence(ex.result))];
@@ -3064,6 +3141,13 @@
       h("p", { class: "execution-detail" }, detail));
   }
 
+  // 0.42.0 (M3): an approved request whose service asked Ember's code to come back later, before anything changed: when
+  // it is tried again (a pin's or post's slot, no earlier), and what the service said.
+  function retryDetail(ex, service) {
+    var due = ex.due_at ? [timeEl(ex.due_at, fmtDateTime(ex.due_at)), " (", relTime(ex.due_at), ")"] : "later";
+    return [service + " asked to wait: retrying ", due, ex.error ? ". It answered: " + endSentence(String(ex.error)) : "."];
+  }
+
   // 0.37.8: an approved pin or post in the publishing queue: when its slot comes, and what set it (the channel's hours,
   // the gap after the last one, a listing's last pin or post, the daily limit).
   function queuedDetail(ex) {
@@ -3076,6 +3160,7 @@
     waiting: { icon: "◔", label: "Waiting", tone: "accent" },
     scheduled: { icon: "◷", label: "In the queue", tone: "accent" },
     waiting_limit: { icon: "◔", label: "Waiting for tomorrow's limit", tone: "warning" },
+    retrying: { icon: "◷", label: "Pinterest asked to wait", tone: "warning" },
     running: { icon: "●", label: "At Pinterest now", tone: "accent" },
     active: { icon: "✓", label: "Pinned", tone: "good" },
     deleted: { icon: "–", label: "Deleted", tone: "" },
@@ -3090,6 +3175,7 @@
     if (st === "waiting") detail = [name + (executorOf(a) === "pinterest_delete" ? " deletes it" : " makes it") + " by itself shortly; it checks every few minutes."];
     else if (st === "scheduled") detail = queuedDetail(ex);
     else if (st === "waiting_limit") detail = [name + " has made its pins for today, so this one waits for tomorrow's limit."];
+    else if (st === "retrying") detail = retryDetail(ex, "Pinterest");
     else if (st === "running") detail = ex.started_at ? ["At Pinterest since ", timeEl(ex.started_at), "."] : ["At Pinterest now."];
     else if (st === "active") detail = ["Pinned ", timeEl(ex.finished_at || ex.started_at), ex.url && !a.simulated ? [": ", pinterestLink(ex.url, ex.url)] : "."];
     else if (ex.result) detail = [endSentence(sentence(ex.result))];
@@ -3104,6 +3190,7 @@
     waiting: { icon: "◔", label: "Waiting", tone: "accent" },
     scheduled: { icon: "◷", label: "In the queue", tone: "accent" },
     waiting_limit: { icon: "◔", label: "Waiting for tomorrow's limit", tone: "warning" },
+    retrying: { icon: "◷", label: "Bluesky asked to wait", tone: "warning" },
     running: { icon: "●", label: "At Bluesky now", tone: "accent" },
     active: { icon: "✓", label: "Posted", tone: "good" },
     deleted: { icon: "–", label: "Deleted", tone: "" },
@@ -3118,6 +3205,7 @@
     if (st === "waiting") detail = [name + (executorOf(a) === "bluesky_delete" ? " deletes it" : " posts it") + " by itself shortly; it checks every few minutes." + (ex.result ? " " + endSentence(sentence(ex.result)) : "")];
     else if (st === "scheduled") detail = queuedDetail(ex);
     else if (st === "waiting_limit") detail = [name + " has made its posts for today, so this one waits for tomorrow's limit."];
+    else if (st === "retrying") detail = retryDetail(ex, "Bluesky");
     else if (st === "running") detail = ex.started_at ? ["At Bluesky since ", timeEl(ex.started_at), "."] : ["At Bluesky now."];
     else if (st === "active") detail = ["Posted ", timeEl(ex.finished_at || ex.started_at), ex.url && !a.simulated ? [": ", blueskyLink(ex.url, ex.url)] : "."];
     else if (ex.result) detail = [endSentence(sentence(ex.result))];
@@ -3296,12 +3384,12 @@
       }
       if (executor === "etsy_listing") {
         var ls = executionStatus(a);
-        return ls === "waiting" || ls === "waiting_limit" ? [panelButton(it, "failed", "Cancel listing", true)] : [];
+        return ls === "waiting" || ls === "waiting_limit" || ls === "retrying" ? [panelButton(it, "failed", "Cancel listing", true)] : [];
       }
-      if (executor === "etsy_edit") return executionStatus(a) === "waiting" ? [panelButton(it, "failed", "Cancel change", true)] : [];
+      if (executor === "etsy_edit") return /^(waiting|retrying)$/.test(executionStatus(a)) ? [panelButton(it, "failed", "Cancel change", true)] : [];
       if (isAsIs(a)) {
         var ps = executionStatus(a);
-        return ps === "waiting" || ps === "waiting_limit" || ps === "scheduled" ? [panelButton(it, "failed", "Cancel", true)] : [];
+        return ps === "waiting" || ps === "waiting_limit" || ps === "scheduled" || ps === "retrying" ? [panelButton(it, "failed", "Cancel", true)] : [];
       }
       var tools = [];
       if (executor === "reddit_link") {
@@ -4481,12 +4569,21 @@
       isObject(d.models) ? [h("dt", { text: "Models" }), h("dd", { text: modelsText(d.models) })] : null,
       h("dt", { text: "API key" }), h("dd", { text: options.anthropic_api_key_set ? "Set (hidden)" : "Not set" }),
       h("dt", { text: "Database" }), h("dd", { text: db.ok ? "OK, schema version " + db.schema_version : "Error: " + db.error }),
+      isObject(s.storage) ? [h("dt", { text: "Storage" }), h("dd", { text: storageText(s.storage) })] : null,
       h("dt", { text: "Economy" }), h("dd", { text: s.economy_error ? "Not available: " + s.economy_error
         : s.economy_broken ? "Spending stopped until the app restarts: " + s.economy_broken : d.agent ? "OK" : "Not available" }),
       h("dt", { text: "Sensor URL" }), h("dd", null, h("code", { text: s.sensor_url }),
         h("span", { class: "muted small", text: " for a Home Assistant REST sensor (see the app's Documentation tab)" })),
     ]);
     replace($("options"), optionsTable(options));
+  }
+
+  // 0.42.0 (analysis-0.40.1 codebase, 6.2 disk): the free space on /data, against the floor Ember keeps for its database
+  function storageText(st) {
+    if (typeof st.free_bytes !== "number") return "Free space unknown" + (st.error ? " (" + st.error + ")" : "");
+    var text = byteSize(st.free_bytes) + " free on /data";
+    return st.low ? text + ": under the " + byteSize(st.floor_bytes) + " Ember keeps free for its database, so it refuses new workspace files and workshop output"
+      : text + " (Ember keeps " + byteSize(st.floor_bytes) + " free for its database)";
   }
 
   // 0.12.0: which model does what, and the research model's check (its first questions go to both models)
@@ -10103,7 +10200,15 @@
     // 0.39.8: a weekly pin or post of a product with no listing of its own, and a channel that brings next to nothing
     listing: "it has no listing of its own: it waits until Ember moves one to it (project_update)",
     floor: "its channel brings next to nothing (at its floor): it waits unless you pin it",
+    // 0.42.0: another rule Ember's tool refuses by (KDP's week, a first listing's demand note), in the tool's words
+    blocked: "Ember's tool would refuse it now",
   };
+
+  // A step's wait in words, with the tool's own words when its tool would refuse it (0.42.0)
+  function planWait(st) {
+    var said = PLAN_WAIT[st.waiting] || st.waiting;
+    return st.waiting === "blocked" && st.refused ? said + ": " + st.refused : said;
+  }
   var PLAN_DECIDED = {
     pin: "you pinned it", promise: "a promise to you or your decision (first, until 0.36.0)",
     venture: "a venture cycle (the venture share, until 0.35.3)",
@@ -10646,7 +10751,7 @@
   function planStepState(st) {
     if (st.status !== "open") return st.status;
     if (st.kind === "promise") return st.waiting === "hold" ? "promised · on hold" : "promised";  // 0.39.3: the owner's hold holds it
-    return st.waiting ? PLAN_WAIT[st.waiting] || st.waiting : "ready";
+    return st.waiting ? planWait(st) : "ready";
   }
 
   function planStepRow(st, q) {
@@ -10782,7 +10887,7 @@
           return h("li", null, "#" + q.id + " " + q.title, h("span", { class: "muted" }, " · ", timeEl(q.at, fmtDateTime(q.at)), q.line ? " · " + planLine(q.line) : "", q.why ? " · " + q.why : ""));
         })) : null,
         open.length ? h("ul", { class: "pl-list" }, open.map(function (st) {
-          return h("li", null, st.title, h("span", { class: "muted", text: " · " + planLine(st.line) + (st.due ? " · due " + fmtDay(st.due) : "") + (st.waiting ? " · " + (PLAN_WAIT[st.waiting] || st.waiting) : "") }));
+          return h("li", null, st.title, h("span", { class: "muted", text: " · " + planLine(st.line) + (st.due ? " · due " + fmtDay(st.due) : "") + (st.waiting ? " · " + planWait(st) : "") }));
         })) : h("p", { class: "muted", text: "Nothing to do now." }),
         done.length ? h("p", { class: "muted", text: plural(done.length, "step") + " done in the last 14 days." }) : null);
     })));
