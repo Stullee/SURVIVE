@@ -664,8 +664,13 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   again when the service said (1 minute to 6 hours later, at most 3 times),
   through every check again (`ember/app/integrations/retry.py`). Nothing that may
   have changed something is tried again, nor anything an unlock approved, nor an
-  email. A card whose file changed since it was proposed says so, and its
-  Approve is refused. The kill switch stops whatever
+  email. 0.42.2: like an email, an approved listing, change, pin, post, Printify
+  product or blog page that Ember's code hasn't begun within 7 days of its
+  approval (also one still waiting for its service) isn't carried out at all:
+  it is closed unsent, and the agent proposes it again if it still fits
+  (`ember/app/integrations/connectors.py`). Nothing that began ages out, nor
+  the owner's Undo. A card whose file changed since it was proposed says so,
+  and its Approve is refused. The kill switch stops whatever
   Ember's code hasn't begun, also in the middle of a round (0.37.3). A Reddit
   post becomes a link the owner opens and posts from their own account; a KDP
   book (0.25.0) becomes a package the owner publishes at KDP from their own

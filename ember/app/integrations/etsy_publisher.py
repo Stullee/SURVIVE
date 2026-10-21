@@ -23,7 +23,9 @@ knows), for the agent's etsy_listing and the next change. Nothing is ever change
 
 0.42.0 (M3): when Etsy asks Ember's code to come back later (HTTP 429, or 503 with Retry-After) at the draft or at a
 change's first request, before anything changed, the request stays approved and is tried again then, at most
-retry.TRIES times (retry.py); a refusal after the draft exists or after a part changed stays as it was.
+retry.TRIES times (retry.py); a refusal after the draft exists or after a part changed stays as it was. 0.42.2 (M2):
+a listing or change (not the owner's Undo) not begun within connectors.APPROVED_DAYS of its approval, or still
+waiting for Etsy then, is closed unsent, as an email is (connectors.stale).
 
 ``sync`` (in the scheduler's rounds, so while the agent sleeps too, and at the start of a wake cycle; at most every
 SYNC_MINUTES, well within the 6 hours Etsy's API terms allow for listing content) records each listing's state, views
@@ -330,6 +332,8 @@ class Publisher:
                 return "skipped"  # cancelled or decided meanwhile (or Etsy's wait isn't over)
             if connectors.halted(conn):
                 return connectors.HALTED  # 0.37.3: the kill switch came on while this round ran
+            if (stale := connectors.stale(conn, row, self.clock.now())) is not None:  # 0.42.2 (M2): too old to begin
+                return self._lapsed(conn, row, "Not listed", stale, stamp)
             if created_today(conn, self.clock, scope) >= self.settings.etsy_listings_per_day:
                 return "waiting_limit"
             title = ""
@@ -450,6 +454,13 @@ class Publisher:
             )
         connectors.begin(conn, approval_id, stamp)  # 0.13.0: its listing's number comes when it is finished
 
+    def _lapsed(self, conn: sqlite3.Connection, row: sqlite3.Row, done: str, why: str, stamp: str) -> str:
+        """0.42.2 (analysis-0.40.1 audit, M2): a listing or change approved more than connectors.APPROVED_DAYS ago that
+        never began (or that waited for Etsy since) is closed unsent (connectors.lapse)."""
+        note = connectors.lapse(conn, row, done, why, stamp)
+        events.record(self.db, "warning", "etsy", f"Request #{row['id']}: {note}"[:300])
+        return "failed"
+
     def _wait(self, table: str, approval_id: int, exc: Exception) -> str | None:
         """0.42.0 (M3): Etsy asked to come back later before anything changed (``etsy.Busy``): the request stays
         approved and is tried again then (retry.park). None when it may not wait (an unlock's, or it waited
@@ -504,6 +515,8 @@ class Publisher:
                 return "skipped"  # cancelled or decided meanwhile (or Etsy's wait isn't over)
             if connectors.halted(conn):
                 return connectors.HALTED  # 0.37.3: the kill switch came on while this round ran
+            if (stale := connectors.stale(conn, row, self.clock.now())) is not None:  # 0.42.2 (M2): unless an Undo
+                return self._lapsed(conn, row, "Not changed", stale, stamp)
             try:
                 listing_id = int(json.loads(row["action"])["listing_id"])
             except (ValueError, KeyError, TypeError):
@@ -536,6 +549,8 @@ class Publisher:
                 return None  # the owner's own decision
             if row["status"] not in APPROVED or connectors.halted(conn):
                 return None  # 0.37.3: _change makes nothing now (taken back, or the kill switch is on): Etsy isn't read
+            if connectors.stale(conn, row, self.clock.now()) is not None:
+                return None  # 0.42.2 (M2): nor when it was approved too long ago (_change closes it unsent)
             try:
                 edit = approved_edit(row)
                 before = current_listing(conn, scope, edit.listing_id)

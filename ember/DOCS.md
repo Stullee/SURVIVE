@@ -1720,6 +1720,18 @@ no longer shown); a study that failed three times stops until you press
   fails as before. Its card says when; **Cancel** still stops it. A request your
   unlock approved isn't tried again (the agent proposes it again), nor is an
   email, nor anything that may have changed something.
+- **Approved too long ago** (0.42.2): a listing, a change, a pin, a post, a
+  Printify product or change, or a blog page that Ember's code hasn't begun 7
+  days after your approval isn't carried out any more, as an email isn't (see
+  [Ember's mailbox](#embers-mailbox)). Ember was paused or stopped, or it
+  waited for money, a connection, a daily limit, its slot or its service, and
+  it may no longer fit: Ember closes it as failed, with why ("Not listed: it
+  didn't go out within 7 days of its approval ..."), and the agent hears it
+  and proposes it again if it still fits (its plan gets a step for that). One
+  that waits for its service ages out too, before it is tried again.
+  What Ember's code began never does, nor your Undo (it takes something down,
+  which still fits), nor what you carry out yourself (a Reddit post, a KDP
+  book), Pinterest's test pin or the last will.
 - **Autonomy** (0.13.0): on the Plan tab, each open product (0.35.0) and each
   open milestone's card has an **Autonomy** box. There you can let Ember's code carry out a few small kinds
   of request for that milestone without your click. Each is off (**Ask me**)
@@ -2087,7 +2099,9 @@ included: encrypt your backups.
   approval (Ember was paused, or it waited for money, the daily limit or an
   email to be read) isn't sent any more: Ember closes it as not sent, with
   why, and the agent asks again if it still fits (until 0.40.3 it went out on
-  Resume, weeks late).
+  Resume, weeks late). Since 0.42.2 the other approved actions Ember's code
+  carries out age out after the same 7 days (see
+  [Your part](#your-part), Approved too long ago).
 - Ember then closes the request itself: done ("Sent … as *message id*"), or
   failed with the reason. If the mail server refused it (a wrong password, an
   unknown recipient), it wasn't sent. If the connection broke while the email
