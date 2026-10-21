@@ -28,7 +28,7 @@ et_xmlfile==2.0.0
 fonttools==4.66.0
 h11==0.16.0
 httpcore2==2.13.1
-httpx2==2.13.1
+httpx2==2.14.0
 idna==3.20
 invoke==3.0.3
 jiter==0.17.0
