@@ -1987,8 +1987,9 @@ class CycleRunner:
         except Unpriceable:
             return False
         # 0.12.0: the cycle cap counts expected costs (the reflection's: at least 1.5 times the 95th percentile of the
-        # recent ones), the daily cap and the balance worst cases
-        ctx.state.reflect_reserve = self.meter.reflection_reserve(reflect_expected, str(reflect["model"]))
+        # recent ones; 0.40.3, E4: at most its worst case), the daily cap and the balance worst cases
+        model = str(reflect["model"])
+        ctx.state.reflect_reserve = self.meter.reflection_reserve(reflect_expected, model, reflect_worst)
         ctx.state.reflect_money = reflect_worst
         cycle_room, money_room = self.meter.rooms(cycle_id)
         return step_expected + ctx.state.reflect_reserve <= cycle_room and step_worst + reflect_worst <= money_room

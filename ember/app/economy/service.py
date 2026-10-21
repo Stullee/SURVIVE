@@ -41,6 +41,7 @@ from .metering import (
     MeterHealth,
     ProcessLock,
     Transport,
+    clock_warning,
     recover_interrupted,
     settle_speed,
     usd_cap_to_micros,
@@ -309,12 +310,23 @@ class Economy:
             result.append("Another Ember process is using the data folder; model calls are refused.")
         if self.health.broken:
             result.append(f"Spending is stopped after a bookkeeping error: {self.health.broken}. Restart the app.")
+        clock = clock_warning(self.db, self.clock)  # 0.40.3 (analysis-0.40.1 codebase, E2)
+        if clock:
+            result.append(clock)
         status = self.life.evaluate()
         held = status.settled_balance - status.balance
         if held > 0 and self.mode == "live":  # simulated charges have no Console to check against
+            # 0.40.3 (analysis-0.40.1 codebase, E1): the runway counts the answered ones at what they are known to cost
+            answered = status.runway.balance - status.balance
+            judged = (
+                f" The runway counts ${micros_to_usd(answered):.2f} of it, charged for answers whose bill is uncertain,"
+                " at what they are known to cost."
+                if answered > 0
+                else ""
+            )
             result.append(
                 f"${micros_to_usd(held):.2f} of interrupted calls was charged at the worst case. Check the real cost in"
-                " the Anthropic Console and record the difference as an API cost correction (decrease)."
+                " the Anthropic Console and record the difference as an API cost correction (decrease)." + judged
             )
         opening = opening_cost(self.settings, self.db, self.mode)
         if opening is not None:

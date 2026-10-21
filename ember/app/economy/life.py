@@ -17,7 +17,8 @@ this order of precedence:
 * critical: less than 2 days of runway. It ends only when runway is back to 4
   days or more *and* money came in since it started, so the state doesn't
   flicker around the threshold. The first time a life turns critical, it is
-  due to write its last will (phase 3 does the writing).
+  due to write its last will (phase 3 does the writing). 0.40.3: a refund of
+  API costs charged before it began ends it too, as money in does.
 
 ``dormant`` and ``ended`` are bookkeeping states: a live life sleeps while the
 app runs in dry run, and a dry-run life ends with its test session.
@@ -77,7 +78,8 @@ def mode_of(settings: Settings) -> str:
 class Runway:
     """How long the balance lasts at the API spending of the last 7 active days (``days``; the life's states go by
     it), and, 0.12.0, at that spending less the revenue and plus the expenses of the same days (``net_days``: None
-    while it earns at least what it spends, see ``net_note``)."""
+    while it earns at least what it spends, see ``net_note``). 0.40.3 (analysis-0.40.1 codebase, E1): the balance
+    and the spending with the answered calls whose bill is uncertain at what they are known to cost (``balance``)."""
 
     days: float | None
     note: str | None
@@ -86,6 +88,7 @@ class Runway:
     net_days: float | None = None
     net_note: str | None = None
     window_net_in: int = 0  # revenue less expenses in the same days (their corrections included)
+    balance: int = 0  # 0.40.3 (E1): the balance it is judged on
 
 
 def ledger_scope(db: Database, mode: str) -> Scope:
@@ -344,7 +347,13 @@ class Life:
             reason = f"ran out of money (balance ${micros_to_usd(balance):.2f})"
             return replace(base, state="dead", reason=reason, runway=Runway(0.0, "Out of money")), None
 
-        runway = self._runway(life, scope, balance, now)
+        # 0.40.3 (analysis-0.40.1 codebase, E1): the runway, and so the critical state, goes by the balance and the
+        # spending with the answered calls whose bill is uncertain at what they are known to cost, as the caps count
+        # them (``cap_spend_on``). Booked at their worst case (an unknown usage field: about 4 times their price), they
+        # made Ember critical, its last will written and dormant, on money that was there. An interrupted call still
+        # counts its charge; death and starvation go by the settled balance, the guard by the booked one, as before.
+        judged = balance + self.books.provisional_excess(scope, answered=True)
+        runway = self._runway(life, scope, judged, now)
         critical_since, critical_mark = life["critical_since"], life["critical_mark"]
         reason = REASONS["alive"]
         if critical_since is None:
@@ -355,7 +364,16 @@ class Life:
             # It must also be able to plan again (a starving agent often has no runway figure at all).
             threshold = self.revive_threshold() or 0
             affordable = balance - pending >= threshold
-            if recovered and affordable and self.books.money_in_after(scope, critical_mark or 0):
+            # 0.40.3 (analysis-0.40.1 codebase, E1): a refund of API costs charged before it began ends it as money in
+            # does: what made it critical was money that was there (the owner's refunds of an uncertain episode left
+            # it critical, and dormant once its last will was written, until a grant)
+            began = self.clock.local_day(critical_since)
+            mark = critical_mark or 0
+            if (
+                recovered
+                and affordable
+                and (self.books.money_in_after(scope, mark) or self.books.refunded_after(scope, mark, began))
+            ):
                 critical_since = critical_mark = None
         if critical_since is not None:
             reason = life["state_reason"] if life["state"] == "critical" else "Runway is under 2 days"
@@ -402,14 +420,14 @@ class Life:
     def _runway(self, life: sqlite3.Row, scope: Scope, balance: int, now: datetime) -> Runway:
         first_cost = self.books.first_api_cost_after(scope, life["born_mark"])
         if first_cost is None:
-            return Runway(None, "No spending yet")
+            return Runway(None, "No spending yet", balance=balance)
         start = max(now - RUNWAY_WINDOW, from_iso(life["born_at"]), from_iso(first_cost))
-        spend = self.books.api_spend_between(scope, start, now, after_id=life["born_mark"])
+        spend = self.books.api_spend_between(scope, start, now, after_id=life["born_mark"], settled=True)  # 0.40.3
         active = self._active_seconds(life["id"], start, now)
         days = max(1.0, active / 86_400)
         if spend <= 0:
             note = "No spending in the last 7 days"
-            return Runway(None, note, 0, days, net_note=note)
+            return Runway(None, note, 0, days, net_note=note, balance=balance)
         runway = max(0, balance) / (spend / days)
         # 0.12.0: the net runway counts what came in and what else went out in the same days (it counted neither).
         net_in = self.books.net_revenue_between(scope, start, now)
@@ -418,7 +436,7 @@ class Life:
             net_days, net_note = None, "Earning at least what it spends (last 7 days)"
         else:
             net_days, net_note = min(max(0, balance) / (burn / days), RUNWAY_CAP_DAYS), None
-        return Runway(min(runway, RUNWAY_CAP_DAYS), None, spend, days, net_days, net_note, net_in)
+        return Runway(min(runway, RUNWAY_CAP_DAYS), None, spend, days, net_days, net_note, net_in, balance)
 
     def _active_seconds(self, life_id: int, start: datetime, end: datetime) -> float:
         """Seconds within [start, end] the life spent alive or critical."""

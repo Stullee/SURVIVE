@@ -3206,10 +3206,17 @@ showed you. Sending the same form twice records it once. An API cost decrease
 (a refund) can't be larger than the API cost recorded on its day, and it never
 adds room under that day's spending cap. Date it on the day it corrects: the
 runway counts it there, so a refund of old charges doesn't make the last week
-look cheap, and it isn't money coming in (it doesn't end a critical state).
+look cheap. It isn't money coming in for the burn modes, but since 0.40.3 a
+refund of a day up to the one a critical state began on ends that state, as
+money coming in does, once the runway is back to 4 days: the money was there.
 
 **Runway.** The runway is the balance divided by the average daily API
 spending of the last 7 active days; the life states go by it (see below).
+Since 0.40.3 an answer whose bill is uncertain counts in both at what it is
+known to cost, as it does toward the caps (at its worst case it could make
+Ember critical on money that was there); a call whose answer broke off counts
+what it was charged. A correction of the first of those days counts in the
+share of that day's charges the 7 days hold.
 Next to it, the dashboard, the agent's plans and its daily review show the
 **net runway**: the same, with the revenue and expenses recorded for those days
 counted too (Etsy's fees make it shorter, a sale longer). While Ember earns at
@@ -3236,8 +3243,9 @@ below go no lower than focus; with **conserve** they are as follows:
   decisions and events still wake it, and the next scheduled cycle comes a day
   after the last cycle of any kind);
 - **dormant**: once its last will is written and its runway is critical: no
-  model calls until money comes in (a sale or your grant); **Wake now** still
-  runs a cycle.
+  model calls until money comes in (a sale or your grant, or since 0.40.3 your
+  refund of the API costs that made it critical); **Wake now** still runs a
+  cycle.
 
 A mode moves down at once. A mode below what your stance allows (you changed
 it) moves up to it at once. Otherwise it moves up only once money came in since it moved
@@ -3337,7 +3345,7 @@ session. Each time you switch dry run on, a new session starts from scratch.
 | State | Meaning |
 |---|---|
 | alive | Running normally. |
-| critical | Less than 2 days of runway (balance divided by the average daily spending of the last 7 active days), or it couldn't afford its next planning call. It stays critical until runway is back to 4 days *and* money came in (a grant, revenue or an adjustment that adds; a refund of API costs doesn't count). The first time, it writes a last will. |
+| critical | Less than 2 days of runway (balance divided by the average daily spending of the last 7 active days), or it couldn't afford its next planning call. It stays critical until runway is back to 4 days *and* money came in (a grant, revenue or an adjustment that adds; since 0.40.3 also a refund of API costs of a day up to the one it became critical on). The first time, it writes a last will. |
 | paused | You paused it, or Ember's code did because a refund or an Etsy listing fee left it without money (the reason says so; in dry run the test balance decides). Nothing runs until you resume. |
 | unfunded | No money yet and nothing spent: grant funds to start. |
 | dead | The balance ran out, or it could no longer afford even its last will. No model calls. The dashboard shows a memorial. A grant large enough for a fresh start begins a new life (the dashboard shows the amount needed); resuming alone never revives. |

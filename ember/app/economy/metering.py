@@ -78,6 +78,13 @@ WORK_PURPOSES = ("work", "reflect", "research", "workshop", "draft")  # 0.12.0: 
 _PURPOSE = re.compile(r"^[a-z_]{1,32}$")
 _TRIGGER = re.compile(r"^[a-z_]{1,32}$")
 CLOCK_TOLERANCE_SECONDS = 60
+# 0.40.3 (analysis-0.40.1 codebase, E2): a call is refused while the system clock is behind the last call by more than
+# CLOCK_TOLERANCE_SECONDS, but only up to CLOCK_BEHIND_LIMIT: further behind, the clock is taken as right (the calls up
+# to then no longer count for the check, CLOCK_ACCEPTED_KEY) and the economy's warnings say so for CLOCK_WARNING_DAYS.
+# One call stamped while the clock was a year ahead refused every call for a year, with no remedy.
+CLOCK_BEHIND_LIMIT = timedelta(hours=24)
+CLOCK_ACCEPTED_KEY = "economy.clock_accepted"  # "<the newest call's id> <its stamp> <when the clock was taken right>"
+CLOCK_WARNING_DAYS = 7
 _KNOWN_USAGE_KEYS = frozenset(
     {
         "input_tokens",
@@ -898,11 +905,13 @@ class MeteredModel:
         held = self._held(purpose, str(request.get("model") or ""), worst)
         return own <= cycle_room and held <= money_room, expected, worst
 
-    def reflection_reserve(self, expected: int, model: str) -> int:
+    def reflection_reserve(self, expected: int, model: str, worst: int | None = None) -> int:
         """0.12.0: what a cycle keeps for its reflection under the cycle cap: 1.5 times the 95th percentile of the
-        recent reflections on ``model``, and at least what this one is expected to cost."""
+        recent reflections on ``model``, and at least what this one is expected to cost. 0.40.3 (analysis-0.40.1
+        codebase, E4): at most its worst case (``worst``), which always pays for it."""
         history = self._history(model, "reflect")
-        return max(expected, history or 0)
+        reserve = max(expected, history or 0)
+        return reserve if worst is None else max(expected, min(reserve, worst))
 
     def _plan(self, request: Mapping[str, Any], extra_tokens: int = 0) -> tuple[Plan, ModelPrice]:
         try:
@@ -937,13 +946,18 @@ class MeteredModel:
     def _history(self, model: str, purpose: str, column: str = "cost_micros") -> int | None:
         """EXPECTED_FACTOR times the 95th percentile of ``column`` (their cost, or their output tokens) of the last
         EXPECTED_WINDOW calls of ``purpose`` on ``model`` in this mode that cost something, or None while there are
-        fewer than EXPECTED_SAMPLES."""
+        fewer than EXPECTED_SAMPLES. 0.40.3 (analysis-0.40.1 codebase, E4): their cost is what they are known to cost
+        (``floor_micros``, as ``_workshop_tail`` reads it), not what they were booked at: an answer whose bill is
+        uncertain is booked at its worst case, and after such an episode the reflection's reserve held 1.5 times the
+        worst case for the next 20 reflections. A call known to cost nothing (an answer without its usage) adds
+        nothing."""
         if column not in ("cost_micros", "output_tokens"):
             raise ValueError(column)
+        value = "floor_micros" if column == "cost_micros" else column
         with self.db.connection() as conn:
             rows = conn.execute(
-                f"SELECT {column} FROM llm_calls WHERE model = ? AND purpose = ? AND simulated = ? AND status = 'ok'"
-                " AND cost_micros > 0 ORDER BY id DESC LIMIT ?",
+                f"SELECT {value} FROM llm_calls WHERE model = ? AND purpose = ? AND simulated = ? AND status = 'ok'"
+                " AND floor_micros > 0 ORDER BY id DESC LIMIT ?",
                 (model, purpose, 1 if self.simulated else 0, EXPECTED_WINDOW),
             ).fetchall()
         costs = sorted(int(r[0]) for r in rows)
@@ -1097,9 +1111,7 @@ class MeteredModel:
             if refusal is None and cycle is None:
                 refusal = ("unknown wake cycle", "request")
             if refusal is None:
-                latest = conn.execute("SELECT MAX(ts) FROM llm_calls").fetchone()[0]
-                if latest and (from_iso(latest) - now).total_seconds() > CLOCK_TOLERANCE_SECONDS:
-                    refusal = ("the system clock went backwards; waiting until it is past the last call", "system")
+                refusal = self._clock_refusal(conn, now)
             refusal = refusal or _state_refusal(status) or self._cycle_refusal(conn, cycle, status, purpose)
             if refusal is None and problem is not None:
                 refusal = (f"the request can't be priced: {problem}", "request")
@@ -1181,6 +1193,23 @@ class MeteredModel:
             return ("another Ember process is using the data folder", "system")
         if self.health.broken:
             return (f"spending is stopped after a bookkeeping error ({self.health.broken}); restart the app", "system")
+        return None
+
+    def _clock_refusal(self, conn: Any, now: datetime) -> tuple[str, str] | None:
+        """A refusal while the system clock is behind the last call (it went backwards), inside the guard's transaction.
+        0.40.3 (analysis-0.40.1 codebase, E2): only while it is less than CLOCK_BEHIND_LIMIT behind; further, the clock
+        is taken as right, the calls up to then no longer count for this check, and the System log says so."""
+        accepted = (self.db.get_meta(CLOCK_ACCEPTED_KEY) or "").split()
+        after = int(accepted[0]) if accepted and accepted[0].isdigit() else 0
+        latest = conn.execute("SELECT MAX(ts) FROM llm_calls WHERE id > ?", (after,)).fetchone()[0]
+        behind = (from_iso(latest) - now).total_seconds() if latest else 0.0
+        if behind <= CLOCK_TOLERANCE_SECONDS:
+            return None
+        if behind <= CLOCK_BEHIND_LIMIT.total_seconds():
+            return ("the system clock went backwards; waiting until it is past the last call", "system")
+        newest = int(conn.execute("SELECT MAX(id) FROM llm_calls").fetchone()[0])
+        self.db.set_meta(CLOCK_ACCEPTED_KEY, f"{newest} {latest} {to_iso(now)}")
+        events.record(self.db, "warning", "economy", clock_text(latest, to_iso(now)))
         return None
 
     def _cycle_refusal(self, conn: Any, cycle: Any, status: LifeStatus, purpose: str) -> tuple[str, str] | None:
@@ -1684,6 +1713,32 @@ class MeteredModel:
                             " calls cost no more than their unscaled estimate.",
                         )
             self.life.evaluate_and_persist()
+
+
+def clock_text(latest: str, at: str) -> str:
+    """0.40.3 (analysis-0.40.1 codebase, E2): what the System log and the economy's warnings say when the guard took a
+    clock more than CLOCK_BEHIND_LIMIT behind the last call (stamped ``latest``) as right, at ``at``."""
+    hours = (from_iso(latest) - from_iso(at)).total_seconds() / 3_600
+    behind = f"{hours / 24:.0f} days" if hours >= 48 else f"{hours:.0f} hours"
+    limit = CLOCK_BEHIND_LIMIT.total_seconds() / 3_600
+    return (
+        f"The system clock was {behind} behind the last model call (stamped {latest}) at {at}: more than {limit:.0f}"
+        " hours, so Ember's code took the clock as right and model calls go on. If the clock is wrong, set it right."
+    )
+
+
+def clock_warning(db: Database, clock: Clock) -> str | None:
+    """0.40.3 (E2): ``clock_text`` for the economy's warnings, for CLOCK_WARNING_DAYS after the guard took the clock as
+    right (None otherwise)."""
+    accepted = (db.get_meta(CLOCK_ACCEPTED_KEY) or "").split()
+    if len(accepted) != 3:
+        return None
+    try:
+        at = from_iso(accepted[2])
+        text = clock_text(accepted[1], accepted[2])
+    except ValueError:
+        return None
+    return text if clock.now() - at < timedelta(days=CLOCK_WARNING_DAYS) else None
 
 
 def _state_refusal(status: LifeStatus) -> tuple[str, str] | None:

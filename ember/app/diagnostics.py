@@ -517,6 +517,7 @@ def _economy(state: AppState) -> str:
             "note": status.runway.note,
             "window_spend_usd": micros_to_usd(status.runway.window_spend),
             "active_days": status.runway.active_days,
+            "balance_usd": micros_to_usd(status.runway.balance),  # 0.40.3 (E1): the balance it is judged on
         },
         "today_local": economy.clock.today().isoformat(),
         "tz": str(economy.clock.tz),

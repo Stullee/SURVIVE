@@ -19,7 +19,7 @@ import sqlite3
 import statistics
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
+from decimal import ROUND_CEILING, ROUND_DOWN, ROUND_HALF_UP, Decimal
 from typing import Any
 
 from ..db import Database
@@ -270,21 +270,25 @@ class Books:
             ).fetchone()
         return int(row[0])
 
-    def provisional_excess(self, scope: Scope) -> int:
+    def provisional_excess(self, scope: Scope, answered: bool = False) -> int:
         """How much interrupted calls may have been overcharged (charged estimate minus known floor).
 
         Death is judged as if that money were still there, so an estimate alone
         can't kill the agent; the budget guard still counts the full charge. A
         refund the owner records after checking the Console (a negative API cost
         correction) settles that uncertainty: it is netted against the excess.
+
+        ``answered`` (0.40.3, analysis-0.40.1 codebase, E1: the runway's): only
+        the answered calls' (``_USAGE_READ``, as ``cap_spend_on`` counts them).
         """
         where, params = scope.where("l")
         plain, plain_params = scope.where()
+        read = f" AND {_USAGE_READ}" if answered else ""
         with self.db.connection() as conn:
             row = conn.execute(
                 "SELECT COALESCE(SUM(c.cost_micros - c.floor_micros), 0) FROM ledger l"
                 " JOIN llm_calls c ON c.id = l.llm_call_id"
-                f" WHERE l.type = 'api_cost' AND c.billing_uncertain = 1 AND {where}"
+                f" WHERE l.type = 'api_cost' AND c.billing_uncertain = 1{read} AND {where}"
                 " AND NOT EXISTS (SELECT 1 FROM ledger k WHERE k.type = 'api_cost_correction'"
                 " AND k.llm_call_id = c.id)",
                 params,
@@ -335,25 +339,65 @@ class Books:
             ).fetchone()
         return int(row[0]) - int(excess[0])
 
-    def api_spend_between(self, scope: Scope, start: datetime, end: datetime, after_id: int = 0) -> int:
+    def api_spend_between(
+        self, scope: Scope, start: datetime, end: datetime, after_id: int = 0, settled: bool = False
+    ) -> int:
         """API spend in [start, end] (and after ledger row ``after_id``): the costs charged then, and the corrections of
         those days, by the day they correct (0.12.0: by the time they were recorded, so a refund of old charges wiped
-        out the last days' spending and the runway jumped from 1.3 to 249 days)."""
+        out the last days' spending and the runway jumped from 1.3 to 249 days).
+
+        0.40.3 (analysis-0.40.1 codebase, E3): the first day's corrections count in the share of that day's charges
+        that falls in [start, end] (whole while that day has no charges to share them by). They counted whole, so a
+        day's refund counted against the part of its charges still in the window, and the runway jumped for that day.
+
+        ``settled`` (0.40.3, E1: the runway's): an answered call whose bill is uncertain counts with what it is known
+        to cost, as ``cap_spend_on`` counts it, and the refunds of those days (a negative correction of no call: the
+        owner's, or Ember's code's for usage.speed) only for what they refund beyond that excess, not twice."""
         where, params = scope.where()
-        first_day = self.clock.local_day(to_iso(start)).isoformat()
-        last_day = self.clock.local_day(to_iso(end)).isoformat()
+        joined, joined_params = scope.where("l")
+        begin, finish = to_iso(start), to_iso(end)
+        first_day = self.clock.local_day(begin).isoformat()
+        last_day = self.clock.local_day(finish).isoformat()
         with self.db.connection() as conn:
             charged = conn.execute(
                 "SELECT COALESCE(SUM(amount_micros), 0) FROM ledger WHERE type = 'api_cost'"
                 f" AND ts >= ? AND ts <= ? AND id > ? AND {where}",
-                (to_iso(start), to_iso(end), after_id, *params),
+                (begin, finish, after_id, *params),
             ).fetchone()[0]
-            corrected = conn.execute(
-                "SELECT COALESCE(SUM(amount_micros), 0) FROM ledger WHERE type = 'api_cost_correction'"
-                f" AND occurred_on >= ? AND occurred_on <= ? AND ts <= ? AND id > ? AND {where}",
-                (first_day, last_day, to_iso(end), after_id, *params),
-            ).fetchone()[0]
-        return int(charged) + int(corrected)
+            # per first day or later days: (the corrections, the refunds of no call among them)
+            corrections = conn.execute(
+                "SELECT occurred_on = ?, COALESCE(SUM(amount_micros), 0),"
+                " COALESCE(SUM(CASE WHEN amount_micros < 0 AND llm_call_id IS NULL THEN -amount_micros END), 0)"
+                " FROM ledger WHERE type = 'api_cost_correction'"
+                f" AND occurred_on >= ? AND occurred_on <= ? AND ts <= ? AND id > ? AND {where} GROUP BY 1",
+                (first_day, first_day, last_day, finish, after_id, *params),
+            ).fetchall()
+            day, inside = conn.execute(
+                "SELECT COALESCE(SUM(amount_micros), 0), COALESCE(SUM(CASE WHEN ts >= ? THEN amount_micros END), 0)"
+                f" FROM ledger WHERE type = 'api_cost' AND occurred_on = ? AND ts <= ? AND id > ? AND {where}",
+                (begin, first_day, finish, after_id, *params),
+            ).fetchone()
+            excess = 0
+            if settled:
+                excess = conn.execute(
+                    "SELECT COALESCE(SUM(c.cost_micros - c.floor_micros), 0) FROM ledger l"
+                    " JOIN llm_calls c ON c.id = l.llm_call_id"
+                    f" WHERE l.type = 'api_cost' AND c.billing_uncertain = 1 AND {_USAGE_READ}"
+                    f" AND l.ts >= ? AND l.ts <= ? AND l.id > ? AND {joined}"
+                    " AND NOT EXISTS (SELECT 1 FROM ledger k WHERE k.type = 'api_cost_correction'"
+                    " AND k.llm_call_id = c.id)",
+                    (begin, finish, after_id, *joined_params),
+                ).fetchone()[0]
+        corrected = refunded = 0
+        for first, amount, refunds in corrections:
+            if first and int(day) > 0:
+                # rounded up, so the spend is never short by a rounding
+                share = Decimal(int(inside)) / Decimal(int(day))
+                amount = (Decimal(int(amount)) * share).to_integral_value(rounding=ROUND_CEILING)
+                refunds = (Decimal(int(refunds)) * share).to_integral_value(rounding=ROUND_CEILING)
+            corrected += int(amount)
+            refunded += int(refunds)
+        return int(charged) + corrected - max(0, int(excess) - refunded)
 
     def net_revenue_between(self, scope: Scope, start: datetime, end: datetime) -> int:
         """Revenue less expenses (their corrections included) on the owner's days from ``start`` to ``end`` (0.12.0: the
@@ -390,6 +434,21 @@ class Books:
         with self.db.connection() as conn:
             row = conn.execute(
                 f"SELECT 1 FROM ledger WHERE {_MONEY_IN} AND id > ? AND {where} LIMIT 1", (mark, *params)
+            ).fetchone()
+        return row is not None
+
+    def refunded_after(self, scope: Scope, mark: int, through: date) -> bool:
+        """0.40.3 (analysis-0.40.1 codebase, E1): was a refund of API costs (a negative API cost correction, the owner's
+        or Ember's code's) of a day up to ``through`` recorded after ledger row ``mark``? For leaving a critical state
+        that began on ``through`` (at ``mark``), like money in: it corrects charges made before the state began, so
+        what made it critical was money that was there. A refund of charges made since doesn't, and none is money in
+        for the burn modes (``_MONEY_IN``)."""
+        where, params = scope.where()
+        with self.db.connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM ledger WHERE type = 'api_cost_correction' AND amount_micros < 0 AND occurred_on <= ?"
+                f" AND id > ? AND {where} LIMIT 1",
+                (through.isoformat(), mark, *params),
             ).fetchone()
         return row is not None
 
