@@ -689,6 +689,15 @@ def pin_plan_step(request: Request, node_id: ItemId, body: Annotated[Any, Body()
     return _reply(actions.pin_step(node_id, body, _owner(request)))
 
 
+@router.post("/api/plan/steps/{node_id}/unwait")
+def unwait_plan_step(request: Request, node_id: ItemId) -> JSONResponse:
+    """0.40.3: the owner lifts a wait Ember said for a step (only Ember's code lifted one, once its block was gone)."""
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.unwait_step(node_id, _owner(request)))
+
+
 @router.post("/api/plan/products/{node_id}/worth")
 def set_plan_worth(request: Request, node_id: ItemId, body: Annotated[Any, Body()] = None) -> JSONResponse:
     actions = _owner_actions(request)

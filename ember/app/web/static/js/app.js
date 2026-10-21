@@ -10097,6 +10097,7 @@
     // 0.37.9: your limits, which the tools refused it by: no more cycles that end in the refusal
     queue: "the publishing queue is full: it waits until you decide a request, or one goes out",
     messages: "today's messages to you are sent: it waits for tomorrow, or your next message",
+    unread: "5 of Ember's messages to you are unread, and no message goes through: it waits until you read them",  // 0.40.3
     // 0.38.1: listings, changes, Printify products and KDP books
     sales: "as many sell requests as may wait for you wait: it waits until you decide one",
     // 0.39.8: a weekly pin or post of a product with no listing of its own, and a channel that brings next to nothing
@@ -10656,6 +10657,7 @@
       st.due ? h("span", { class: "muted", text: "due " + fmtDay(st.due) }) : null,
       st.stale ? h("span", { class: "pl-stale", text: "ready " + Math.floor(st.age_days) + " days" }) : null,
       planPinButton(st),
+      planUnwaitButton(st),
       planDecideButtons(st, q));
     if (st.why) row.appendChild(h("p", { class: "pl-why muted", text: st.why }));
     else if (st.status !== "open" && st.result) row.appendChild(h("p", { class: "pl-why muted", text: st.result }));
@@ -10684,6 +10686,24 @@
     if (st.status !== "open" || st.kind === "promise" || st.kind === "owner") return null;
     var button = h("button", { type: "button", class: "btn btn-small", "aria-pressed": st.pinned ? "true" : "false", text: st.pinned ? "Unpin" : "Pin" });
     button.addEventListener("click", function () { pinPlanStep(st.id, !st.pinned, button); });
+    return button;
+  }
+
+  // 0.40.3: a wait Ember said for a step (plan_step wait) is the owner's to lift; until then only its block's end did.
+  function planUnwaitButton(st) {
+    if (!st.unwait) return null;
+    var button = h("button", { type: "button", class: "btn btn-small", text: "Lift the wait" });
+    button.addEventListener("click", function () {
+      button.disabled = true;
+      request("POST", "api/plan/steps/" + encodeURIComponent(String(st.id)) + "/unwait", {}).then(function (res) {
+        if (!res.ok) throw httpError(res);
+        setStatusText("pl-status", "Wait lifted: the step is weighed again. Pin it to keep " + agentName() + " from putting it off.", "ok");
+        loadPlan();
+      }).catch(function (err) {
+        button.disabled = false;
+        setStatusText("pl-status", "Couldn't save it: " + errorText(err), "error");
+      });
+    });
     return button;
   }
 

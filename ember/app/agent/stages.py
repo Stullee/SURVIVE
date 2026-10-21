@@ -40,7 +40,6 @@ from collections.abc import Callable, Collection, Mapping
 from datetime import date, timedelta
 from typing import Any
 
-from ..economy.clock import from_iso
 from ..integrations import pinterest_publisher, printify_publisher
 from . import knockouts, metrics, policy, roadmap, store, ventures
 from .store import AgentScope
@@ -73,10 +72,6 @@ CHANNEL_PRODUCTS: dict[str, tuple[str, Callable[[sqlite3.Connection, AgentScope]
     "printify": ("Printify product", printify_publisher.made_any),
 }
 NEVER_RAN = "so it never ran"
-
-
-def _day(stamp: str) -> date:
-    return from_iso(stamp).date()
 
 
 def _q(text: Any) -> str:
@@ -565,7 +560,8 @@ def keep(
                 happened.append(park(conn, scope, v, now, f"nothing sold {LIVE_DAYS} days after it went live"))
             continue
         if v["stage"] == "researching":
-            if not v["research_from"] or (today - _day(v["research_from"])).days < RESEARCH_DAYS:
+            # 0.40.3 (analysis-0.40.1 codebase, PL2): from the owner's day its research began, not its UTC date
+            if not v["research_from"] or (today - ventures.owner_day(v["research_from"])).days < RESEARCH_DAYS:
                 continue
             building = conn.execute(
                 f"SELECT 1 FROM projects WHERE venture_id = ? AND status IN {OPEN_PROJECTS} LIMIT 1", (v["id"],)

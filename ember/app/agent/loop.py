@@ -1187,7 +1187,7 @@ class CycleRunner:
             since = now
             self.db.set_meta(key, since)
         with self.db.transaction() as conn:
-            happened = obligations.keep(conn, self.scope, now, since)
+            happened = obligations.keep(conn, self.scope, now, since, self.clock.today())  # 0.40.3: the owner's day
         for line in happened:
             events.record(self.db, "info", "agent", line[:300])
 

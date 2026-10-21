@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
+from ..economy.clock import local_date
 from ..integrations import etsy_publisher, mailstore, qa, site_publisher
 from . import roadmap, stages, ventures
 from .store import OPEN_STATUSES, AgentScope
@@ -57,11 +58,14 @@ _COMMON = frozenset(
 SINCE_KEY = "agent.{mode}.obligations_since"  # decisions and misses from then on (not the history before)
 
 
-def keep(conn: sqlite3.Connection, scope: AgentScope, now: str, since: str) -> list[str]:
+def keep(conn: sqlite3.Connection, scope: AgentScope, now: str, since: str, today: date | None = None) -> list[str]:
     """Record the decisions and misses the agent owes a reaction to (from ``since`` on), and close the misses a
-    milestone replaced. Returns what happened, for the events."""
+    milestone replaced. Returns what happened, for the events. 0.40.3 (analysis-0.40.1 codebase, PL2): each is due on
+    the owner's day (``today``, their clock's; else ``now``'s date in their time zone), not ``now``'s UTC date: live
+    from 10-26, a rejection at 00:20 was due the day before, overdue at birth (urgency 11, not 9)."""
     where, params = scope.where()
     happened = []
+    due = today.isoformat() if today is not None else local_date(now)
     decided = conn.execute(
         f"SELECT * FROM approvals WHERE {where} AND (status = 'rejected' AND decided_at >= ?"
         " OR status = 'failed' AND closed_at >= ? OR status = 'done' AND closed_at >= ?"
@@ -74,7 +78,7 @@ def keep(conn: sqlite3.Connection, scope: AgentScope, now: str, since: str) -> l
         conn.execute(
             "INSERT INTO obligations (mode, session, kind, what, due, created_at, approval_id)"
             " VALUES (?, ?, 'decision', ?, ?, ?, ?)",
-            (scope.mode, scope.session, what, now[:10], now, r["id"]),
+            (scope.mode, scope.session, what, due, now, r["id"]),
         )
         happened.append(f"Obligation: react to request #{r['id']} ({r['status']})")
     missed = conn.execute(
@@ -88,7 +92,7 @@ def keep(conn: sqlite3.Connection, scope: AgentScope, now: str, since: str) -> l
         conn.execute(
             "INSERT INTO obligations (mode, session, kind, what, due, created_at, milestone_id)"
             " VALUES (?, ?, 'miss', ?, ?, ?, ?)",
-            (scope.mode, scope.session, what[:400], now[:10], now, m["id"]),
+            (scope.mode, scope.session, what[:400], due, now, m["id"]),
         )
         happened.append(f"Obligation: decide about missed milestone #{m['id']}")
     owed, owed_params = scope.where("o")
@@ -220,11 +224,15 @@ def open_rows(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
 
 def close_one(
     conn: sqlite3.Connection, obligation_id: int, result: str, by: str, cycle_id: int | None, now: str
-) -> None:
-    conn.execute(
-        "UPDATE obligations SET status = 'closed', closed_at = ?, closed_by = ?, closed_cycle_id = ?, result = ?"
-        " WHERE id = ? AND status = 'open'",
-        (now, by, cycle_id, result[:300], obligation_id),
+) -> bool:
+    """Close an open obligation; 0.40.3: whether it was open (plan._close_product names those it closed)."""
+    return (
+        conn.execute(
+            "UPDATE obligations SET status = 'closed', closed_at = ?, closed_by = ?, closed_cycle_id = ?, result = ?"
+            " WHERE id = ? AND status = 'open'",
+            (now, by, cycle_id, result[:300], obligation_id),
+        ).rowcount
+        == 1
     )
 
 
@@ -433,8 +441,8 @@ def text(conn: sqlite3.Connection, scope: AgentScope, today: date, strategy: str
 
 
 def _age(stamp: str, today: date) -> str:
-    try:
-        days = (today - date.fromisoformat(str(stamp)[:10])).days
+    try:  # 0.40.3 (PL2): the owner's date of it, as ``today`` is theirs
+        days = (today - date.fromisoformat(local_date(str(stamp)))).days
     except ValueError:
         return "?"
     return "today" if days <= 0 else f"{days} d"

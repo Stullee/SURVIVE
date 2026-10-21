@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
+from ..economy.clock import local_date
 from ..economy.costs import micros_to_usd
 from . import econ
 from .sandbox import Jail, SandboxError
@@ -698,13 +699,20 @@ def _head(v: Mapping[str, Any], m: Money) -> str:
 
 def rule_clock(v: Mapping[str, Any]) -> date | None:
     """0.13.0: the day a stage's rule counts from: when the venture reached its stage or, for one already in it when
-    the rule came (rules_from), that day. None for a row built by hand without the columns."""
+    the rule came (rules_from), that day. None for a row built by hand without the columns. 0.40.3 (analysis-0.40.1
+    codebase, PL2): the owner's day (``owner_day``), as stages.keep's ``today`` is: a stage reached after their
+    midnight counted from the day before (its UTC date), and parked a day early."""
     reached = _value(v, "stage_at") or _value(v, "created_at")
     if not reached:
         return None
-    start = date.fromisoformat(str(reached)[:10])
+    start = owner_day(reached)
     since = _value(v, "rules_from")
-    return max(start, date.fromisoformat(str(since)[:10])) if since else start
+    return max(start, owner_day(since)) if since else start
+
+
+def owner_day(stamp: Any) -> date:
+    """0.40.3 (PL2): the owner's day of a timestamp (clock.local_date), as the park clocks count it."""
+    return date.fromisoformat(local_date(str(stamp)))
 
 
 def triage_date(v: Mapping[str, Any]) -> date | None:
@@ -753,8 +761,8 @@ def stage_rule(v: Mapping[str, Any]) -> str:
             ends = (start + timedelta(days=LIVE_DAYS)).isoformat()
             return f"live: nothing sold by {ends} parks it; earning more than it costs sets a milestone to scale it"
     if v["stage"] == "researching" and began:
-        park = date.fromisoformat(str(began)[:10]) + timedelta(days=RESEARCH_DAYS)
-        return f"researched since {str(began)[:10]}: no business case by {park.isoformat()} parks it"
+        park = owner_day(began) + timedelta(days=RESEARCH_DAYS)  # 0.40.3: as stages.keep parks it
+        return f"researched since {owner_day(began).isoformat()}: no business case by {park.isoformat()} parks it"
     if v["stage"] == "building" and test:
         return f"first test: milestone #{test}; it goes live once that is met"
     if v["stage"] == "parked" and parked_by == "code":

@@ -68,8 +68,8 @@ def _ev_text(case_row: Mapping[str, Any] | None, judged: Mapping[str, Any] | Non
 
 
 def _park_date(v: Mapping[str, Any]) -> date | None:
-    began = v["research_from"]
-    return date.fromisoformat(str(began)[:10]) + timedelta(days=ventures.RESEARCH_DAYS) if began else None
+    began = v["research_from"]  # 0.40.3 (analysis-0.40.1 codebase, PL2): the owner's day, as stages.keep counts it
+    return ventures.owner_day(began) + timedelta(days=ventures.RESEARCH_DAYS) if began else None
 
 
 def _need(conn: sqlite3.Connection, v: Mapping[str, Any], *, cash_eur: float, net_days: float | None) -> str:
@@ -166,14 +166,14 @@ def brainstorm_rests(rows: list[sqlite3.Row], now: str) -> str:
     if not batches:
         return ""
     batch = batches[-1]
-    made = min(str(v["created_at"]) for v in batch)
-    ends = (date.fromisoformat(made[:10]) + timedelta(days=BRAINSTORM_REST_DAYS)).isoformat()
+    made = ventures.owner_day(min(str(v["created_at"]) for v in batch))  # 0.40.3 (PL2): the owner's days
+    ends = (made + timedelta(days=BRAINSTORM_REST_DAYS)).isoformat()
     moved = any(v["stage"] not in ("idea", "parked", "killed") for v in batch)
-    if moved or now[:10] >= ends:
+    if moved or ventures.owner_day(now).isoformat() >= ends:
         return ""
     return (
-        f"none of the last brainstorm's {len(batch)} ideas ({made[:10]}) went on past triage: the next brainstorm comes"
-        f" on {ends}, or once one of them is being researched"
+        f"none of the last brainstorm's {len(batch)} ideas ({made.isoformat()}) went on past triage: the next"
+        f" brainstorm comes on {ends}, or once one of them is being researched"
     )
 
 

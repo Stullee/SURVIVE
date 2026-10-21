@@ -752,6 +752,21 @@ class Owner:
 
         return _reply(run)
 
+    def unwait_step(self, node_id: int, who: str | None) -> Reply:
+        """0.40.3 (analysis-0.40.1 codebase, PL5): lift a wait Ember said for a step of the plan (plan_step wait): it
+        is weighed again in the next cycle."""
+
+        def run() -> Reply:
+            with self.db.transaction() as conn:
+                try:
+                    line = plan.owner_unwait(conn, self.scope, node_id, _signed(who), self._now())
+                except plan.PlanError as exc:
+                    raise OwnerError(exc.field, str(exc), exc.status) from exc
+            events.record(self.db, "info", "owner", f"{who or 'The owner'} lifted Ember's wait of plan step #{node_id}")
+            return Reply(200, {"id": node_id, "line": line, "waiting": None})
+
+        return _reply(run)
+
     def end_product(self, node_id: int, body: Any, who: str | None, done: bool) -> Reply:
         """0.35.0: close a product of the plan (done: its line succeeded) or drop it (abandoned), with its steps and
         its unlocks: only the owner does (Ember holds a product at most)."""

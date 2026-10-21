@@ -1284,6 +1284,9 @@ no cycle for a day. Since 0.40.1 it stays urgent until Ember proposes it again
 (or you hold or drop the product), not for 3 days after your decision: five
 cycles in those days ran out of room before they proposed the book, and from the
 fourth day it got one try a day, weighing as much as a step of the daily review.
+Since 0.40.3, when the line has no listing yet and its newest demand note is
+older than 14 days (Ember's tool refuses a first listing then), a step for a new
+note comes before the proposal, which waits behind it.
 
 Since 0.39.8 a product's weekly pin, Bluesky post or monthly blog post waits
 (*its channel brings next to nothing*) while that channel is worth less than
@@ -1293,7 +1296,9 @@ the channel's next step for the line comes when the period ends. On 10-16 nine o
 twelve cycles went to Bluesky posts and blog posts its own strategy had stopped,
 as Ember could neither replace the code's steps nor put off more than two a day.
 A product with no listing of its own gets no weekly pin or post, and one already
-open waits (*it has no listing of its own*).
+open waits (*it has no listing of its own*). Since 0.40.3 a new product's launch
+posts and blog post on such a channel wait the same way (unless you pin them),
+and its weekly pin on the channel that works comes while they wait.
 
 **Your limits** (0.37.9). Two of your protections were enforced by Ember's tools
 alone: at most 3 publish requests (pins, Bluesky posts, blog posts, the link
@@ -1321,6 +1326,9 @@ change of one, a Printify product, a KDP book) wait for your decision at once,
 and while they do, a step whose work is one waits too ("as many sell requests
 as may wait for you wait"): "Propose the listing" (the product, the book),
 proposing one again, and the critic's fixes, which are a change of the listing.
+Since 0.40.3 a report also waits while five of Ember's messages are unread, when
+she can't write to you at all ("5 of Ember's messages to you are unread"), until
+you read them.
 The limits themselves stay as they are. The [diagnostics](#diagnostics) report
 lists each step's wait with the limits as they stand ('queue', 'messages',
 'sales'). Since 0.39.1 the agent's STATUS lists the day's messages that count
@@ -1392,7 +1400,10 @@ which can't be kept before the milestone is judged on 10-24, and each was told t
 write to you about it. Your decisions' steps can't wait, as before. Since 0.40.2
 a promise of no product line can wait the same way, in the cycle whose step it
 is: the promise to propose the Kassenbuch by 10-25, which KDP's weekly limit
-held until then, could only be tried and refused, a cycle a day.
+held until then, could only be tried and refused, a cycle a day. Since 0.40.3
+she can't make a step you pinned wait (as she can't hold or skip it), nor a step
+wait on one that waits on it (only a step's closing lifts such a wait), and her
+two waits a day count from your midnight, not from midnight UTC.
 What you, a promise or Ember's code put in the plan stays. She can **hold** a
 product to work on others, with her reason, and resume it. She can't close,
 drop or delete a project or product: only you do. Each change is kept with its
@@ -1446,8 +1457,10 @@ or kill the product's venture, no date is read.
 a product your own worth, from 0.5 to 10, in place of the one Ember's code
 computes; **Use Ember's code's** takes yours back. At a decide-by date, **Keep
 it** or **Drop it**. **Close as done** or **Drop it** ends a product (and its
-line) whenever you want. **Lift the hold** puts a product Ember held back in the
-plan. Since 0.36.0 **Hold it** holds a product yourself, with an optional
+line) whenever you want (since 0.40.3 with the promises and decisions owed on
+it: "line closed by your owner"). **Lift the hold** puts a product Ember held
+back in the plan. Since 0.40.3 **Lift the wait** takes off a wait Ember said for
+a step (pin it too, to keep her from putting it off again). Since 0.36.0 **Hold it** holds a product yourself, with an optional
 reason: its steps wait until you **Resume it**, and Ember can't lift your hold
 (her own she can). Since 0.39.3 that holds the promises Ember made you about it
 and your decisions on its requests too, as your park of its venture does: until

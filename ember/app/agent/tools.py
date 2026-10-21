@@ -123,7 +123,7 @@ READ_DEFAULT_CHARS = 3_000
 READ_MAX_CHARS = 3_500
 READ_ROOM = 200  # a read's header and data marks without its path (twice in them) and what it says of a made file
 MAX_TOOL_CALLS_PER_TURN = 4  # a reply's tool calls that run (write_journal besides them); the rest are skipped
-MAX_UNREAD_MESSAGES = 5
+MAX_UNREAD_MESSAGES = store.MAX_UNREAD_MESSAGES  # 0.40.3 (PL3): the plan reads it too (plan.limits)
 MAX_NEW_UPGRADES = 5
 SANDBOX_STRIKES = 3
 INBOX_SIZE = 15
@@ -2657,6 +2657,7 @@ def _plan_step(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
                 ctx.cycle_id,
                 now,
                 ctx.clock.today(),
+                day_start=to_iso(ctx.clock.day_start(ctx.clock.today())),  # 0.40.3: the owner's day's waits
             )
         elif action == "hold":
             text = plan.hold(conn, ctx.scope, line, why, ctx.cycle_id, now)
@@ -3694,7 +3695,7 @@ def _withdraw_request(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
 
 
 def _message_owner(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
-    unread = store.count_rows(conn, "messages", ctx.scope, "sender = 'agent' AND read_at IS NULL")
+    unread = store.unread_messages(conn, ctx.scope)  # 0.40.3: as the plan counts them
     if unread >= MAX_UNREAD_MESSAGES:
         raise ToolError(f"your owner hasn't read your last {MAX_UNREAD_MESSAGES} messages yet")
     named = list(dict.fromkeys(int(n) for n in re.findall(r"\d{1,9}", args.get("answers") or "")))[:20]
@@ -4550,7 +4551,7 @@ def _propose_etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> 
     reason = args["reason"].strip()
     # 0.12.0: a listing belongs to a product line (a project), and a product line's first listing needs a demand note.
     project_id = _product_line(ctx, conn, args, "listing")
-    if not demand.listed(conn, project_id) and demand.recent(conn, project_id, ctx.now()) is None:
+    if demand.needs_note(conn, project_id, ctx.now()):  # 0.40.3: the plan reads the same rule
         raise ToolError(
             f"project #{project_id} has no listing yet, and a new product line needs a demand note from the last "
             f"{demand.DAYS} days first (demand_note: the keywords buyers search and what shows they buy)"
@@ -5345,7 +5346,7 @@ def _propose_printify_product(ctx: ToolContext, args: dict[str, Any], conn: Any)
     except etsy.EtsyError as exc:
         raise ToolError(str(exc)) from None
     project_id = _product_line(ctx, conn, args, "product")
-    if not demand.listed(conn, project_id) and demand.recent(conn, project_id, ctx.now()) is None:
+    if demand.needs_note(conn, project_id, ctx.now()):  # 0.40.3: the plan reads the same rule
         raise ToolError(
             f"project #{project_id} has no listing yet, and a new product line needs a demand note from the last "
             f"{demand.DAYS} days first (demand_note: the keywords buyers search and what shows they buy)"

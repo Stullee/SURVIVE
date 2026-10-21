@@ -82,3 +82,17 @@ class Clock:
 
     def local_day(self, timestamp: str) -> date:
         return from_iso(timestamp).astimezone(self.tz).date()
+
+    def local_date(self, moment: str | datetime) -> str:
+        """0.40.3: the owner's date (YYYY-MM-DD) of a timestamp or moment, as ``today()`` is now's (``local_date``)."""
+        return local_date(moment, self.tz)
+
+
+def local_date(moment: str | datetime, tz: tzinfo | None = None) -> str:
+    """0.40.3 (analysis-0.40.1 codebase, PL2): the owner's date (YYYY-MM-DD) of a UTC timestamp (or a moment), in
+    ``tz`` or, without one, the owner's time zone (``owner_timezone``: an agent's clock has it too). A timestamp's first
+    ten characters are its UTC date: a day behind the owner's from their midnight to 01:00 or 02:00, every night (a
+    decision made at 00:20 was due "yesterday", a park clock started after midnight parked a day early).
+    tests/test_fixes_0403_plan.py fails on a new ``[:10]`` of a timestamp in agent/ and integrations/."""
+    when = from_iso(moment) if isinstance(moment, str) else moment
+    return when.astimezone(tz or owner_timezone()).date().isoformat()

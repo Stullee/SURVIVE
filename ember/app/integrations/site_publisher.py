@@ -591,7 +591,7 @@ class Publisher:
                 json.dumps(
                     {
                         "approval_id": approval_id,
-                        "day": stamp[:10],
+                        "day": self.clock.local_date(stamp),  # 0.40.3: the owner's day
                         "bio": action.get("bio", ""),
                         "links": action.get("links", []),
                     },
