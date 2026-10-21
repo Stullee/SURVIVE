@@ -7,6 +7,11 @@
   var POLL_RUNNING_MS = 3000;
   var POLL_IDLE_MS = 30000;
   var POLL_ERROR_MS = 15000;
+  // 0.41.0: Home Assistant's Ingress session for this page runs out while the tab sleeps (the Supervisor answers 401,
+  // never Ember); its frontend renews it within a minute, so the dashboard retries quietly that long before it asks
+  // for a reload (live, "Ember refused the request (HTTP 401: 401: Unauthorized)" after the page sat idle).
+  var SESSION_RETRY_MS = 5000;
+  var SESSION_GRACE_MS = 120000;
   // After "Wake now" the cycle starts within seconds; poll fast until it shows up (or this runs out).
   var WAKE_FAST_POLL_MS = 20000;
   // Neither Ingress hop times out on its own, so a hung backend would otherwise freeze the page.
@@ -28,6 +33,7 @@
     timer: null,
     seq: 0,              // only the response to the latest dashboard request is used
     fetchError: null,
+    sessionLostSince: 0,  // Date.now() of the first 401 in a row (0.41.0): Ingress's session ran out
     rendered: {},        // section name -> JSON of the data it was last rendered from
     sectionErrors: {},
     bannerKey: null,
@@ -496,6 +502,9 @@
     var detail = "";
     if (isObject(res.data) && typeof res.data.error === "string") detail = res.data.error;
     else if (res.text && res.text.length <= 200 && res.text.indexOf("<") < 0) detail = res.text.trim();
+    if (res.status === 401) {  // 0.41.0: the Supervisor's Ingress, not Ember (see SESSION_RETRY_MS)
+      return new RequestError("http", "Home Assistant's session for this page ran out (HTTP 401): wait a moment and try again, or reload the page", 401);
+    }
     return new RequestError("http", "HTTP " + res.status + (detail ? ": " + detail : ""), res.status);
   }
 
@@ -523,6 +532,7 @@
       if (followServerBuild(d)) { next = null; return; }
       ui.data = d;
       ui.fetchError = null;
+      ui.sessionLostSince = 0;
       document.body.removeAttribute("data-stale");
       render();
       var running = !!(d.agent && d.agent.cycle_running) || !!(isObject(d.now) && d.now.running);
@@ -536,6 +546,14 @@
       }
       ui.fetchError = err;
       document.body.setAttribute("data-stale", "true");
+      if (err.kind === "http" && err.status === 401) {
+        // 0.41.0: Ingress's session ran out; Home Assistant renews it, and the system log would answer 401 too
+        if (!ui.sessionLostSince) ui.sessionLostSince = Date.now();
+        next = SESSION_RETRY_MS;
+        safely("banners", renderBanners);
+        return;
+      }
+      ui.sessionLostSince = 0;
       safely("banners", renderBanners);
       // The server answered, so the system log (which says what went wrong) is probably readable.
       if (err.kind === "http" || err.kind === "malformed") loadEvents(seq);
@@ -744,6 +762,10 @@
     if (err) {
       if (err.kind === "http" && err.status >= 500) {
         list.push({ kind: "error", icon: "✕", title: "Ember had an error (" + err.message + ")." + retry + " The System log has the details." });
+      } else if (err.kind === "http" && err.status === 401 && Date.now() - ui.sessionLostSince < SESSION_GRACE_MS) {
+        list.push({ kind: "warning", icon: "!", title: "Home Assistant's session for this page ran out while it sat idle. Home Assistant renews it within a minute; retrying." });
+      } else if (err.kind === "http" && err.status === 401) {
+        list.push({ kind: "error", icon: "✕", title: "Home Assistant's session for this page ran out and wasn't renewed (HTTP 401). Reload the page; if that doesn't help, open Ember again from the Home Assistant sidebar." });
       } else if (err.kind === "http") {
         list.push({ kind: "error", icon: "✕", title: "Ember refused the request (" + err.message + "). Reload the page; if that doesn't help, open Ember again from the Home Assistant sidebar." });
       } else if (err.kind === "malformed") {
