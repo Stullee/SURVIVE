@@ -269,6 +269,30 @@ def reset_estimates(request: Request) -> JSONResponse:
     return _reply(reply)
 
 
+@router.post("/api/economy/usage/standard")
+def accept_standard_usage(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """0.41.0 (analysis-0.40.1 codebase, 6.2 bills): the owner treats a usage field's value as standard-priced, and the
+    calls charged at their worst case for it alone are settled once (the dashboard's offer on the uncertain bills). The
+    agent has no tool for it."""
+    economy = _economy(request)
+    if economy is None:
+        return UNAVAILABLE
+    reply = economy.accept_usage(body, _owner(request))
+    if reply.status == 200:
+        _poke(request)  # a refund may end a critical state, and its dormancy
+    return _reply(reply)
+
+
+@router.post("/api/economy/uncertain/keep")
+def keep_as_charged(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """0.41.0 (analysis-0.40.1 codebase, 6.2 bills): the owner keeps the calls charged at their worst case that the
+    System warning names as charged: the warning names only what is charged so after them, and no money moves."""
+    economy = _economy(request)
+    if economy is None:
+        return UNAVAILABLE
+    return _reply(economy.keep_as_charged(body, _owner(request)))
+
+
 @router.post("/api/control/pause")
 def pause(request: Request) -> JSONResponse:
     return _control(request, paused=True)

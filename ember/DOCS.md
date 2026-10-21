@@ -3235,7 +3235,20 @@ On the dashboard you can record:
 - **Expense**: real-world money you spent on Ember's behalf (a domain, a fee).
 - **Adjustment**: add to or subtract from the balance for anything else.
 - **API cost correction**: if Anthropic's Console shows a different cost than
-  Ember computed, record the difference here.
+  Ember computed, record the difference here. Since 0.41.0, when answers were
+  charged at their worst case only because of a usage field Ember's code
+  doesn't know, the dashboard offers **Treat usage.X = "Y" as standard price**,
+  with how many calls that settles and what it refunds. Confirm it once the
+  Console shows those calls at the standard price: answers with exactly that
+  value cost the price table's price from then on, and the calls already
+  charged are settled once, with one refund of Ember's code for each day (your
+  own refunds since the first of them count first). Any other value of the
+  field stays at its worst case, and only you can accept one; it stays
+  accepted (a call answered while you confirmed is settled at the next start,
+  or with **Settle**). For small amounts not worth looking up, **Keep as
+  charged** on the System warning about calls charged at their worst case
+  hides it for what it names now: it comes back only for calls charged so
+  later. No money moves, and you can still record a correction.
 - **Correct** on an earlier grant, revenue or expense reduces it (up to its full
   amount, which voids it).
 

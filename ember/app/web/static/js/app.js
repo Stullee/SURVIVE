@@ -819,11 +819,39 @@
       list.push({ kind: "warning", icon: "!", title: "Everyone who can open " + name + " in Home Assistant counts as its owner: they can grant money, approve emails and use the kill switch. To let only you in, put your Home Assistant user ID in the app's owner_user_ids option (Configuration tab) and restart the app.",
         items: owner.user_id ? ["Your user ID: " + String(owner.user_id)] : [] });
     }
-    // economy_broken is also among the agent's warnings; it already has its own banner.
-    var warnings = arr(agent.warnings).filter(function (w) { return !(sys.economy_broken && String(w).indexOf(String(sys.economy_broken)) >= 0); });
+    // economy_broken is also among the agent's warnings; it already has its own banner. 0.41.0: so is the warning on the
+    // calls charged at their worst case, with its Keep as charged (it hides the advice only: no money moves).
+    var held = isObject(agent.held_warning) ? agent.held_warning : null;
+    var warnings = arr(agent.warnings).filter(function (w) {
+      return !(sys.economy_broken && String(w).indexOf(String(sys.economy_broken)) >= 0) && !(held && String(w) === String(held.text));
+    });
     if (warnings.length) {
       list.push({ kind: "warning", icon: "!", title: warnings.length === 1 ? String(warnings[0]) : "Please check:", items: warnings.length === 1 ? null : warnings });
     }
+    if (held) {
+      list.push({ kind: "warning", icon: "!", title: String(held.text),
+        action: { label: "Keep as charged", post: "api/economy/uncertain/keep", body: { held_micros: held.held_micros },
+          confirm: "Keep " + usd(held.held_usd) + " as charged? The warning goes away until a call is charged at its worst case again. The balance stays as it is; you can still record a correction." } });
+    }
+    // 0.41.0: answers charged at their worst case only for a usage field Ember's code doesn't know: the owner treats its
+    // value as standard price, after seeing what that settles (the refund shown is the most it may refund)
+    arr(agent.uncertain_bills).forEach(function (b) {
+      var usage = "usage." + b.field + ' = "' + b.value + '"';
+      var calls = plural(b.calls, "call");
+      var refund = usd(b.refund_usd);
+      list.push({ kind: "warning", icon: "!",
+        title: b.accepted ? "Standard price for " + usage + ": settles " + calls + " more, refunds " + refund
+          : "Treat " + usage + " as standard price: settles " + calls + ", refunds " + refund,
+        items: [
+          calls + " answered with " + usage + ", a usage field " + name + "'s code doesn't know, so each was charged at its worst case: " + usd(b.excess_usd) + " more than at the standard price.",
+          num(b.owner_usd) > 0 ? "Your own API cost refunds since then count first: " + usd(b.owner_usd) + " of it." : null,
+          "Only if the Anthropic Console shows these calls at the standard price. From then on such answers cost the price table's price; another value of the field stays at its worst case.",
+        ].filter(Boolean),
+        action: { label: b.accepted ? "Settle" : "Treat as standard price", post: "api/economy/usage/standard",
+          body: { field: b.field, value: b.value, refund_micros: b.refund_micros },
+          confirm: (b.accepted ? "Settle " : "Treat " + usage + " as standard price from now on, and settle ") + calls +
+            "? " + name + "'s code refunds " + refund + " once." } });
+    });
     // 0.12.0: estimates scaled up after a call cost more than estimated; they come down again, or the owner resets them.
     var factors = arr(agent.estimate_factors);
     if (factors.length) {
@@ -852,9 +880,10 @@
       action = h("button", { type: "button", class: "btn banner-action", text: spec.action.label });
       action.addEventListener("click", function () {
         if (!spec.action.post) { openLedgerForm(spec.action.form); return; }
+        if (spec.action.confirm && !window.confirm(spec.action.confirm)) return;  // 0.41.0
         var btn = this;
         btn.disabled = true;
-        request("POST", spec.action.post, {}).then(function (res) {
+        request("POST", spec.action.post, spec.action.body || {}).then(function (res) {
           if (!res.ok) throw httpError(res);
         }).catch(function (err) {
           if (!(err instanceof RequestError)) console.error(err);

@@ -41,7 +41,8 @@ from .db import MAX_BACKUPS, utcnow
 from .economy.clock import to_iso
 from .economy.costs import micros_to_usd
 from .economy.ledger import Scope
-from .economy.metering import STUDY
+from .economy.metering import STUDY, standard_usage
+from .economy.service import KEPT_KEY
 from .integrations import etsy_publisher, publish_queue
 from .logging_setup import redact
 from .version import app_version, build_id
@@ -614,7 +615,7 @@ def _economy(state: AppState) -> str:
             "note": status.runway.note,
             "window_spend_usd": micros_to_usd(status.runway.window_spend),
             "active_days": status.runway.active_days,
-            "balance_usd": micros_to_usd(status.runway.balance),  # 0.40.3 (E1): the balance it is judged on
+            "balance_usd": micros_to_usd(status.judged_balance),  # 0.40.3 (E1): the balance it is judged on
         },
         "today_local": economy.clock.today().isoformat(),
         "tz": str(economy.clock.tz),
@@ -630,6 +631,10 @@ def _economy(state: AppState) -> str:
         "totals": {k: micros_to_usd(v) for k, v in books.totals(scope).items()},
         "health": {"lock_held": economy.health.lock_held, "broken": economy.health.broken},
         "warnings": economy.warnings(),
+        # 0.41.0 (analysis-0.40.1 codebase, 6.2 bills): the owner's choices on the uncertain bills, and what is offered
+        "standard_usage": standard_usage(state.db),
+        "kept_as_charged": state.db.get_meta(KEPT_KEY),
+        "uncertain_bills": economy.uncertain_bills(),
         "session": {"dry_run_session": economy.life.session(), "sim_mark": scope.sim_mark},
     }
     return _json(data)

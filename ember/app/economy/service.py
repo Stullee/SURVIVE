@@ -41,9 +41,14 @@ from .metering import (
     MeterHealth,
     ProcessLock,
     Transport,
+    UsageChanged,
+    UsageSettlement,
+    accept_usage,
     clock_warning,
     recover_interrupted,
-    settle_speed,
+    settle_standard_usage,
+    standard_usage,
+    usage_offers,
     usd_cap_to_micros,
     workshop_reservation,
     workshop_tail_ends,
@@ -69,6 +74,13 @@ TYPE_LABELS = {
     "api_cost_correction": "an API cost correction",
 }
 
+
+# 0.41.0 (analysis-0.40.1 codebase, 6.2 bills; the owner's report): the calls charged at their worst case that the owner
+# keeps as charged, "<the newest of them> <the micros the System warning named> <the newest ledger row then>": the
+# warning names only what is charged so after them, less the owner's refunds since. Its $0.10 stood from 10-18 on, as
+# nobody looks a few cents up in the Console. It hides the advice only: the ledger and every balance stay as they are,
+# and a correction can still be recorded.
+KEPT_KEY = "economy.kept_as_charged"
 
 # 0.12.0: an entry from an integration's numbers may make the agent critical (that is what its money says), but it
 # never kills the agent or leaves it unfunded: that entry waits for the owner (0.15.0: a fact pauses the agent instead).
@@ -125,7 +137,9 @@ class Economy:
             )
         else:
             recover_interrupted(self.db, self.clock, self.boot_id)
-            settle_speed(self.db, self.clock)  # 0.39.8: the calls charged at their worst case for usage.speed alone
+            # 0.39.8: the calls charged at their worst case for usage.speed alone; 0.41.0, for a usage field and value
+            # the owner holds standard-priced (one answered while they chose)
+            settle_standard_usage(self.db, self.clock)
         if self.loaded.safe_mode:
             log.info("Safe mode: the starting balance is not recorded until the options are valid")
         else:
@@ -174,6 +188,29 @@ class Economy:
             self.db, "info", "economy", f"{who} reset the cost estimates: {raised} scaled-up estimate(s) back to 1"
         )
         return Reply(200, {"reset": raised})
+
+    def accept_usage(self, body: Any, entered_by: str | None = None) -> Reply:
+        """0.41.0 (analysis-0.40.1 codebase, 6.2 bills): the owner treats a usage field's value as standard-priced, the
+        dashboard's offer on the uncertain bills: {"field", "value", "refund_micros": the refund the offer showed}.
+        The calls charged at their worst case for it alone are settled once (metering.accept_usage); an episode of a
+        new usage field is a click, not a release and a one-off settlement."""
+        shown = body.get("refund_micros") if isinstance(body, dict) else None
+        if not isinstance(shown, int) or isinstance(shown, bool) or shown < 0:
+            return Reply(422, {"error": "send the refund you were shown (refund_micros)", "field": "refund_micros"})
+        who = printable(entered_by, 60) if entered_by else "The owner"
+        try:
+            plan = accept_usage(self.db, self.clock, body.get("field"), body.get("value"), shown, who)
+        except EntryError as exc:
+            return Reply(422, {"error": str(exc), "field": exc.field})
+        except UsageChanged as exc:
+            offer = _offer(exc.plan, exc.plan.value in standard_usage(self.db).get(exc.plan.key, []))
+            error = f"it would now refund ${offer['refund_usd']:.2f} for {exc.plan.calls} call(s): check, confirm again"
+            return Reply(409, {"error": error, "code": "refund_changed", "offer": offer})
+        if plan is None:
+            error = "no answer is charged at its worst case for this usage field and value alone"
+            return Reply(404, {"error": error, "field": "value"})
+        status = self.life.evaluate_and_persist()  # a refund of charges before a critical state may end it (E1)
+        return Reply(200, {"accepted": _offer(plan, True), "economy": self._summary(status)})
 
     def correct(self, entry_id: int, body: Any, entered_by: str | None = None) -> Reply:
         try:
@@ -304,6 +341,78 @@ class Economy:
             "runway_days": _round(status.runway.days),
         }
 
+    def held_warning(self, status: LifeStatus) -> tuple[str, int] | None:
+        """The System warning on the calls charged at their worst case, with the micros it names; None without any.
+        Live only: simulated charges have no Console to check against. 0.41.0 (analysis-0.40.1 codebase, 6.2 bills):
+        only what is charged so after the calls the owner kept as charged (KEPT_KEY), less the refunds they recorded
+        since (they refund those; which calls a refund settles isn't recorded)."""
+        held = status.settled_balance - status.balance
+        if held <= 0 or self.mode != "live":
+            return None
+        # 0.40.3 (analysis-0.40.1 codebase, E1): the runway counts the answered ones at what they are known to cost
+        answered = status.judged_balance - status.balance
+        kept = self._kept()
+        if kept is not None:
+            call_id, mark = kept
+            scope = self.life.scope()
+            since = self.books.uncertain_excess(scope, after=call_id) - self.books.owner_refunds_after(scope, mark)
+            held = min(held, since)
+            answered = min(answered, held, self.books.uncertain_excess(scope, answered=True, after=call_id))
+            if held <= 0:
+                return None
+        judged = (
+            f" The runway counts ${micros_to_usd(answered):.2f} of it, charged for answers whose bill is uncertain,"
+            " at what they are known to cost."
+            if answered > 0
+            else ""
+        )
+        text = (
+            f"${micros_to_usd(held):.2f} of interrupted calls was charged at the worst case. Check the real cost in the"
+            " Anthropic Console and record the difference as an API cost correction (decrease), or keep it as"
+            " charged." + judged
+        )
+        return text, held
+
+    def _kept(self) -> tuple[int, int] | None:
+        """(the newest call the owner kept as charged at its worst case, the newest ledger row then), KEPT_KEY; None
+        without one (or one that can't be read: the warning names everything)."""
+        parts = (self.db.get_meta(KEPT_KEY) or "").split()
+        if len(parts) != 3 or not all(part.isdigit() for part in parts):
+            return None
+        return int(parts[0]), int(parts[2])
+
+    def keep_as_charged(self, body: Any, entered_by: str | None = None) -> Reply:
+        """0.41.0 (analysis-0.40.1 codebase, 6.2 bills; the owner's report): the owner keeps the calls charged at their
+        worst case that the System warning names as charged, {"held_micros": what it named}. Only the warning changes
+        (KEPT_KEY): the ledger and every balance stay, and a correction can still be recorded."""
+        shown = body.get("held_micros") if isinstance(body, dict) else None
+        if not isinstance(shown, int) or isinstance(shown, bool) or shown < 0:
+            return Reply(422, {"error": "send the amount the warning named (held_micros)", "field": "held_micros"})
+        with self.db.transaction() as conn:
+            found = self.held_warning(self.life.evaluate())
+            held = found[1] if found is not None else 0
+            if held > shown:
+                error = f"the warning now names ${micros_to_usd(held):.2f}: check, confirm again"
+                return Reply(409, {"error": error, "code": "held_changed", "held_micros": held})
+            if held <= 0:
+                return Reply(200, {"kept_usd": 0.0})
+            # a call still in flight may yet be charged at its worst case: kept only up to the calls before it
+            newest = conn.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM llm_calls WHERE simulated = 0 AND billing_uncertain = 1 AND id <"
+                " COALESCE((SELECT MIN(id) FROM llm_calls WHERE status = 'pending' AND simulated = 0), id + 1)"
+            ).fetchone()[0]
+            self.db.set_meta(KEPT_KEY, f"{newest} {held} {self.books.last_id()}")
+            who = printable(entered_by, 60) if entered_by else "The owner"
+            events.record(
+                self.db,
+                "info",
+                "economy",
+                f"{who} kept ${micros_to_usd(held):.2f} charged at the worst case as charged (calls up to #{newest}):"
+                " the System warning names only what is charged so after them. The balance is unchanged.",
+                {"call_id": newest, "kept_micros": held},
+            )
+        return Reply(200, {"kept_usd": micros_to_usd(held), "call_id": newest})
+
     def warnings(self) -> list[str]:
         result: list[str] = []
         if not self.health.lock_held:
@@ -313,21 +422,9 @@ class Economy:
         clock = clock_warning(self.db, self.clock)  # 0.40.3 (analysis-0.40.1 codebase, E2)
         if clock:
             result.append(clock)
-        status = self.life.evaluate()
-        held = status.settled_balance - status.balance
-        if held > 0 and self.mode == "live":  # simulated charges have no Console to check against
-            # 0.40.3 (analysis-0.40.1 codebase, E1): the runway counts the answered ones at what they are known to cost
-            answered = status.runway.balance - status.balance
-            judged = (
-                f" The runway counts ${micros_to_usd(answered):.2f} of it, charged for answers whose bill is uncertain,"
-                " at what they are known to cost."
-                if answered > 0
-                else ""
-            )
-            result.append(
-                f"${micros_to_usd(held):.2f} of interrupted calls was charged at the worst case. Check the real cost in"
-                " the Anthropic Console and record the difference as an API cost correction (decrease)." + judged
-            )
+        held = self.held_warning(self.life.evaluate())
+        if held is not None:
+            result.append(held[0])
         opening = opening_cost(self.settings, self.db, self.mode)
         if opening is not None:
             for label, cap in (
@@ -381,6 +478,15 @@ class Economy:
                     )
                 result.append(warning)
         return result
+
+    def uncertain_bills(self) -> list[dict[str, Any]]:
+        """0.41.0 (analysis-0.40.1 codebase, 6.2 bills): what treating each usage field and value that alone left
+        answers charged at their worst case as standard-priced would settle (metering.usage_offers), for the owner to
+        confirm. Live only: simulated charges have no Console to check against."""
+        if self.mode != "live":
+            return []
+        held = standard_usage(self.db)
+        return [_offer(plan, plan.value in held.get(plan.key, [])) for plan in usage_offers(self.db)]
 
     def dashboard(self) -> dict[str, Any]:
         status = self.life.evaluate()
@@ -438,6 +544,8 @@ class Economy:
             "last_will_due": status.last_will_due,
             "revive": revive,
             "warnings": self.warnings(),
+            "uncertain_bills": self.uncertain_bills(),  # 0.41.0 (6.2 bills): the owner's offers on them
+            "held_warning": _held(self.held_warning(status)),  # 0.41.0: the warning above, for its Keep as charged
             # 0.12.0: the estimates scaled up after a call cost more than estimated (per purpose and model)
             "estimate_factors": [
                 {"purpose": purpose, "model": model, "factor": float(factor)}
@@ -509,6 +617,27 @@ class Economy:
             ),
             "daily_cap_usd": self.settings.daily_spend_cap_usd,
         }
+
+
+def _held(found: tuple[str, int] | None) -> dict[str, Any] | None:
+    """0.41.0 (6.2 bills): the System warning on the calls charged at their worst case as the dashboard's Keep as
+    charged needs it: its text (the banner it replaces) and the micros it names."""
+    return None if found is None else {"text": found[0], "held_usd": micros_to_usd(found[1]), "held_micros": found[1]}
+
+
+def _offer(plan: UsageSettlement, accepted: bool) -> dict[str, Any]:
+    """0.41.0 (6.2 bills): a usage field and value's settlement as the dashboard shows it (``accepted``: the owner holds
+    it standard-priced already, and calls answered while they chose are left)."""
+    return {
+        "field": plan.key,
+        "value": plan.value,
+        "accepted": accepted,
+        "calls": plan.calls,
+        "excess_usd": micros_to_usd(plan.excess),
+        "owner_usd": micros_to_usd(plan.owners),
+        "refund_usd": micros_to_usd(plan.refund),
+        "refund_micros": plan.refund,
+    }
 
 
 def _worse_state(before: LifeStatus, after: LifeStatus) -> str | None:

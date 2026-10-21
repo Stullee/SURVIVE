@@ -281,24 +281,43 @@ class Books:
         ``answered`` (0.40.3, analysis-0.40.1 codebase, E1: the runway's): only
         the answered calls' (``_USAGE_READ``, as ``cap_spend_on`` counts them).
         """
-        where, params = scope.where("l")
         plain, plain_params = scope.where()
-        read = f" AND {_USAGE_READ}" if answered else ""
         with self.db.connection() as conn:
-            row = conn.execute(
-                "SELECT COALESCE(SUM(c.cost_micros - c.floor_micros), 0) FROM ledger l"
-                " JOIN llm_calls c ON c.id = l.llm_call_id"
-                f" WHERE l.type = 'api_cost' AND c.billing_uncertain = 1{read} AND {where}"
-                " AND NOT EXISTS (SELECT 1 FROM ledger k WHERE k.type = 'api_cost_correction'"
-                " AND k.llm_call_id = c.id)",
-                params,
-            ).fetchone()
             refunds = conn.execute(
                 "SELECT COALESCE(-SUM(amount_micros), 0) FROM ledger WHERE type = 'api_cost_correction'"
                 f" AND amount_micros < 0 AND llm_call_id IS NULL AND {plain}",
                 plain_params,
             ).fetchone()
-        return max(0, int(row[0]) - int(refunds[0]))
+        return max(0, self.uncertain_excess(scope, answered) - int(refunds[0]))
+
+    def uncertain_excess(self, scope: Scope, answered: bool = False, after: int = 0) -> int:
+        """What the calls whose bill is uncertain (``answered``: only the answered ones) may have been overcharged,
+        their charge less their known floor, no refund netted; 0.41.0, of the calls after call ``after`` (the owner
+        kept those up to it as charged: the System warning names only the rest)."""
+        where, params = scope.where("l")
+        read = f" AND {_USAGE_READ}" if answered else ""
+        with self.db.connection() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(c.cost_micros - c.floor_micros), 0) FROM ledger l"
+                " JOIN llm_calls c ON c.id = l.llm_call_id"
+                f" WHERE l.type = 'api_cost' AND c.billing_uncertain = 1{read} AND c.id > ? AND {where}"
+                " AND NOT EXISTS (SELECT 1 FROM ledger k WHERE k.type = 'api_cost_correction'"
+                " AND k.llm_call_id = c.id)",
+                (after, *params),
+            ).fetchone()
+        return int(row[0])
+
+    def owner_refunds_after(self, scope: Scope, mark: int) -> int:
+        """0.41.0: the refunds of no call (negative API cost corrections) the owner recorded after ledger row
+        ``mark``."""
+        where, params = scope.where()
+        with self.db.connection() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(-SUM(amount_micros), 0) FROM ledger WHERE type = 'api_cost_correction'"
+                f" AND amount_micros < 0 AND llm_call_id IS NULL AND created_by = 'owner' AND id > ? AND {where}",
+                (mark, *params),
+            ).fetchone()
+        return int(row[0])
 
     # --- spending ---
 
@@ -352,7 +371,8 @@ class Books:
 
         ``settled`` (0.40.3, E1: the runway's): an answered call whose bill is uncertain counts with what it is known
         to cost, as ``cap_spend_on`` counts it, and the refunds of those days (a negative correction of no call: the
-        owner's, or Ember's code's for usage.speed) only for what they refund beyond that excess, not twice."""
+        owner's, or Ember's code's for a usage field held standard-priced, metering.settle_usage) only for what they
+        refund beyond that excess, not twice."""
         where, params = scope.where()
         joined, joined_params = scope.where("l")
         begin, finish = to_iso(start), to_iso(end)

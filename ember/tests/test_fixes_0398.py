@@ -132,7 +132,7 @@ def test_calls_charged_at_their_worst_case_for_the_speed_alone_are_settled_at_st
     assert fresh.books.cap_spend_on(scope, fresh.clock.today()) == cap_before  # the cap counted what they cost
     assert fresh.status().settled_balance == fresh.status().balance  # the System warning goes away
     assert any("settled at what they cost" in e["message"] for e in fresh.db.recent_events(limit=5))
-    assert metering.settle_speed(fresh.db, fresh.clock) == 0  # once
+    assert metering.settle_usage(fresh.db, fresh.clock, "speed", "standard") == 0  # once
     restart(fresh)
     assert len(refunds(fresh)) == 2
 
@@ -159,7 +159,7 @@ def test_a_refund_larger_than_the_excess_leaves_nothing_to_settle(
     owner(economy, "api-correction", "0.01", direction="decrease")
     fresh = restart(economy)
     assert [who for _, _, who in refunds(fresh)] == ["owner"]
-    assert metering.settle_speed(fresh.db, fresh.clock) == 0
+    assert metering.settle_usage(fresh.db, fresh.clock, "speed", "standard") == 0
 
 
 # --- 2. a listing moves to the line it is ---

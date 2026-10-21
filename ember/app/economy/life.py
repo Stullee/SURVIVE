@@ -88,7 +88,7 @@ class Runway:
     net_days: float | None = None
     net_note: str | None = None
     window_net_in: int = 0  # revenue less expenses in the same days (their corrections included)
-    balance: int = 0  # 0.40.3 (E1): the balance it is judged on
+    balance: int | None = None  # 0.40.3 (E1): the balance it is judged on (None: built without one, judged_balance)
 
 
 def ledger_scope(db: Database, mode: str) -> Scope:
@@ -127,6 +127,12 @@ class LifeStatus:
     @property
     def critical(self) -> bool:
         return self.critical_since is not None
+
+    @property
+    def judged_balance(self) -> int:
+        """0.41.0 (analysis-0.40.1 codebase, E1): the balance the runway is judged on (``Runway.balance``: the answered
+        calls whose bill is uncertain at what they are known to cost), the booked one for a runway built without one."""
+        return self.balance if self.runway.balance is None else self.runway.balance
 
     @property
     def can_run(self) -> bool:
