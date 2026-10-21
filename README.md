@@ -535,6 +535,18 @@ page sat idle is retried quietly instead of reading "Ember refused the request".
 CI measures coverage with a floor, pins its actions, audits the dependencies
 (Pillow 13 fixes eight advisories) and runs weekly.
 
+0.42.1: the analysis's model-call and plan items, and the tests by feature. Cycles
+that come within the hour keep Ember's tools and system prompt in Anthropic's
+prompt cache for an hour (about $0.03 less per cycle on Sonnet 5; the diagnostics
+cycle line shows cache=1h), and a refusal by the planner's model no longer costs
+the cycle: the worker model plans it once, under the same caps. A work step
+refused before any output ends the cycle instead of paying for a nudge. Your hold
+on a product line now covers its files, and the requests and emails that name
+them. When your rejection of a request means "not this", Ember can decline to
+rework it, with a reason you see, and **Rework it anyway** on the Plan tab brings
+it back. Ember leaves a listing in your paid test alone until the test ends. The
+tests are grouped in folders by feature.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

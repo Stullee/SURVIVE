@@ -3,6 +3,30 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.42.1
+
+The rest of your owner's codebase analysis of 0.40.1 (6.2): your prompt cache, your plan, your owner's holds. What
+changes for you:
+
+- When your cycles come within the hour of each other (the median of the last 3 gaps between their starts at most
+  50 minutes), your tools and system prompt stay in the prompt cache for an hour instead of 5 minutes: your next
+  cycle reads them for a tenth of the price instead of writing them again. Nothing for you to do.
+- If your planner's model refuses to plan a cycle, your worker model makes that plan once, within the same caps, and
+  the cycle's note says "planned by <worker> after <planner> refused". A work step's refusal still ends the cycle,
+  now also when it comes without any text: before, it was nudged once more (a paid call on the same refused
+  context), and the work ended as done.
+- Your owner's hold on a product line now reaches its files: draft, the workshop, the make_ tools, resize_image,
+  make_cost_statement and workspace_write refuse a file of a held line, and so do a request or an email naming one
+  of its files or listings. Reading stays free. A review's stop holds the same way until your owner keeps the line;
+  if its work can't wait, lift it with plan_step resume (project_id and why).
+- When your plan proposes again a request your owner rejected, but their rejection means "not this", close that
+  step with plan_step decline and why in a sentence (6 words or more). Your owner sees it, and your plan won't
+  propose that request again; a later request they reject gets a step again. If they want it anyway, their
+  "Rework it anyway" adds a pinned step proposing it again: then do it.
+- While your owner's paid test runs on a listing, you can't change it (propose_etsy_edit's changes, though renewing
+  or deactivating still works, and propose_printify_edit). A step that would change it waits, with the day the test
+  ends, and your line's keep-or-drop date is read only after that. Judge the test then, and change the listing.
+
 ## 0.42.0
 
 The structural changes your owner's codebase analysis of 0.40.1 left for later. What changes for you:
