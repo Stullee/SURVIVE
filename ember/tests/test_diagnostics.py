@@ -77,7 +77,8 @@ def test_a_cycle_is_easy_to_read(ingress_client: TestClient) -> None:
     assert economy["today_local"] == agent.clock.today().isoformat() and economy["tz"] == str(agent.clock.tz)
 
     cycles = section(full, diagnostics.CYCLES_TITLE)
-    assert "\n    note=- phase=None step=3/15 act_end=done sleep=120 project=1\n" in cycles  # its project's cost
+    # its project's cost; 0.42.1: and the prompt cache's lifetime its calls asked for
+    assert "\n    note=- phase=None step=3/15 act_end=done sleep=120 project=1 cache=5m\n" in cycles
     # The plan is indented JSON on its own lines, not a cell cut at 160 characters.
     shown = cycles.split("\n    plan:\n", 1)[1].split("\nid | ", 1)[0]
     assert json.loads(shown)["steps"] == ["look around", "start a project"]

@@ -49,6 +49,7 @@ from .estimate import (
     Unpriceable,
     expected_micros,
     plan_request,
+    prefix_request,
     worst_case_micros,
 )
 from .ledger import OUTSIDE_CYCLE_CAP, Books, EntryError
@@ -1075,11 +1076,25 @@ class MeteredModel:
             input_tokens = self.transport.count_tokens(request)
         except Exception:  # noqa: BLE001 - same fallback as reserve()
             input_tokens = rough_token_count(request)
-        plan = plan_request(request, input_tokens + max(extra_tokens, 0))
+        plan = plan_request(request, input_tokens + max(extra_tokens, 0), self._prefix_tokens(request))
         price = self.settings.price_for(plan.model)
         if price is None:
             raise Unpriceable(f"model {plan.model!r} has no entry in the price table")
         return plan, price
+
+    def _prefix_tokens(self, request: Mapping[str, Any]) -> int | None:
+        """0.42.1 (analysis-0.40.1 codebase, 6.2 cache): the most tokens a 1-hour cache marker on ``request``'s tools
+        and system prompt can write (estimate.prefix_request), counted as its prompt is; None without one."""
+        try:
+            prefix = prefix_request(request)
+        except Unpriceable:
+            return None  # plan_request refuses the request
+        if prefix is None:
+            return None
+        try:
+            return self.transport.count_tokens(prefix)
+        except Exception:  # noqa: BLE001 - as the prompt's own count
+            return rough_token_count(prefix)
 
     def _expected(
         self, plan: Plan, price: ModelPrice, purpose: str, cycle_id: int, worst: int, cached: int | None = None
@@ -1125,7 +1140,9 @@ class MeteredModel:
 
     def _cached(self, cycle_id: int, model: str, ttls: tuple[str, ...]) -> int:
         """The prompt tokens the conversation's last call in this cycle cached (0 if its entry may be gone), counted as
-        the guard counted that call's prompt, so they compare with this one's."""
+        the guard counted that call's prompt, so they compare with this one's. 0.42.1 (analysis-0.40.1 codebase, 6.2
+        cache): fresh by its shortest lifetime: a 1-hour entry holds the tools and the system prompt only, the
+        conversation after them lives 5 minutes."""
         if not ttls:
             return 0
         with self.db.connection() as conn:
@@ -1136,7 +1153,7 @@ class MeteredModel:
             ).fetchone()
         if row is None or row[1] is None:
             return 0
-        fresh = max(CACHE_FRESH_SECONDS.get(ttl, 0) for ttl in ttls)
+        fresh = min(CACHE_FRESH_SECONDS.get(ttl, 0) for ttl in ttls)
         if (self.clock.now() - from_iso(row[1])).total_seconds() > fresh:
             return 0
         return int(row[0] or 0)
@@ -1245,7 +1262,7 @@ class MeteredModel:
             except Exception:  # noqa: BLE001 - e.g. the counting endpoint is rate limited
                 log.warning("Counting the prompt's tokens failed; using a generous rough count", exc_info=True)
                 input_tokens = rough_token_count(request)
-            plan = plan_request(request, input_tokens)
+            plan = plan_request(request, input_tokens, self._prefix_tokens(request))
         except Unpriceable as exc:
             problem = str(exc)
         except Exception as exc:  # noqa: BLE001 - a request that can't be sized is refused

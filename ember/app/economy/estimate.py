@@ -38,6 +38,12 @@ server tool the worst case here is a price under stated assumptions, not a
 ceiling: the budget guard reserves a workshop call at the cap per run, or at
 what recent runs cost if that is more (metering.workshop_reservation), and
 research, priced the same way, only has its history and the safety factor.
+
+Cache lifetimes (0.42.1, analysis-0.40.1 codebase, 6.2 cache): a cache marker is ``{"type": "ephemeral"}``, with an
+optional ``ttl`` of "5m" or "1h"; anything else is refused. A 1-hour entry costs more to write than a 5-minute one.
+When the 1-hour markers are on the tools and the system prompt only, the tokens such an entry can write are at most
+theirs (``Plan.hour_tokens``, which the guard counts: ``prefix_request``), and the rest of the prompt is priced at the
+other rates; otherwise every prompt token is priced at the highest rate the request asks for, as before.
 """
 
 from __future__ import annotations
@@ -92,6 +98,10 @@ _FETCH_TOOLS = frozenset({"web_fetch_20250910", "web_fetch_20260209"})
 _DIRECT_ONLY = frozenset({"web_search_20260209", "web_fetch_20260209"})
 
 
+CACHE_TTLS = ("5m", "1h")  # 0.42.1: the cache lifetimes the API offers, its default first
+_PREFIX_REGIONS = ("tools", "system")  # rendered before the messages, in this order
+
+
 class Unpriceable(ValueError):
     """The request contains something whose cost can't be bounded."""
 
@@ -104,6 +114,9 @@ class Plan:
     input_tokens: int
     max_output_tokens: int
     cache_ttls: tuple[str, ...] = ()
+    # 0.42.1: the most prompt tokens a 1-hour cache entry can write: those of the tools and the system prompt, when its
+    # markers are only there (None: every prompt token)
+    hour_tokens: int | None = None
     search_uses: int = 0
     fetch_uses: int = 0
     fetch_allowance_tokens: int = 0
@@ -121,13 +134,21 @@ class Plan:
         return self.search_uses + self.fetch_uses + self.pending_searches + self.pending_fetches
 
     @property
+    def hour_part(self) -> int:
+        """0.42.1: the prompt tokens priced at a 1-hour cache write's rate."""
+        if "1h" not in self.cache_ttls:
+            return 0
+        return self.input_tokens if self.hour_tokens is None else min(self.hour_tokens, self.input_tokens)
+
+    @property
     def code_runs(self) -> int:
         """Code runs the loop can make: one per sampling, and those a paused turn left to run."""
         return (MAX_SERVER_ITERATIONS if self.code_execution else 0) + self.pending_code_runs
 
 
-def plan_request(request: Mapping[str, Any], input_tokens: int) -> Plan:
-    """Check that ``request`` can be priced and describe it. Raises Unpriceable."""
+def plan_request(request: Mapping[str, Any], input_tokens: int, prefix_tokens: int | None = None) -> Plan:
+    """Check that ``request`` can be priced and describe it (``prefix_tokens``: 0.42.1, what ``prefix_request`` counts,
+    if counted). Raises Unpriceable."""
     unknown = sorted(set(request) - _ALLOWED_FIELDS)
     if unknown:
         raise Unpriceable(f"request fields the budget guard can't price: {', '.join(unknown)}")
@@ -182,11 +203,14 @@ def plan_request(request: Mapping[str, Any], input_tokens: int) -> Plan:
         raise Unpriceable("an unfinished web_fetch continues in this request, but no web_fetch tool bounds it")
     if container is not None and not code_execution:
         raise Unpriceable("a container is only used with the code execution tool")
+    markers = _cache_markers(request)
+    later = markers["messages"] | markers["request"]  # a 1-hour marker there can write any prompt token
     return Plan(
         model=model,
         input_tokens=input_tokens,
         max_output_tokens=max_tokens,
-        cache_ttls=tuple(sorted(_cache_ttls(request))),
+        cache_ttls=tuple(sorted(set().union(*markers.values()))),
+        hour_tokens=max(0, prefix_tokens) if prefix_tokens is not None and "1h" not in later else None,
         search_uses=search_uses,
         fetch_uses=fetch_uses,
         fetch_allowance_tokens=fetch_allowance,
@@ -205,16 +229,12 @@ def worst_case_micros(
     container_usd_per_hour: float | Decimal = 0,
 ) -> int:
     """Upper bound of what ``plan`` can cost, in micros (rounded up)."""
-    first_rate = dec(price.input)
-    if "5m" in plan.cache_ttls:
-        first_rate = max(first_rate, dec(price.cache_write_5m))
-    if "1h" in plan.cache_ttls:
-        first_rate = max(first_rate, dec(price.cache_write_1h))
+    hour_rate, rest_rate = _write_rates(plan, price)
     prompt = plan.input_tokens
     looped = bool(plan.tool_uses or plan.code_runs)
     samplings = MAX_SERVER_ITERATIONS if looped else 1
     output = samplings * plan.max_output_tokens  # 0.15.0: max_tokens limits each sampling of a server tool's loop
-    tokens = prompt * first_rate + output * dec(price.output)
+    tokens = plan.hour_part * hour_rate + (prompt - plan.hour_part) * rest_rate + output * dec(price.output)
     if looped:
         allowance = max(
             SEARCH_RESULT_ALLOWANCE_TOKENS if plan.search_uses or plan.pending_searches else 0,
@@ -232,12 +252,12 @@ def worst_case_micros(
         reread = later * (prompt + results) + step * later * samplings // 2
         grown = results + samplings * step  # everything the loop adds, written once
         if plan.cache_ttls:
-            read, write = dec(price.cache_read), dec(price.cache_write_5m)
+            read, write = dec(price.cache_read), max(dec(price.cache_write_5m), hour_rate)
             # Later samplings read the context from the cache; what's new is written once; and if the
             # prompt's own entry misses once inside the loop, it is written again.
             tokens += reread * read + grown * write + prompt * (write - read)
         else:
-            tokens += (reread + pending) * first_rate
+            tokens += (reread + pending) * rest_rate
     searches = (plan.search_uses + plan.pending_searches) * dec(web_search_usd_per_1000) * 1000
     total = tokens * dec(multiplier) + searches
     if plan.code_runs:
@@ -261,16 +281,16 @@ def expected_micros(
     times. The daily cap, the balance and the last-will reserve still count the worst case."""
     if plan.tool_uses or plan.code_runs:
         raise ValueError("a request with server tools has no expected cost of its own")
-    write = dec(price.input)
-    if "5m" in plan.cache_ttls:
-        write = max(write, dec(price.cache_write_5m))
-    if "1h" in plan.cache_ttls:
-        write = max(write, dec(price.cache_write_1h))
+    hour_rate, rest_rate = _write_rates(plan, price)
     cached = min(max(cached_tokens, 0), plan.input_tokens) if plan.cache_ttls else 0
     read = dec(price.cache_read)
     output = plan.max_output_tokens if output_tokens is None else min(max(output_tokens, 0), plan.max_output_tokens)
-    tokens = cached * read + (plan.input_tokens - cached) * write + output * dec(price.output)
-    miss = cached * (write - read)
+    # 0.42.1: the cache holds the prompt's start, and a 1-hour entry's tokens are its first ones
+    held_hour = min(cached, plan.hour_part)
+    new_hour = plan.hour_part - held_hour
+    new_rest = plan.input_tokens - cached - new_hour
+    tokens = cached * read + new_hour * hour_rate + new_rest * rest_rate + output * dec(price.output)
+    miss = held_hour * (hour_rate - read) + (cached - held_hour) * (rest_rate - read)
     scale = dec(multiplier)
     return (
         int((tokens * scale).to_integral_value(rounding=ROUND_CEILING)),
@@ -291,22 +311,58 @@ def _check_sources(node: Any) -> None:
             _check_sources(value)
 
 
-def _cache_ttls(request: Mapping[str, Any]) -> set[str]:
-    ttls: set[str] = set()
+def _write_rates(plan: Plan, price: ModelPrice) -> tuple[Decimal, Decimal]:
+    """0.42.1 (analysis-0.40.1 codebase, 6.2 cache): (the highest rate of a prompt token a 1-hour cache entry can write,
+    the highest rate of the others). The others are written at 5 minutes' rate with a 5-minute marker, or in a server
+    tool's loop, which the API caches itself; else they cost the input rate."""
+    rest = dec(price.input)
+    if "5m" in plan.cache_ttls or (plan.cache_ttls and (plan.tool_uses or plan.code_runs)):
+        rest = max(rest, dec(price.cache_write_5m))
+    hour = max(rest, dec(price.cache_write_1h)) if "1h" in plan.cache_ttls else rest
+    return hour, rest
 
-    def visit(node: Any) -> None:
+
+def prefix_request(request: Mapping[str, Any]) -> dict[str, Any] | None:
+    """0.42.1: what the guard counts for ``Plan.hour_tokens``: ``request``'s tools and system prompt, with what shapes
+    their tokens, and a one-character message (more than the tokens before its first message); None without a 1-hour
+    cache marker on its tools or system prompt. Raises Unpriceable."""
+    markers = _cache_markers(request)
+    if not any("1h" in markers[region] for region in _PREFIX_REGIONS):
+        return None
+    prefix = {k: request[k] for k in ("model", "tools", "tool_choice", "system", "thinking") if k in request}
+    return {**prefix, "messages": [{"role": "user", "content": "-"}]}
+
+
+def _cache_markers(request: Mapping[str, Any]) -> dict[str, set[str]]:
+    """The cache lifetimes ``request`` asks for, by where: "request" (its top-level, automatic marker), "tools",
+    "system" and "messages". 0.42.1: a marker is priced only as ``{"type": "ephemeral"}`` with an optional ttl of "5m"
+    or "1h" (a lifetime the guard doesn't know could cost more); the inputs of the model's tool calls and the tools'
+    input schemas are data, not markers. Raises Unpriceable."""
+    found: dict[str, set[str]] = {"request": set(), "tools": set(), "system": set(), "messages": set()}
+
+    def add(region: str, marker: Any) -> None:
+        ttl = marker.get("ttl", CACHE_TTLS[0]) if isinstance(marker, Mapping) else None
+        if ttl not in CACHE_TTLS or marker.get("type") != "ephemeral" or set(marker) - {"type", "ttl"}:
+            raise Unpriceable(f"a cache_control the budget guard can't price: {marker!r}")
+        found[region].add(ttl)
+
+    def visit(region: str, node: Any) -> None:
         if isinstance(node, Mapping):
-            marker = node.get("cache_control")
-            if isinstance(marker, Mapping):
-                ttls.add("1h" if marker.get("ttl") == "1h" else "5m")
-            for value in node.values():
-                visit(value)
+            if "cache_control" in node:
+                add(region, node["cache_control"])
+            for key, value in node.items():
+                data = key == "input_schema" or (key == "input" and node.get("type") in ("tool_use", "server_tool_use"))
+                if key != "cache_control" and not data:
+                    visit(region, value)
         elif isinstance(node, list):
             for value in node:
-                visit(value)
+                visit(region, value)
 
-    visit(request)
-    return ttls
+    if "cache_control" in request:
+        add("request", request["cache_control"])
+    for region in ("tools", "system", "messages"):
+        visit(region, request.get(region))
+    return found
 
 
 def _unresolved_server_tool_uses(messages: Iterable[Mapping[str, Any]]) -> tuple[int, int, int]:

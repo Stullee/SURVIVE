@@ -167,6 +167,13 @@ spending about the same, let Ember wake less often: raise **Shortest sleep** to
 cycle cap to 0.60 or more: the dashboard warns you if the cycle cap is too low
 for one planning call, for one working cycle, or for 1.5 working cycles.
 
+Opus 5.5's safety classifiers sometimes refuse a request that is fine. Since
+0.42.1, when the planner refuses to plan and the worker is another model, the
+worker plans that cycle instead, once, under the same caps: the System log warns,
+and the cycle's note says *planned by claude-sonnet-5 after claude-opus-5-5
+refused*. If the worker refuses too, or the caps leave no room for its plan, the
+cycle stops as before. A work step's refusal still ends its cycle.
+
 The **Workshop model** can be `claude-opus-5-5` too, for harder code. A run's
 first call may then cost up to about $0.68, so raise **Workshop cap per run** to
 1.00 (the dashboard says so when the cap is too low for one run).
@@ -3420,6 +3427,21 @@ is refunded twice. The System log says what was settled.
 As an outside safety net, give Ember its own
 [Anthropic workspace](https://console.anthropic.com/settings/workspaces) and
 API key and set a monthly spend limit there.
+
+**The prompt cache across cycles** (0.42.1). Every work step reads the tools
+and the system prompt (about 10,000 tokens) from Anthropic's prompt cache, which
+keeps them 5 minutes, so each cycle's first step wrote them again (about $0.03
+with claude-sonnet-5). When the median of the last three gaps between cycle
+starts is 50 minutes or less, a cycle asks the cache to keep them an hour, and
+its plan's system prompt too, so the next cycle reads them at the cache-read
+price. Writing for an hour costs twice the input price (for 5 minutes, 1.25
+times), so with sleeps of hours it stays at 5 minutes. In a dry run of
+half-hourly cycles on claude-sonnet-5, the cycle that wrote for an hour cost
+about $0.02 more and each one after it about $0.03 less. The money guard prices
+an hour's write at the price table's **Cache write 1 h**, for at most the tokens
+of the tools and the system prompt, and a plan that wouldn't fit the caps so is
+sent without it. The diagnostics report's cycle line says `cache=1h` or
+`cache=5m`.
 
 **Dry run** uses the fake model. Its simulated costs are shown as a separate
 test balance that starts from your real balance; nothing real is spent. In dry
