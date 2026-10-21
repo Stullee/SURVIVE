@@ -14,6 +14,8 @@
   var SESSION_GRACE_MS = 120000;
   // After "Wake now" the cycle starts within seconds; poll fast until it shows up (or this runs out).
   var WAKE_FAST_POLL_MS = 20000;
+  // 0.42.2: how long a banner's action says what it did once its banner is gone (a take-back's note).
+  var SAID_MS = 300000;
   // Neither Ingress hop times out on its own, so a hung backend would otherwise freeze the page.
   var REQUEST_TIMEOUT_MS = 10000;
   // The diagnostics report gathers the whole system, which may take longer than a dashboard poll.
@@ -37,6 +39,7 @@
     rendered: {},        // section name -> JSON of the data it was last rendered from
     sectionErrors: {},
     bannerKey: null,
+    said: null,          // 0.42.2: what a banner's action said it did, {text, until} (SAID_MS)
     days: null,
     charts: { flow: null, balance: null },
     chartFallback: false,
@@ -845,13 +848,26 @@
         items: [
           calls + " answered with " + usage + ", a usage field " + name + "'s code doesn't know, so each was charged at its worst case: " + usd(b.excess_usd) + " more than at the standard price.",
           num(b.owner_usd) > 0 ? "Your own API cost refunds since then count first: " + usd(b.owner_usd) + " of it." : null,
-          "Only if the Anthropic Console shows these calls at the standard price. From then on such answers cost the price table's price; another value of the field stays at its worst case.",
+          "Only if the Anthropic Console shows these calls at the standard price. From then on such answers cost the price table's price; another value of the field stays at its worst case. You can take it back.",
         ].filter(Boolean),
         action: { label: b.accepted ? "Settle" : "Treat as standard price", post: "api/economy/usage/standard",
           body: { field: b.field, value: b.value, refund_micros: b.refund_micros },
           confirm: (b.accepted ? "Settle " : "Treat " + usage + " as standard price from now on, and settle ") + calls +
             "? " + name + "'s code refunds " + refund + " once." } });
     });
+    // 0.42.2 (analysis-0.40.1 audit): the values the owner treats as standard price, each with its Take back: answers
+    // with it are charged at their worst case again from then on, and the refunds already made stay
+    var standard = isObject(agent.standard_usage) ? agent.standard_usage : {};
+    Object.keys(standard).sort().forEach(function (field) {
+      arr(standard[field]).forEach(function (value) {
+        var usage = "usage." + field + ' = "' + value + '"';
+        list.push({ kind: "info", icon: "i", title: "You treat " + usage + " as standard price",
+          items: ["Answers with it cost the price table's price. Take it back if you accepted it by mistake or the Anthropic Console shows such answers costing more: past refunds stay; calls from now on are charged at the worst case again."],
+          action: { label: "Take back", post: "api/economy/usage/standard/take_back", body: { field: field, value: value }, said: true,
+            confirm: "Take back " + usage + "? Past refunds stay; calls from now on are charged at the worst case again." } });
+      });
+    });
+    if (ui.said && Date.now() < ui.said.until) list.push({ kind: "info", icon: "i", title: ui.said.text });
     // 0.12.0: estimates scaled up after a call cost more than estimated; they come down again, or the owner resets them.
     var factors = arr(agent.estimate_factors);
     if (factors.length) {
@@ -885,6 +901,8 @@
         btn.disabled = true;
         request("POST", spec.action.post, spec.action.body || {}).then(function (res) {
           if (!res.ok) throw httpError(res);
+          // 0.42.2: what it did, said once its banner is gone (a take-back: past refunds stay, the worst case is back)
+          if (spec.action.said && isObject(res.data) && res.data.note) ui.said = { text: String(res.data.note), until: Date.now() + SAID_MS };
         }).catch(function (err) {
           if (!(err instanceof RequestError)) console.error(err);
           btn.disabled = false;

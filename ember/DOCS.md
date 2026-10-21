@@ -3287,10 +3287,14 @@ On the dashboard you can record:
   own refunds since the first of them count first). Any other value of the
   field stays at its worst case, and only you can accept one; it stays
   accepted (a call answered while you confirmed is settled at the next start,
-  or with **Settle**). For small amounts not worth looking up, **Keep as
-  charged** on the System warning about calls charged at their worst case
-  hides it for what it names now: it comes back only for calls charged so
-  later. No money moves, and you can still record a correction.
+  or with **Settle**) until you take it back. Since 0.42.2 the dashboard lists
+  each value you accepted, with **Take back** for one accepted by mistake or
+  that came to cost more: past refunds stay; calls from now on are charged at
+  the worst case again, and offered again, as before you accepted it. For
+  small amounts not worth looking up, **Keep as charged** on the System
+  warning about calls charged at their worst case hides it for what it names
+  now: it comes back only for calls charged so later. No money moves, and you
+  can still record a correction.
 - **Correct** on an earlier grant, revenue or expense reduces it (up to its full
   amount, which voids it).
 
