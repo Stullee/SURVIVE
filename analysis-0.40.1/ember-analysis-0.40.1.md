@@ -3,8 +3,8 @@
 *A full analysis of the code at `b349811` (0.40.1, the head of the tracked branch), read together with your
 diagnostics report of 2026-10-21 14:57 (version 0.40.1, cycles #353 to #364). The analysis of that report
 (`analysis-0.40.1/ember-diagnostics-0.40.1.md`, on `claude/cool-davinci-5gean8`) and the nine changes it plans for
-0.40.2 are not in this tree. Where a finding here is one of those nine, it says "in 0.40.2" and stops there. Nothing in
-the app changes with this analysis.*
+0.40.2 are not in this tree. Where a finding here is one of those nine, it says "in 0.40.2" and stops there. 0.40.3,
+built on 0.40.2, carries out section 6.1: section 9.*
 
 **Evidence.**
 - **Eight parts, audited side by side:**
@@ -1064,3 +1064,81 @@ And for the tests and CI (5.6, 5.7):
   because the test takes its date from the real clock while the move shifts only the app's: not a defect.
 - **0.40.2.** I read its analysis on `claude/cool-davinci-5gean8` (commit `7dfb2ab`; its code wasn't pushed yet) and
   left out what its 4.3 covers.
+
+---
+
+## 9. What 0.40.3 changes
+
+Built on 0.40.2, in eight parts side by side, each with its own regression tests (`tests/test_fixes_0403_*.py`, 157
+tests in all). Each test failed on 0.40.2, except a few that guard what must stay as it was.
+
+| | Change | Where |
+|---|---|---|
+| X1 | The cap test's rows are stamped from the app's clock. CI also runs every Monday, and each job has a timeout | `tests/test_diagnostics.py`; `.github/workflows/ci.yml` |
+| P1 | `_WS` and `_REFERENCE` are possessive: a PDF with 40 `%` and one with 2,000 digits are checked at once. Also, a PDF whose stream keywords would make the check read more than 128 MB is refused (the loop was quadratic: 88 KB took 2.6 s) | `products/checks.py` |
+| E1 | The runway and the critical state go by the balance with answered uncertain calls at their floor; the dashboard and sensors show that runway. A refund recorded after the critical state began, of charges up to its day, ends it like money in | `economy/life.py`, `economy/ledger.py` (`provisional_excess`, `refunded_after`) |
+| E2 | Over 24 hours behind the last call, the clock is taken as right, with a warning for 7 days | `economy/metering.py` (`_clock_refusal`) |
+| E3 | The first day's corrections count in the share of its charges inside the window | `economy/ledger.py` (`api_spend_between`) |
+| E4 | `_history` reads `floor_micros`, and the reflection's reserve is at most its worst case | `economy/metering.py`, `agent/loop.py` |
+| M1 | An approved email waits while a newer email from its recipient or thread is unopened. MAIL names it, and `email_read` says so. Stop patterns are wider and judged by sentence, gateway tags are stripped, a stub plain part gives way to the HTML, and 8-bit text under a wrong charset is read as Windows-1252 | `integrations/mailstore.py` (`unread_reply`), `executor.py`, `optout.py`, `mail.py`; `agent/context.py` |
+| M2 | An approved email not started within 7 days of its approval closes as failed, "Not sent" | `integrations/executor.py` |
+| T1 | A field moves out of a journal text only after a top-level closing tag, outside any quotation | `agent/tools.py` (`_slipped`) |
+| T2 | `draft` overwrite and workshop output keep the replaced text (`keep_version`) | `agent/tools.py`, `agent/workshop.py` |
+| T3 | `READ_MAX_CHARS` is 3,500, and a read fits beside its header and path | `agent/tools.py` |
+| T4–T7 | Tool inputs are cut until they fit; long output names are refused up front; `socket.sendto` and `sendmsg` are blocked; ids over 2⁶² are refused and blank optional texts dropped | `agent/store.py`, `products/make.py`, `agent/netguard.py`, `agent/tools.py` |
+| C1 | Holds are worked out at every `decide`, and `next_wake_at` keeps only Ember's own wake. A hold an older version saved is cleared at start | `agent/service.py` |
+| C2 | The notes are marked seen after an ordinary cycle completes or goes idle, and the brief shows them (2,000 bytes) | `agent/loop.py`, `agent/context.py` |
+| C3–C6 | The last step keeps `tool_choice: auto` with a text: 11,860 cached tokens read where 8,708 were. Thinking modes are per model, in the fake too. A second pause is "may be partial". Senders are quoted in the agenda | `agent/prompts.py`, `agent/loop.py`, `economy/pricing.py`, `agent/fake_llm.py`, `agent/agenda.py` |
+| PL1 | Launch-stage market steps wait on the floor, and `_launched` skips channels at their floor | `agent/plan.py` |
+| PL2 | `local_date` in `economy/clock.py`, used for due dates, the waits of the day, park clocks, the critic's retry and rules' days. A test fails on a new `[:10]` of a timestamp (32 places allowed, each with its reason) | `economy/clock.py`, `agent/obligations.py`, `plan.py`, `quality.py`, `ventures.py`, `stages.py`, `desk.py`, `store.py` |
+| PL3 | `OwnerLimits` knows the unread cap (the store's own query): reports wait "unread" | `agent/plan.py`, `agent/store.py` |
+| PL4 | "Write a new demand note" comes before a first listing proposed again with an old note | `agent/plan.py`, `agent/demand.py` |
+| PL5 | `wait_step` refuses a pinned step and a wait that would never lift; you can **Lift the wait** | `agent/plan.py`, `agent/owner.py`, `web.py`, `app.js` |
+| PL6 | Closing a line closes its promises' obligations | `agent/plan.py`, `agent/obligations.py` |
+| PR1, PR6 | The Word copy breaks pages with `pageBreakBefore`, per sidebar table too. Fill lines are 8 mm apart in Word as in the PDF: 83 pages, not 135 | `products/word.py` |
+| PR2 | `_HEADING` and `_DIRECTIVE` are linear. So is the pairing of emphasis (`inline`), which was quadratic | `products/markup.py` |
+| PR3–PR5 | A book's footer clears 0.27 in from the edge, and the advice names the footer. The page check measures to the text area's bottom, and a week's 7 days are named. A pagebreak in a box is refused | `products/pdf.py`, `integrations/kdp.py`, `products/pagecheck.py`, `products/markup.py` |
+| PR7–PR9 | COUNTIF wildcards; XML-invalid characters left out and named; `FLAT_PAGES` 108 | `products/sheets.py`, `products/markup.py`, `integrations/kdp.py` |
+| W1 | The masker's pattern holds only the words a text has. Each text is masked once, and rows are read under the lock and formatted after it: 24 s and a 11.7 s hold became 0.5 s and 11 ms | `privacy.py`, `diagnostics.py` |
+| W2 | The personal options are masked everywhere, and so are phone numbers and IBANs (with valid check digits) | `diagnostics.py`, `privacy.py` |
+| W3 | The GET writes nothing. The dashboard saves the zip, then records it with a POST of its version. A test checks that no GET route writes | `web.py`, `agent/service.py`, `agent/website.py`, `app.js` |
+| W4 | `RecursionError` starts safe mode | `config.py` |
+| Also | The timing test of every regex in `products/` and `integrations/` found `site._STREET` exponential (fixed). The fake's chaos test no longer depends on the tools' exact bytes. The README's stale facts and its security model are corrected | `tests/test_fixes_0403_parsing.py`, `tests/test_fake_llm.py`, `README.md`, `vision/live-page.md` |
+
+**Behaviour you will notice:**
+- The wait for the daily cap ends at midnight, not 00:05.
+- An approved email that hasn't gone out within 7 days closes as "Not sent".
+- **Lift the wait** on the Plan tab.
+- The website's **Download (zip)** saves the file in the dashboard and counts it once saved. This needs the
+  `x-ember-site-version` header to pass Home Assistant's Ingress: if it doesn't, the zip still saves, but the download
+  isn't recorded.
+
+**Choices made, which you may want otherwise:**
+- **Unsubscribe footers.** A one-line footer like "Unsubscribe." with no link, in an email without list headers, now
+  reads as a stop. Suppressions are permanent.
+- **Promises on a closed line.** When a line closes in any way, its promises close with it, not only on your Close.
+  Each promise has one step, and that step is dropped with the line.
+- **A clock that jumped back.** After the clock goes back more than a day, the daily cap counts a new owner-day, so a
+  jump can make room for at most one more day's cap. The balance, the reserve and the cycle cap are unaffected.
+
+**Not done** (sections 6.2 and 4.4):
+- **Plan and tools.** One precondition per tool, used by the plan. PL3 and PL4 were fixed one by one.
+- **Limits and the brief.** Text limits that cut, and the conversation's room in the brief.
+- **Disk space.** Free space, pruning and backup exclusion.
+- **Your hold.** On the files of a held line.
+- **Plan gaps.** A rework Ember can decline, and the paid test in the plan.
+- **Money.** Settling uncertain bills from settings. `burn.judged` still reads the booked balance, which errs on the
+  safe side.
+- **Integrations.** M3 (retry after a 429) and M4 (previews by hash).
+- **The container.** Running as non-root, and `--require-hashes`.
+- **Privacy.** Masking street addresses: the only detector would mask every number of five digits or more.
+- **Model calls.** Caching across cycles, and a refusal fallback.
+- **CI.** The test layout, a coverage gate, a type checker, a dependency audit, actions pinned by commit, and
+  `-W error` in `pytest.ini`.
+- **Markup.** A line-length cap: stored site and blog sources are parsed again at build time.
+- **Network guard.** `fork_exec`, a send on a connected socket, a running thread and a native import: no audit event
+  exists for them.
+- **Still open, found during the fixes:**
+  - `_CLOSING.sub` in `unleaked` is quadratic on a long run of whitespace (0.6 s at 20,000 spaces).
+  - Word's fill lines can still spill two lines on a Letter page with a heading and a table above them.
+

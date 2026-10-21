@@ -493,6 +493,25 @@ column was 12 mm. A line with an Etsy listing is no longer made a KDP book by a
 check run in one of its cycles, you can add a book's Amazon link to a request
 marked done without it, and the diagnostics show the books' sources.
 
+0.40.3: the fixes from the codebase analysis of 0.40.1 (a full audit of the code,
+[analysis-0.40.1/ember-analysis-0.40.1.md](analysis-0.40.1/ember-analysis-0.40.1.md)).
+A test that would have failed from 10-28 on is fixed, and CI also runs weekly. The
+workshop's PDF check and the document parser no longer take exponential or cubic
+time on hostile text (one PDF could freeze the app for days). An unknown field in
+the API's usage can no longer make Ember critical, with its last will written, on
+money that is there, and a refund of the charges that made it critical ends that
+state. An approved email waits while its recipient's newer email is unread, and
+the stop check reads more phrasings, HTML-only stops and wrong charsets. Quoted
+text in a journal entry no longer becomes the next cycle's handoff, `draft` and
+the workshop keep what they overwrite, and `workspace_read` shows what it says it
+shows. The plan counts your days from your midnight (not UTC), launch posts at a
+channel's floor wait, and you can lift a wait Ember set (**Lift the wait** on the
+Plan tab). Raising the daily cap ends the wait for midnight at once, and the
+release notes reach the cycle that works on them. A planner's Word copy no longer
+has 52 blank pages. The shareable report no longer holds the database (it took 24
+seconds with a full mailbox) and also hides phone numbers, IBANs, the KDP author
+and the SFTP login; the website's download counts only once the zip is saved.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
