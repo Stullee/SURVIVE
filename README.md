@@ -18,7 +18,8 @@ everything that leaves the container, and only the owner can record revenue.
 
 Dry run (the default) runs the whole agent with a built-in fake model at no
 cost. With an API key and dry run off it calls the Anthropic API and spends real
-money within the caps. Findings from live testing come next.
+money within the caps. Each release since going live folds in what live testing
+found; the paragraphs below say what each one changed.
 
 0.4.0 adds the first integrations: Ember's own mailbox (it reads mail on its
 own; an email it proposes is sent by Ember's code only after the owner approves
@@ -792,10 +793,10 @@ committed in 0.4.0, which has to be changed where it is used.
    green on that exact commit (tests and lint, the secret scan, both image
    builds). The secret scan reads every branch on GitHub, so a finding on any
    branch makes it red.
-5. Only then fast-forward the branch Home Assistant tracks to that commit, push
-   it, and tag it: `git tag v0.2.0 <commit> && git push origin v0.2.0`. A push
-   to the tracked branch is the release, so never push a commit there that CI
-   hasn't passed.
+5. Only then fast-forward the branch Home Assistant tracks to that commit and
+   push it. A push to the tracked branch is the release (the version lives in
+   `ember/config.yaml`; releases aren't tagged), so never push a commit there
+   that CI hasn't passed.
 6. In Home Assistant, the app shows an update (reload the store to see it sooner).
    Updating rebuilds the image on the device.
 
@@ -877,5 +878,6 @@ the documentation wins:
 
 ## License
 
-No license has been chosen yet. Chart.js (vendored in
-`ember/app/web/static/vendor/`) is MIT-licensed; its license file sits next to it.
+Ember is released under the MIT License: see [LICENSE](LICENSE). Chart.js
+(vendored in `ember/app/web/static/vendor/`) is MIT-licensed too; its license file
+sits next to it.
