@@ -1848,7 +1848,17 @@ no longer shown); a study that failed three times stops until you press
   digest counts the requests that waited apart ("1 request(s) waited when
   their service asked to come back later (not failures)"), a listing that
   waited twice and then went out is 1 action, and one that fails at its last
-  try fails once.
+  try fails once. Since 0.42.3 an approved request that went back unsent
+  because Ember's code didn't begin it within 7 days of your approval (see
+  Approved too long ago above, and for an email Ember's mailbox) is no action
+  and no failure either: the digest counts it apart, with whose approval it
+  had ("1 request went back unsent (1 you approved): it didn't go out within
+  7 days of its approval (Ember proposes it again if it still fits)"), and
+  `digest_actions` and `digest_failed` leave it out. Until then it read
+  "carried out 1 action (1 you approved): 1 failed", though nothing was
+  carried out. The list of what Ember's code did has no entry for it (nothing
+  began; a try that waited for its service before shows there as waited), and
+  a request that really failed still counts as failed.
 
   **Take back every unlock**, at the top of this card while any unlock
   stands: one click sets every rule of every milestone back to **Ask me**.
@@ -3537,8 +3547,9 @@ counts the unlocks that stand (0.13.0). Of the newest daily digest, `digest_day`
 is the day it covers (an automation can notify you when it changes), and
 `digest_actions`, `digest_failed` and `digest_taken_back` count the actions
 Ember's code carried out that day, those that failed, partly failed or ended
-unclear (0.42.2: a wait for the service isn't one), and the unlocks taken
-back; its text is on the dashboard only. The
+unclear (0.42.2: a wait for the service isn't one; 0.42.3: an approved
+request that went back unsent after 7 days is in neither count), and the
+unlocks taken back; its text is on the dashboard only. The
 JSON never contains any text the agent wrote, nor anyone's address.
 In dry run the numbers are the dry run's. If the database can't be read,
 `state` is `unknown` and the numbers are empty.

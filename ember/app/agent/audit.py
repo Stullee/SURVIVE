@@ -11,7 +11,8 @@
   (0.19.0: a Bluesky post's at Bluesky);
 * ``digest``: one of the owner's days: what Ember's code carried out and on whose decision, what the unlocks approved,
   hold and lost, and what waited whatever was unlocked (NEVER). Written once after the day ended (owner_digests),
-  shown on the Approvals tab, in the System log and in the sensors;
+  shown on the Approvals tab, in the System log and in the sensors. 0.42.3: an approved request that went back unsent
+  because it didn't begin within its days (``AGED_OUT``) is counted apart: nothing was carried out;
 * taking back every unlock at once is ``policy.revoke_all``, the owner's switch.
 """
 
@@ -24,7 +25,16 @@ from datetime import date, timedelta
 from typing import Any
 
 from ..economy.clock import Clock, from_iso, to_iso
-from ..integrations import bluesky, connectors, etsy, etsy_publisher, pinterest, printify_publisher, site_publisher
+from ..integrations import (
+    bluesky,
+    connectors,
+    etsy,
+    etsy_publisher,
+    executor,
+    pinterest,
+    printify_publisher,
+    site_publisher,
+)
 from . import never, policy, store
 from .store import AgentScope
 
@@ -506,6 +516,20 @@ def _approve(conn: sqlite3.Connection, now: str, by: str, button: str, journal_i
 
 # --- the daily digest ---
 
+# 0.42.3 (analysis-0.40.1 audit): why Ember's code closed an approved request unsent when it didn't begin within its
+# days (connectors.lapse: "Not listed: ..."; the email executor's own words: "Not sent: ..."), as the request's note
+# ends. The note is all that tells it from a failure: closed_by ("Ember") and status ("failed") are those of every
+# failure an executor closes, and nothing is journaled (nothing began).
+AGED_OUT = (connectors.STALE.format(days=connectors.APPROVED_DAYS), executor.STALE.format(days=executor.APPROVED_DAYS))
+
+
+def _aged_out(row: sqlite3.Row) -> bool:
+    """0.42.3 (analysis-0.40.1 audit): whether a request Ember's code closed without a journal entry went back unsent
+    (connectors.lapse, executor.Executor._one): failed, its note ending with why in full (AGED_OUT). The digest
+    counted it as an action that failed: "carried out 1 action (1 you approved): 1 failed", for a listing nothing
+    was done with."""
+    return row["status"] == "failed" and str(row["result_note"] or "").endswith(AGED_OUT)
+
 
 def _waited(conn: sqlite3.Connection, scope: AgentScope, start: str, end: str) -> int:
     """Requests of a day that fit an unlocked rule but waited for the owner whatever was unlocked (NEVER)."""
@@ -535,15 +559,21 @@ def digest(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, day: date)
     where, params = scope.where("a")
     # 0.15.0: what Ember's code carried out before the journal began (0.13.0) is only in the requests it closed: the
     # first digest after the upgrade said "carried out nothing" for a day of 5 listings and 3 changes. 0.42.2: its waits
-    # for its service aside: one that aged out while it waited (connectors.stale) failed once, as one that never began.
+    # for its service aside. 0.42.3: a request that aged out (also one that aged out while it waited) went back unsent:
+    # no action, and no failure.
+    aged: Counter[str] = Counter()
     for r in conn.execute(
-        f"SELECT a.status, a.decided_by FROM approvals a WHERE {where} AND a.closed_by = ? AND a.closed_at >= ?"
-        " AND a.closed_at < ? AND a.executor IS NOT NULL"
+        f"SELECT a.status, a.decided_by, a.result_note FROM approvals a WHERE {where} AND a.closed_by = ?"
+        " AND a.closed_at >= ? AND a.closed_at < ? AND a.executor IS NOT NULL"
         " AND NOT EXISTS (SELECT 1 FROM action_journal j WHERE j.approval_id = a.id"
         " AND json_extract(j.after, '$.retry_at') IS NULL)",
         (*params, etsy_publisher.CLOSED_BY, start, end),
     ):
-        by["unlock" if r["decided_by"] == policy.POLICY_BY else "owner"] += 1
+        who = "unlock" if r["decided_by"] == policy.POLICY_BY else "owner"
+        if _aged_out(r):
+            aged[who] += 1
+            continue
+        by[who] += 1
         trouble.update(["failed"] if r["status"] == "failed" else [])
     approved = dict(
         conn.execute(
@@ -567,6 +597,7 @@ def digest(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, day: date)
         "actions": dict(by),
         "trouble": dict(trouble),
         "waited_for_service": service,  # 0.42.2: requests whose try waited for their service, not failures
+        "aged_out": dict(aged),  # 0.42.3: approved requests that went back unsent, by whose approval: not actions
         "approved_by_unlocks": {"auto": approved.get("auto", 0), "veto_window": approved.get("veto_window", 0)},
         "held": len(held),
         "first_held_until": held[0]["veto_until"] if held else None,
@@ -598,6 +629,19 @@ def _digest_text(day: date, data: dict[str, Any], clock: Clock) -> str:
         )
     else:
         parts.append("Ember's code carried out nothing")
+    aged: dict[str, int] = data["aged_out"]
+    if gone := sum(aged.values()):  # 0.42.3
+        whose = ", ".join(
+            f"{aged[k]} {words}"
+            for k, words in (("unlock", "on your unlocks"), ("owner", "you approved"))
+            if aged.get(k)
+        )
+        one = gone == 1
+        parts.append(
+            f"{gone} request{'' if one else 's'} went back unsent ({whose}): {'it' if one else 'they'} didn't go out"
+            f" within {connectors.APPROVED_DAYS} days of {'its' if one else 'their'} approval (Ember proposes"
+            f" {'it' if one else 'each'} again if it still fits)"
+        )
     if data["waited_for_service"]:  # 0.42.2
         parts.append(
             f"{data['waited_for_service']} request(s) waited when their service asked to come back later (not failures)"
