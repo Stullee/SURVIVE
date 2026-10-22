@@ -25,7 +25,7 @@ from ..economy.clock import Clock, from_iso, to_iso
 from ..economy.costs import micros_to_usd
 from ..economy.ledger import Books, Scope
 from ..economy.life import LifeStatus, Runway
-from ..integrations import etsy, etsy_publisher
+from ..integrations import etsy, etsy_publisher, retry
 from ..version import app_version
 from . import learning, plan, predictions, prompts, quality, reach, roadmap, ventures
 from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope, open_projects
@@ -223,7 +223,7 @@ def scorecard(
         # 0.19.2: before the projects, a few lines whose milestones the review judges (live, 8 projects in full left
         # no room for it: "Milestones were not shown, so I can't judge them today")
         roadmap.review_text(conn, scope, today, since),
-        "\n\n".join(part for part in (_etsy(conn, scope, since), channels) if part),
+        "\n\n".join(part for part in (_etsy(conn, scope, clock, since), channels) if part),
         _project_lines(conn, scope, projects, clock, since, reach.funnels(conn, scope)),
         learning.settled_text(settled),
         predictions.review_text(conn, scope, since),  # 0.13.0: the forecasts against the results
@@ -618,10 +618,10 @@ def _books(conn: sqlite3.Connection, scope: AgentScope) -> str:
     return "\n".join(lines)
 
 
-def _etsy(conn: sqlite3.Connection, scope: AgentScope, since: str) -> str:
+def _etsy(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, since: str) -> str:
     """The Etsy listings Ember made and how they did: the clearest demand signal there is. Every live listing, top
     sellers in the period first (0.12.0: the newest 8 only, so the listings live the longest dropped out first), and
-    the newest requests that didn't become one."""
+    the newest requests that didn't become one (0.42.5: one Etsy asked to wait for as waiting, not failed)."""
     where, params = scope.where()
     rows = conn.execute(f"SELECT * FROM etsy_listings WHERE {where} ORDER BY id DESC", params).fetchall()
     if not rows:
@@ -647,7 +647,9 @@ def _etsy(conn: sqlite3.Connection, scope: AgentScope, since: str) -> str:
     for r in [r for r in rows if r["id"] not in shown][:5]:
         state = r["state"] or r["status"]
         what = f"#{r['listing_id']}" if r["listing_id"] else f"request #{r['approval_id']}"
-        lines.append(f"- {what} [{state}] {_one_line(r['title'], 80)}")
+        title = _one_line(r["title"], 80)
+        waits = None if r["listing_id"] else retry.waiting_words(conn, r["approval_id"], clock, "Etsy")
+        lines.append(f"- {what} [{retry.SHOWN}] {title}: {waits}" if waits else f"- {what} [{state}] {title}")
     money = ", ".join(f"{cents / 100:.2f} {currency}" for currency, cents in totals.items()) or "nothing"
     lines.append(f"Orders in the period: {len(orders)} ({money}); revenue counts once it is recorded.")
     return "\n".join(lines)

@@ -223,8 +223,9 @@ def test_pin(conn: sqlite3.Connection, scope: AgentScope, workspace: Jail, now: 
     raise PinterestError("Ember has no live Etsy listing with a .png or .jpg photo in its workspace to pin")
 
 
-def text(conn: sqlite3.Connection, scope: AgentScope, limit: int = 6) -> str:
-    """The plan's PINTEREST: Ember's boards and newest pins with their numbers ("" before the first)."""
+def text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, limit: int = 6) -> str:
+    """The plan's PINTEREST: Ember's boards and newest pins with their numbers ("" before the first). 0.42.5: a pin
+    Pinterest asked to wait for says so, with until when (it read "failed", and the agent could propose it again)."""
     made = boards(conn, scope)
     recent = pins(conn, scope, limit)
     if not made and not recent:
@@ -236,7 +237,9 @@ def text(conn: sqlite3.Connection, scope: AgentScope, limit: int = 6) -> str:
             if r["synced_at"]
             else "not read yet"
         )
-        lines.append(f"- pin {r['pin_id'] or '-'} ({r['status']}): {r['title'][:60]} -> {r['link']}: {numbers}")
+        waits = retry.waiting_words(conn, r["approval_id"], clock, "Pinterest")
+        status, numbers = (retry.SHOWN, waits) if waits else (r["status"], numbers)
+        lines.append(f"- pin {r['pin_id'] or '-'} ({status}): {r['title'][:60]} -> {r['link']}: {numbers}")
     return "\n".join(lines)
 
 

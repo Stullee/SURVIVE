@@ -81,7 +81,7 @@ def test_an_ordinary_cycle_reads_each_post_by_its_request_s_number(data_dir: Pat
     [row] = rows(agent, "SELECT finished_at, synced_at FROM bluesky_posts")
     read = from_iso(row["synced_at"]).astimezone(agent.clock.tz).strftime("%Y-%m-%d %H:%M")
     with agent.db.connection() as conn:
-        listed = bluesky_publisher.text(conn, agent.scope(), 12)
+        listed = bluesky_publisher.text(conn, agent.scope(), agent.clock, 12)
     assert shown.text == (
         f"Ember's Bluesky account: @{FakeBluesky.HANDLE} (3 followers; 0 posted today, at most 2 a day); 1 post live"
         " with 20 reactions (20.0 a post).\n"

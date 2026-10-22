@@ -585,6 +585,13 @@ undoes already were. Its card says when, **Cancel** still stops it, the kill
 switch holds it, a paused Ember still carries it out, and the daily digest
 counts the wait as a wait.
 
+0.42.5: a listing, pin, post or Printify product its service rate-limited
+(and that stays approved, to be retried) no longer shows as "failed: HTTP 429"
+in what Ember reads each cycle. It shows as waiting, with when the service asked
+to be tried again and a "don't propose it again", so Ember no longer proposes the
+same thing a second time while your first approval is still to go out. One that
+is still refused after its 3 retries shows as failed, as before.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
