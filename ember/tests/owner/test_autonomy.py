@@ -1,5 +1,7 @@
 """0.5.0: the owner's standing instructions (0.36.0: their rulebook), rules that make the agent act instead of wait, a
-lessons file kept useful, and a message from the owner that wakes the agent."""
+lessons file kept useful, and a message from the owner that wakes the agent.
+
+Also tests from 0.33.0 and 0.39.6 (formerly test_fixes_0330.py, test_fixes_0396.py)."""
 
 from __future__ import annotations
 
@@ -8,7 +10,7 @@ import re
 import sqlite3
 import time
 from collections.abc import Mapping
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -17,7 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import paths, web
-from app.agent import context, fake_llm, loop, news, prompts, service
+from app.agent import context, fake_llm, loop, news, prompts, service, store
 from app.agent import tools as agent_tools
 from app.agent.memory import CAPS, SEEDS
 from app.agent.owner import RULE_MAX, RULEBOOK_MAX, RULES_MAX, Owner
@@ -413,7 +415,7 @@ def test_the_rules_ask_for_action_instead_of_waiting() -> None:
     ):
         assert words in planner, words
     rules = " ".join(prompts.OPERATING_RULES.split())
-    for words in (  # 0.12.0: waiting on the owner is Ember's code's now (tests/test_rule_audit.py)
+    for words in (  # 0.12.0: waiting on the owner is Ember's code's now (tests/cycle/test_rule_audit.py)
         "ask your owner for one concrete action, in one batched message",
         "YOUR OWNER'S RULEBOOK",  # 0.36.0: the standing instructions retired
         "Your strategy lives in memory (strategy), the only strategy you see when planning",
@@ -637,3 +639,35 @@ def test_a_message_wakes_the_agent_before_its_scheduled_wake(data_dir: Path) -> 
     assert web._wake_for_message(request) == "soon"
     agent.clock.advance(seconds=service.OWNER_QUIET.total_seconds())  # 0.15.0: a few minutes, not 500
     assert agent.decide().trigger == "owner"
+
+
+# --- From 0.33.0 (formerly test_fixes_0330.py) ---
+
+
+# --- what the owner says stays ---
+
+
+def test_an_owner_s_message_can_be_kept_as_a_standing_instruction() -> None:
+    script = (Path(__file__).parents[2] / "app" / "web" / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    assert "parts.push(keepButton(m), removeButton(num(m.id)))" in script
+    # 0.36.0: as a rule of the owner's rulebook (the Mind tab's), in place of a line of the standing instructions
+    assert "openRule(null, asText(m.text))" in script and 'text: "Keep as rule"' in script
+    assert 'else if (typeof add === "string") box.value = add.trim();' in script
+
+
+# --- From 0.39.6 (formerly test_fixes_0396.py) ---
+
+
+# --- 8. each rule says when it was set ---
+
+
+def test_each_rule_says_the_day_it_was_set() -> None:
+    """Live, rule #1 ("This week, in order: ... 3) nothing new. No title or tag edits before 10-20") was set on 10-08
+    and still quoted as "the owner's rule this week" on 10-15."""
+    rule = {"id": 1, "created_at": "2026-10-07T23:01:00Z", "text": "This week:  nothing new."}
+    assert store.rulebook_text([rule]) == "#1 (set 2026-10-07) This week: nothing new."  # type: ignore[list-item]
+    today = date(2026, 10, 15)
+    dated = store.rulebook_text([rule], today)  # type: ignore[list-item]
+    assert dated == "#1 (set 2026-10-07, 8 days ago) This week: nothing new."
+    assert store._set_on("2026-10-14T08:00:00Z", today) == "set 2026-10-14, yesterday"
+    assert store._set_on("2026-10-15T08:00:00Z", today) == "set 2026-10-15, today"

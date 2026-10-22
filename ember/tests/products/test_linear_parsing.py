@@ -8,7 +8,8 @@
 4. PR7: a spreadsheet's picture counts COUNTIF's and SUMIF's wildcards as Excel does.
 5. PR9: KDP's flat printing cost for black ink ends at 108 pages.
 6. 6.2: every regular expression of the products and the integrations takes linear time on long runs.
-"""
+
+Tests from 0.40.3 (formerly test_fixes_0403_parsing.py)."""
 
 from __future__ import annotations
 

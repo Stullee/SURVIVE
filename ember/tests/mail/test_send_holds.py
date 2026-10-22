@@ -8,7 +8,8 @@ integrations/r1_optout_phrases.py, test_r2_unread_reply_send.py, r4_mime_optout.
   isn't UTF-8 as Windows-1252.
 - M2: an approved email held by a pause went out weeks later on Resume. Now one not begun within APPROVED_DAYS of its
   approval is closed unsent, with why.
-"""
+
+Tests from 0.40.3 (formerly test_fixes_0403_mail.py)."""
 
 from __future__ import annotations
 

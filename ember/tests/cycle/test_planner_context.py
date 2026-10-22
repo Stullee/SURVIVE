@@ -2,7 +2,10 @@
 first where a cut takes the end (the day's review, a venture's FOCUS, a missed bar's obligation), the Inbox and WAITING
 FOR YOUR OWNER are lists rather than windows, the release notes are read in full over the next plans (FIX NOW 24), an
 ordinary step's fixed prompt holds every channel of the owner's within 0.11.1's size (X15), and one call's texts fit a
-reply (X9)."""
+reply (X9).
+
+Tests from 0.15.0, 0.32.0, 0.33.0 and 0.39.1 (formerly test_fixes_0140_live_fixes.py, test_fixes_0140_planner.py,
+test_fixes_0320.py, test_fixes_0330.py, test_fixes_0391.py)."""
 
 from __future__ import annotations
 
@@ -16,12 +19,21 @@ import pytest
 
 from app import paths
 from app.agent import context, news, review, store, tools, ventures
+from app.agent import plan as plan_tree
+from app.agent.fake_llm import FakeTransport, Plan, Reply, ToolCalls
 from app.agent.news import News
 from app.economy.clock import to_iso
-from tests.cycle.test_agent import make_agent, plan, rows
+from tests.cycle.test_agent import ROOMY, make_agent, plan, rows
 from tests.cycle.test_agent import tools as calls
+from tests.cycle.test_loop_shapes import run
 from tests.cycle.test_owner_news import first_text, section, snapshot_with
+from tests.learning.test_weekly_look import judged
 from tests.owner.test_owner_loop import owner
+from tests.plan.test_cycle_line import IDLE, lined, now, take, texts
+from tests.plan.test_money_goal import call
+from tests.plan.test_roadmap import plan as idle
+from tests.ventures import test_ventures
+from tests.ventures.test_ventures import JOURNAL
 
 # --- FIX NOW 13: the planner's section budgets ---
 
@@ -343,3 +355,176 @@ def test_the_cycle_rules_state_the_call_limit() -> None:
     from app.agent import prompts
 
     assert f"{tools.CALL_CHARS:,} characters of text in one call" in " ".join(prompts.operating_rules(True).split())
+
+
+# --- From 0.15.0 (formerly test_fixes_0140_live_fixes.py) ---
+
+
+# --- LIVE 8: the plan lists the agent's open upgrade requests -------------------------------------------------------
+
+
+def test_the_plan_lists_open_upgrade_requests(data_dir: Path) -> None:
+    fake = FakeTransport(script=[idle(steps=[]), idle(steps=[])])
+    agent, _ = run(data_dir, fake)
+    for title in ("Read big PNGs", "Bigger notes"):
+        filed = call(
+            agent,
+            "request_upgrade",
+            title=title,
+            problem="p",
+            proposed_change="c",
+            expected_benefit="b",
+            priority="low",
+        )
+        assert filed.ok, filed.text
+    with agent.db.transaction() as conn:
+        conn.execute("UPDATE upgrades SET status = 'accepted', decided_at = '2026-10-02T08:00:00Z' WHERE id = 1")
+    with agent.db.connection() as conn:
+        line = context.upgrades_line(context.open_upgrades(conn, agent.scope()))
+    today = agent.clock.now().date().isoformat()
+    assert line == f"Your upgrade requests not built in yet: #2 new ({today}), #1 accepted (2026-10-02)."
+    agent.run_cycle("schedule")
+    planner = fake.sent[-1]["messages"][0]["content"][0]["text"]  # type: ignore[attr-defined]
+    assert f"== WAITING FOR YOUR OWNER ==\n{line}" in planner
+    with agent.db.transaction() as conn:
+        conn.execute("UPDATE upgrades SET status = 'released', released_version = '0.15.0'")
+    with agent.db.connection() as conn:
+        assert context.open_upgrades(conn, agent.scope()) == []
+
+
+# --- From 0.32.0 (formerly test_fixes_0320.py) ---
+
+
+# --- 6. the release notes go on where they stopped when another version is installed ---------------------------------
+
+
+def a_plan_reads(agent: Any, running: str) -> str:
+    """The part of the release notes a plan shows, marked as read as a plan that showed it whole marks it."""
+    with agent.db.connection() as conn:
+        found = news.collect(conn, agent.db, agent.scope(), running)
+    news.mark_changelog_seen(agent.db, agent.scope(), found)
+    assert news._json_bytes(found.changelog) <= news.CHANGELOG_LIMIT
+    return found.changelog
+
+
+def test_the_release_notes_go_on_where_they_stopped_after_another_upgrade(
+    data_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def notes(version: str) -> str:
+        return f"## {version}\n\n" + "\n".join(
+            f"- {version}: change {i}, which Ember's code now makes, said in a few more words." for i in range(40)
+        )
+
+    path = tmp_path / "CHANGELOG.md"
+    path.write_text(notes("0.5.0") + "\n\n" + notes("0.4.0"), encoding="utf-8")
+    monkeypatch.setattr(paths, "CHANGELOG_PATH", path)
+    agent, _ = run(data_dir, FakeTransport(script=[test_ventures.plan(steps=[])]), settings=ROOMY)
+    seen = news.changelog_key(agent.scope().mode)
+    agent.db.set_meta(seen, "0.3.0")
+    first = a_plan_reads(agent, "0.4.0")
+    assert first.startswith("Your software was upgraded from 0.3.0 to 0.4.0. What changed:\n\n## 0.4.0\n")
+    assert first.endswith(news.MORE)
+    # live: the next version began the notes again from its own, and showed 0.4.0's start again
+    second = a_plan_reads(agent, "0.5.0")
+    assert second.startswith(
+        "Your software was upgraded to 0.5.0 meanwhile. Its notes first, then the rest of your notes since 0.3.0:\n"
+        "## 0.5.0\n"
+    )
+    parts = [first, second]
+    while agent.db.get_meta(seen) == "0.3.0":
+        assert len(parts) < 12
+        parts.append(a_plan_reads(agent, "0.5.0"))
+    assert agent.db.get_meta(seen) == "0.5.0" and all(p.startswith(news.CONTINUED) for p in parts[2:])
+    read = "\n".join(parts)
+    changes = [line for version in ("0.4.0", "0.5.0") for line in notes(version).splitlines() if line.startswith("- ")]
+    assert [read.count(line) for line in changes] == [1] * len(changes)  # each once: none again, none left out
+    assert read.count("\n## 0.4.0 (continued)\n") == 1  # where the notes of a version go on after another's
+    assert a_plan_reads(agent, "0.5.0") == ""  # all read: nothing until the next version
+
+
+def test_an_older_version_installed_while_the_notes_are_read_shows_its_own_from_their_start(
+    data_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "CHANGELOG.md"
+    path.write_text("\n\n".join(f"## 0.{m}.0\n\n" + "- A change.\n" * 300 for m in (6, 5)), encoding="utf-8")
+    monkeypatch.setattr(paths, "CHANGELOG_PATH", path)
+    agent, _ = run(data_dir, FakeTransport(script=[test_ventures.plan(steps=[])]), settings=ROOMY)
+    agent.db.set_meta(news.changelog_key(agent.scope().mode), "0.4.0")
+    assert a_plan_reads(agent, "0.6.0").endswith(news.MORE)  # 0.6.0's notes, in part
+    # a backup of 0.5.0 restored: what was shown of 0.6.0 isn't 0.5.0's, whose notes begin as they would have
+    assert a_plan_reads(agent, "0.5.0").startswith("Your software was upgraded from 0.4.0 to 0.5.0. What changed:")
+
+
+# --- From 0.33.0 (formerly test_fixes_0330.py) ---
+
+
+# --- the work steps see why, the review and the strategy ---
+
+
+def test_the_work_steps_see_why_the_plan_chose_its_line_the_review_of_it_and_the_strategy(data_dir: Path) -> None:
+    agent, fake = lined(data_dir)
+    judged(agent, (3, "change", "reach"))  # today's review: "the numbers say so"
+    with agent.db.transaction() as conn:
+        agent.memory().update(conn, "strategy", "replace", "Bring buyers to what is live first.", 1, now(agent))
+    why = "Line #3 owes its book; its pins wait for a marketing cycle."
+    with agent.db.transaction() as conn:  # 0.35.0: the plan tree takes the line: the owner's pin of a step of #3's
+        plan_tree.keep(conn, agent.scope(), now(agent), agent.clock.today(), {})
+        first = plan_tree.nodes(conn, agent.scope(), "level = 'step' AND project_id = 3 AND status = 'open'")[0]
+        plan_tree.pin(conn, agent.scope(), first["id"], True, "Stefan", now(agent))
+    fake.script.extend([take(3, assessment=why), ToolCalls([("project_list", {})]), Reply("Done.")])
+    fake.script.append(JOURNAL)
+    agent.run_cycle("schedule")
+    brief = texts(fake, "work")[-1]
+    assert f"== PLAN ==\nWhy: {why}\nGoal: Work on one line" in brief
+    assert "Today's review of it: change (reach): the numbers say so" in brief
+    strategy = agent.memory().read("strategy").strip()  # as the cycle's weekly look may have rewritten it
+    assert f"== STRATEGY (written by you) ==\n{strategy}" in brief
+
+
+# --- From 0.39.1 (formerly test_fixes_0391.py) ---
+
+
+# --- 2. the day's messages and a first test's heads-up ---
+
+
+def test_status_lists_the_days_messages_that_count_toward_the_owners_limit(data_dir: Path) -> None:
+    """Live, nine cycles from 04:20 on tried to send what two messages had told the owner hours before, each refused."""
+    agent, fake = lined(data_dir, titles=())
+    day_start = to_iso(agent.clock.day_start(agent.clock.today()))
+
+    def line() -> str:
+        with agent.db.connection() as conn:
+            sent = store.unasked_messages(conn, agent.scope(), day_start)
+        return context.messages_line(sent, lambda at: at[11:16])
+
+    assert line() == "Your messages today that answer none of your owner's: 0 of 2."
+    with agent.db.transaction() as conn:
+        asked = store.insert_message(conn, agent.scope(), None, "How is the book going?", now(agent))  # the owner's
+        answer = store.insert_message(conn, agent.scope(), 1, "Version 13 is ready for you.", now(agent))
+        conn.execute("UPDATE messages SET answered_by = ? WHERE id = ?", (answer, asked))  # an answer: not counted
+        heads_up = "Heads-up: milestones #15 and #16 will likely miss on 10-21, as the traffic is thin."
+        first = store.insert_message(conn, agent.scope(), 1, heads_up, now(agent))
+    assert line() == (
+        f"Your messages today that answer none of your owner's: 1 of 2 (#{first} at 12:00 \"Heads-up: milestones #15"
+        ' and #16 will likely miss on 10-21,…").'
+    )
+    with agent.db.transaction() as conn:
+        second = store.insert_message(conn, agent.scope(), 1, "The pins are live.", now(agent))
+    full = line()
+    assert full.startswith("Your messages today that answer none of your owner's: 2 of 2 (#")
+    assert full.endswith(
+        f'; #{second} at 12:00 "The pins are live."): the next waits for tomorrow, or goes in your answer when they'
+        " write."
+    )
+    fake.script.append(Plan(IDLE))
+    agent.run_cycle("schedule")
+    assert full in texts(fake, "plan")[-1]  # STATUS, as the plan sees it
+
+
+def test_status_quotes_whole_words_without_what_the_owner_removed() -> None:
+    """A word cut in half escapes the report's redaction, which knows whole words only: a removed password, say."""
+    secret = "aaaaaa-0bbbbb-cccccc-dddddd-eeeeee-ffffff"
+    sent = [{"id": 7, "created_at": "2026-10-14T00:38:00Z", "text": f"So I won't use example-user / {secret}, ever."}]
+    assert '#7 at 00:38 "So I won\'t use example-user /…"' in context.messages_line(sent, lambda at: at[11:16])
+    removed = context.messages_line(sent, lambda at: at[11:16], lambda text: text.replace(secret, "[removed]"))
+    assert '#7 at 00:38 "So I won\'t use example-user / [removed], ever."' in removed

@@ -1,4 +1,6 @@
-"""Phase 4: the owner's side of the queues, what the agent hears about it, and the kill switch."""
+"""Phase 4: the owner's side of the queues, what the agent hears about it, and the kill switch.
+
+Also tests from 0.12.0 and 0.19.2 (formerly test_small_defects.py, test_fixes_0192.py)."""
 
 from __future__ import annotations
 
@@ -15,8 +17,10 @@ from fastapi.testclient import TestClient
 
 from app import paths
 from app.agent import news, store
+from app.agent.news import News
 from app.agent.owner import Owner, apply_kill_switch_reset, kill
 from app.agent.service import Agent
+from app.economy.clock import to_iso
 from app.economy.life import KILLED_KEY
 from tests.cycle.test_agent import make_agent, plan, rows, text, tools
 from tests.owner.test_owner_api import CSRF, post
@@ -404,3 +408,73 @@ def test_the_default_caps_leave_room_and_a_tight_cycle_cap_is_warned_about(data_
     tight.stop()
     short = make_economy(data_dir, Settings(daily_spend_cap_usd=1, cycle_spend_cap_usd=0.2))
     assert [w for w in short.warnings() if "cycle spend cap" in w][0].endswith("may end right after its plan.")
+
+
+# --- From 0.19.2 (formerly test_fixes_0192.py) ---
+
+
+# --- what the agent hears ------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("executor", "said"),
+    [
+        ("bluesky_post", "Ember's code carries it out and you'll hear the result"),
+        ("pinterest_pin", "Ember's code carries it out and you'll hear the result"),
+        ("site_post", "Ember's code carries it out and you'll hear the result"),
+        ("reddit_link", "Your owner posts it and reports back"),
+        (None, "Your owner will carry it out and report back"),
+    ],
+)
+def test_an_approved_request_says_who_carries_it_out(executor: str | None, said: str) -> None:
+    row = {
+        "id": 45,
+        "type": "publish",
+        "title": "Bluesky: Week 1",
+        "status": "approved",
+        "decision_comment": None,
+        "executor": executor,
+        "final_payload": None,
+        "result_note": None,
+        "result_link": None,
+    }
+    [line] = news.News(decided=[row]).approval_lines()  # type: ignore[list-item]
+    assert line.endswith(f". {said}.")
+
+
+# --- From 0.12.0 (formerly test_small_defects.py) ---
+
+
+def decided(executor: str | None) -> dict[str, Any]:
+    return {
+        "id": 7,
+        "type": "sell",
+        "title": "A listing",
+        "status": "approved",
+        "final_payload": None,
+        "decision_comment": None,
+        "executor": executor,
+        "result_note": None,
+        "result_link": None,
+    }
+
+
+def test_the_agent_hears_who_carries_out_an_approved_request() -> None:
+    lines = News(decided=[decided(e) for e in ("etsy_listing", "etsy_edit", "reddit_link", None)]).approval_lines()
+    assert lines[0].endswith(": approved. Ember's code carries it out in the Etsy shop and you'll hear the result.")
+    assert lines[1].endswith("carries it out in the Etsy shop and you'll hear the result.")
+    assert lines[2].endswith(": approved. Your owner posts it and reports back.")
+    assert lines[3].endswith(": approved. Your owner will carry it out and report back.")
+
+
+def test_every_open_request_is_listed_for_the_owner(data_dir: Path) -> None:
+    agent, _ = make_agent(data_dir, [plan(steps=[], sleep=600)])
+    agent.run_cycle("schedule")
+    now = to_iso(agent.clock.now())
+    fields = {"type": "other", "description": "d", "expected_cost": "none", "expected_benefit": "b"}
+    with agent.db.transaction() as conn:
+        for n in range(35):
+            store.insert_approval(conn, agent.scope(), 1, now, title=f"#{n}", payload=f"p{n}", **fields)
+        conn.execute("UPDATE approvals SET status = 'rejected', decided_at = ? WHERE id > 3", (now,))
+    listed = [a["id"] for a in agent.dashboard()["approvals"]]
+    assert listed[:30] == list(range(35, 5, -1)) and listed[30:] == [3, 2, 1]  # the three oldest still wait

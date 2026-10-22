@@ -3,7 +3,9 @@ Ember's code settles them; the daily review writes a retrospective of each thing
 weekly look reads the whole business, rewrites the strategy and draws principles from the cases, whose confidence
 Ember's code sets; the plan's LESSONS shows that playbook first and the work steps recall the matching cases; an
 independent critic scores a product line's listing; and an ordinary plan gets READY, the useful work while projects
-wait, with no long sleep while it lists something (0.35.0: while the plan tree has a step ready)."""
+wait, with no long sleep while it lists something (0.35.0: while the plan tree has a step ready).
+
+Also tests from 0.23.1 (formerly test_fixes_0231.py)."""
 
 from __future__ import annotations
 
@@ -476,3 +478,48 @@ def test_a_file_etsy_has_attached_already_is_kept_not_deleted() -> None:
         etsy_publisher._replace(
             [11], lambda n, d, r: (_ for _ in ()).throw(NotSent("too big")), deleted.append, [("x", b"")], 5, []
         )
+
+
+# --- From 0.23.1 (formerly test_fixes_0231.py) ---
+
+
+# --- 2. an established principle stays established ---
+
+
+def test_an_established_principle_confirmed_again_stays_established(data_dir: Path) -> None:
+    agent, _ = started(data_dir)
+    scope, stamp = agent.scope(), to_iso(agent.clock.now())
+    with agent.db.transaction() as conn:
+        ids: list[int] = []
+        for i in range(5):
+            retro = {"subject": f"bet #{i}", "expected": "", "happened": "", "why": "Few views.", "cause": "no_reach"}
+            ids += learning.save_cases(conn, scope, None, [{**retro, "sure": "high", "lesson": ""}], [], stamp)
+        # as 0.20.1 left them: two compatible principles citing the same cases, the newer one established
+        for text, supports, level in (
+            ("Listings need reach before they sell.", ids[:2], "hypothesis"),
+            ("Unpromoted Etsy listings get no views.", ids[:3], "established"),
+        ):
+            conn.execute(
+                "INSERT INTO principles (mode, session, text, supports, against, confidence, created_at,"
+                " confirmed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (scope.mode, scope.session, text, json.dumps(supports), "[]", level, stamp, stamp),
+            )
+        said = learning.apply_principles(
+            conn, scope, [{"id": 2, "text": "", "supports": [ids[3]], "against": [], "retire": ""}], set(ids), stamp
+        )
+        assert said == ["principle #2 is established"]
+        # a newer hypothesis citing their cases still isn't promoted by them (0.22.0), only by its own
+        conn.execute(
+            "INSERT INTO principles (mode, session, text, supports, against, confidence, created_at, confirmed_at)"
+            " VALUES (?, ?, 'Reach first.', ?, '[]', 'hypothesis', ?, ?)",
+            (scope.mode, scope.session, json.dumps(ids[:3]), stamp, stamp),
+        )
+        said = learning.apply_principles(
+            conn, scope, [{"id": 3, "text": "", "supports": [ids[4]], "against": [], "retire": ""}], set(ids), stamp
+        )
+        assert said == ["principle #3 is hypothesis"]
+        # and a case against an established one still disputes it
+        said = learning.apply_principles(
+            conn, scope, [{"id": 2, "text": "", "supports": [], "against": [ids[4]], "retire": ""}], set(ids), stamp
+        )
+        assert said == ["principle #2 is disputed"]

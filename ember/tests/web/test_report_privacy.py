@@ -8,7 +8,8 @@ report shows whether observations run, and old texts are pruned.
 - Building the report ran Ember's code's keepers and marked agenda events as having woken the agent.
 - observations wasn't in the report at all.
 - Only the event log was pruned: tool calls' inputs and results and the model's replies grew without limit.
-"""
+
+Tests from 0.15.0 and 0.40.2 (formerly test_fixes_0140_privacy.py, test_fixes_0402.py)."""
 
 from __future__ import annotations
 
@@ -51,6 +52,8 @@ from tests.owner.test_owner_loop import owner  # noqa: E402
 from tests.owner.test_policy import a_milestone  # noqa: E402
 from tests.plan.test_roadmap import JOURNAL as FAKE_JOURNAL  # noqa: E402
 from tests.plan.test_roadmap import plan  # noqa: E402
+from tests.products.test_kdp import publishing  # noqa: E402
+from tests.products.test_kdp_pages import SETTINGS, made, older  # noqa: E402
 
 OWNER_ID = "8f14e45fceea167a5a36dedd4bea2543"  # Home Assistant user IDs are 32 hex digits
 LABEL = f"Felix Beispiel ({OWNER_ID})"  # how web._owner labels the owner's actions
@@ -555,3 +558,25 @@ def test_the_migration_keeps_the_history_and_its_guards(tmp_path: Path) -> None:
     ]
     assert call == 1
     upgraded.close()
+
+
+# --- From 0.40.2 (formerly test_fixes_0402.py) ---
+
+
+# --- 9. the report shows the books' sources ---
+
+
+def test_the_report_shows_the_newest_books_sources_first_from_the_whole_workspace(data_dir: Path) -> None:
+    """Live, the workspace tree stopped after its first 100 entries, by path: the Kassenbuch's source, which the
+    analysis needed, was after them and the report showed none of it."""
+    agent, ctx = publishing(data_dir)
+    jail = ctx.workspace
+    jail.write("books/kassenbuch.md", SETTINGS + "# Kassenbuch 2027\n\nGestaltet von Jane Doe\n")
+    made(ctx, "books/kassenbuch.md", "books/kassenbuch.pdf")
+    older(jail, "books/kassenbuch.md")
+    for n in range(diagnostics.WORKSPACE_ENTRIES + 20):  # before it by path, and newer
+        jail.write(f"books/a-{n:03}.md", f"draft {n}")
+    report = diagnostics.report(state_of(agent), full=True)
+    texts = report.split("-- workspace text files (the newest first)\n", 1)[1]
+    assert texts.startswith("--- books/kassenbuch.md (")
+    assert "# Kassenbuch 2027" in texts and "--- books/a-119.md (" in texts

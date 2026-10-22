@@ -4,7 +4,9 @@ Live, every cycle since 0.12.0 wrote its journal in a work step, which skipped t
 undone calls, wrote lessons or updated the strategy. A cycle the budget guard stopped was recorded as "the plan was
 done", its journal named the refusal that followed the stop, the next plan lost the last handoff, and the owner's
 comment on an approved request was marked seen by the cycle that was stopped. A cycle killed by a restart got no digest.
-"""
+
+Tests from 0.15.0, 0.19.2 and 0.24.0 (formerly test_fixes_0140_continuity.py, test_fixes_0192.py,
+test_fixes_0240.py)."""
 
 from __future__ import annotations
 
@@ -320,3 +322,26 @@ def test_only_the_cycles_killed_since_the_last_one_that_ended_get_records(data_d
     assert rows(fresh, "SELECT cycle_id FROM cycle_digests") == [{"cycle_id": killed}]
     assert rows(fresh, "SELECT cycle_id FROM journal") == [{"cycle_id": killed}]
     assert old < later < killed
+
+
+# --- From 0.19.2 (formerly test_fixes_0192.py) ---
+
+
+def test_the_sleep_ember_s_code_cut_keeps_the_agent_s_choice(data_dir: Path) -> None:
+    from app.agent import loop  # noqa: PLC0415
+
+    end = loop.CycleEnd("completed", sleep_minutes=180, sleep_reason="Nothing until 10-07.")
+    end.asked_minutes, end.sleep_cut = 360, "Ember's code cut it to 180 min: READY lists useful work"
+    agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]))
+    agent._after("schedule", end)
+    assert agent.db.get_meta(agent._key("next_wake_reason")) == (
+        'Ember chose 360 min: "Nothing until 10-07."; Ember\'s code cut it to 180 min: READY lists useful work'
+    )
+
+
+# --- From 0.24.0 (formerly test_fixes_0240.py) ---
+
+
+def test_the_reflection_writes_the_journal_first_without_a_draft() -> None:
+    assert prompts.JOURNAL_FIRST in prompts.reflect_prompt("done")
+    assert prompts.JOURNAL_DRAFTED in prompts.reflect_prompt("done", drafted=True)

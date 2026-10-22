@@ -6,7 +6,8 @@ turn) and which line its tools work on, and the plan sees it as YOUR STEP, under
 owner's goal) in place of READY and the ROADMAP. The owner's decisions on a product's requests are steps taken first,
 like a promise due. Ember changes her plan with plan_step, each change kept with its reason; she can hold a product to
 work elsewhere, but only the owner closes or drops one.
-"""
+
+Tests from 0.35.0, 0.39.1 and 0.39.2 (formerly test_fixes_0350.py, test_fixes_0391.py, test_fixes_0392.py)."""
 
 from __future__ import annotations
 
@@ -19,12 +20,22 @@ import pytest
 
 pytest.importorskip("httpx2")
 
-from app.agent import context, obligations, plan, slack, store, tools, weights  # noqa: E402
+from app.agent import (  # noqa: E402
+    context,
+    obligations,
+    plan,
+    prompts,  # noqa: E402
+    slack,
+    store,
+    tools,
+    weights,
+)
 from app.agent.fake_llm import FakeTransport, Plan, Reply, ToolCalls, request_kind  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from tests.channels.test_etsy import call  # noqa: E402
 from tests.cycle.test_agent import rows  # noqa: E402
 from tests.cycle.test_loop_shapes import run  # noqa: E402
+from tests.cycle.test_rule_audit import SETTINGS, every_channel  # noqa: E402
 from tests.owner.test_owner_loop import owner  # noqa: E402
 from tests.plan.test_cycle_line import lined, now, texts, working  # noqa: E402
 from tests.plan.test_plan_tree import ALL, BOOK, TRACKER, keep, listed, project, request, steps_of, tree  # noqa: E402
@@ -109,7 +120,7 @@ def test_a_marketing_step_makes_a_marketing_cycle(data_dir: Path) -> None:
     marketing = steered(agent)
     assert marketing.kind == "marketing" and marketing.step is not None
     assert marketing.step.title == "This week's pin for Bauhaus posters" and marketing.line == poster
-    # 0.36.0: the ventures' turn retired; the plan's Explore step makes a venture cycle (tests/test_fixes_0360.py)
+    # 0.36.0: the ventures' turn retired; the plan's Explore step makes a venture cycle (tests/plan/test_exploring.py)
     off = steered(agent, channels={"pinterest": False, "bluesky": False, "blog": False})
     assert off.step is None and off.kind == "ordinary"  # the pin waits on a channel that isn't set up
     with agent.db.connection() as conn:
@@ -532,3 +543,120 @@ def test_the_plan_tab_has_each_products_unlocks_and_its_owner_actions(data_dir: 
     assert actions.end_product(product["id"], {"why": "No demand."}, "Stefan", done=False).status == 200
     assert rows(agent, f"SELECT status FROM projects WHERE id = {tracker}") == [{"status": "abandoned"}]
     assert agent.plan()["projects"][0]["products"][0]["status"] == "dropped"
+
+
+# --- From 0.39.1 (formerly test_fixes_0391.py) ---
+
+
+# --- 6. plan_step's step ---
+
+
+def test_plan_step_means_your_step_when_it_names_none(data_dir: Path) -> None:
+    """Live, four calls were refused for naming no step (or the step in ref), each meaning the cycle's own."""
+    agent, _ = lined(data_dir, titles=())
+    tracker = project(agent, *TRACKER)
+    keep(agent)
+    demand = step_id(agent, tracker, "Write the demand note: searches, competitors, prices")
+    assert plan_step(
+        agent, tracker, action="add", step_id=demand, steps=[{"title": "Count the listings", "kind": "create"}]
+    ).ok
+    mine = step_id(agent, tracker, "Count the listings")
+    ctx = working(agent, tracker)
+    ctx.state.step_id = mine  # YOUR STEP
+    itself = call(ctx, "plan_step", {"action": "wait", "on": "step", "ref": mine, "why": "x"})
+    assert not itself.ok and f"step #{mine} can't wait on itself: ref names the other step it waits on" in itself.text
+    done = call(ctx, "plan_step", {"action": "done", "why": "counted 20 listings"})
+    assert done.ok, done.text
+    assert rows(agent, f"SELECT status, result FROM plan_nodes WHERE id = {mine}") == [
+        {"status": "done", "result": "counted 20 listings"}
+    ]
+    ctx.state.step_id = None  # no step taken: one is named, as before
+    nameless = call(ctx, "plan_step", {"action": "done", "why": "counted the listings"})
+    assert not nameless.ok and "name the step (step_id)" in nameless.text
+
+
+def test_the_loop_gives_plan_step_its_cycles_step(data_dir: Path) -> None:
+    agent, fake = lined(data_dir, titles=())
+    tracker = project(agent, *TRACKER)
+    keep(agent)
+    demand = step_id(agent, tracker, "Write the demand note: searches, competitors, prices")
+    assert plan_step(
+        agent, tracker, action="add", step_id=demand, steps=[{"title": "Count the listings", "kind": "create"}]
+    ).ok
+    mine = step_id(agent, tracker, "Count the listings")
+    with agent.db.transaction() as conn:  # the owner's pin: the next cycle's step (the helper's cycle ended)
+        plan.pin(conn, agent.scope(), mine, True, "Owner", now(agent))
+        conn.execute("UPDATE cycles SET status = 'completed', ended_at = ? WHERE status = 'running'", (now(agent),))
+    done = ToolCalls([("plan_step", {"action": "done", "why": "counted 20 listings"})])
+    fake.script.extend([Plan({**WORK, "focus_project_id": tracker}), done, Reply("Done."), JOURNAL])
+    agent.run_cycle("schedule")
+    assert rows(agent, f"SELECT status, closed_by, result FROM plan_nodes WHERE id = {mine}") == [
+        {"status": "done", "closed_by": "agent", "result": "counted 20 listings"}
+    ]
+
+
+# --- From 0.39.2 (formerly test_fixes_0392.py) ---
+
+
+# --- 4. a step for a marketing cycle ---
+
+
+def test_a_steps_kind_says_what_market_is() -> None:
+    request = prompts.work_request(SETTINGS, "brief", [], **every_channel())
+    [spec] = [t for t in request["tools"] if t["name"] == "plan_step"]
+    kind = spec["input_schema"]["properties"]["steps"]["items"]["properties"]["kind"]
+    # 0.39.8: shorter, for the fixed prompt's budget
+    assert kind["description"] == "market: a pin, a post or a blog post (a marketing cycle's tools)."
+    assert "market" in kind["enum"]
+
+
+def test_a_pin_asked_of_the_owner_says_how_a_cycle_without_propose_pin_gets_one(data_dir: Path) -> None:
+    """Live, a cycle without propose_pin asked for the pins with request_approval, then closed their step."""
+    agent, _ = lined(data_dir, titles=())
+    ctx = working(agent)
+    ctx.pinterest = tools.PinterestAccess("ember-dry-run", 3)
+    ctx.marketing_apart = True  # marketing cycles run: an ordinary cycle leaves their tools to them
+    asked = {
+        "type": "publish",
+        "title": "Pins: Haushaltsbuch DE + Budget Planner EN, portrait",
+        "description": "Resubmit both pins as portrait images, replacing #101 and #102.",
+        "payload": "Pinterest pins: shop/pin_haushaltsbuch_de_v2.png -> https://www.etsy.com/listing/1",
+        "expected_cost": "$0",
+        "expected_benefit": "views",
+    }
+    refused = call(ctx, "request_approval", asked)
+    assert not refused.ok
+    assert refused.text.startswith("Error: a pin goes through propose_pin (a marketing cycle's tool)")
+    assert refused.text.endswith(
+        "; this cycle has no propose_pin: plan_step add a step of kind market for it, which a marketing cycle takes."
+    )
+    ctx.marketing = True
+    again = call(ctx, "request_approval", asked)
+    assert not again.ok and "plan_step add" not in again.text  # a marketing cycle has propose_pin
+
+
+# --- 5. a done says what was done ---
+
+
+def test_a_step_said_done_says_what_was_done(data_dir: Path) -> None:
+    """Live, step #157 was closed with the reason "placeholder", its pins unsent."""
+    agent, _ = lined(data_dir, titles=())
+    tracker = project(agent, *TRACKER)
+    keep(agent)
+    demand = step_id(agent, tracker, "Write the demand note: searches, competitors, prices")
+    pictures = [{"title": "Make the two pin pictures", "kind": "create"}]
+    assert plan_step(agent, tracker, action="add", step_id=demand, steps=pictures).ok
+    mine = step_id(agent, tracker, "Make the two pin pictures")
+    ctx = working(agent, tracker)
+    ctx.state.step_id = mine  # YOUR STEP
+    for why in ("placeholder", "done", "  ok  "):
+        refused = call(ctx, "plan_step", {"action": "done", "why": why})
+        assert not refused.ok and refused.text == (
+            "Error: a done says in why what was done, in a few words: one word says nothing."
+        )
+    assert rows(agent, f"SELECT status FROM plan_nodes WHERE id = {mine}") == [{"status": "open"}]
+    done = call(ctx, "plan_step", {"action": "done", "why": "made both pin pictures"})
+    assert done.ok, done.text
+    assert rows(agent, f"SELECT status, result FROM plan_nodes WHERE id = {mine}") == [
+        {"status": "done", "result": "made both pin pictures"}
+    ]

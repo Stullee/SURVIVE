@@ -1,4 +1,6 @@
-"""The live transport against a mocked HTTP layer: every failure maps to the right outcome, nothing is retried."""
+"""The live transport against a mocked HTTP layer: every failure maps to the right outcome, nothing is retried.
+
+Also tests from 0.15.0 (formerly test_fixes_0140_live_fixes.py)."""
 
 from __future__ import annotations
 
@@ -290,3 +292,18 @@ def test_a_files_api_error_is_a_files_error() -> None:
             call()
     with pytest.raises(FilesError, match="uploading notes.md failed"):
         files.upload_file("notes.md", b"x", "text/markdown")
+
+
+# --- From 0.15.0 (formerly test_fixes_0140_live_fixes.py) ---
+
+
+# --- LIVE 4: a server error before the stream opened costs nothing --------------------------------------------------
+
+
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+def test_a_server_error_before_the_stream_is_rejected(status: int) -> None:
+    outcome = transport(Server(error(status, "api_error"))).send(REQUEST)
+    assert isinstance(outcome, Rejected) and outcome.status == status  # the guard books nothing
+    overloaded = {"type": "error", "error": {"type": "api_error", "message": "Internal error"}}
+    late = transport(Server(stream(sse(START, *BLOCK[:2], overloaded)))).send(REQUEST)
+    assert isinstance(late, Interrupted)  # after the stream opened: the cost is unknown

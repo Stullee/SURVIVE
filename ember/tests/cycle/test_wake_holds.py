@@ -11,7 +11,8 @@ C4. A model's thinking settings come from one table (pricing.THINKING_MODES), wh
     model's checks both follow: Claude Sonnet 5.5 gets "between_tools", never the "disabled" it refuses.
 C5. A research search that pauses again after its one continuation says that its answer may be partial.
 C6. An email sender that isn't a plain address is JSON-quoted in the agenda's lines, as MAIL quotes it.
-"""
+
+Tests from 0.40.3 (formerly test_fixes_0403_cycle.py)."""
 
 from __future__ import annotations
 

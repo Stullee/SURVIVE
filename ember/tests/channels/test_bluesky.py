@@ -2,7 +2,9 @@
 a page of the owner's website, one of its pictures); the owner approves it as it is; Ember's code posts it once,
 journaled, with a line saying an AI wrote it, and the owner's Undo deletes it; the sync reads the account's followers
 and the posts' numbers for the plan, the metrics and the reach. The live client is tested against a mocked Bluesky;
-nothing reaches Bluesky in a dry run."""
+nothing reaches Bluesky in a dry run.
+
+Also tests from 0.24.0 and 0.32.0 (formerly test_fixes_0240.py, test_fixes_0320.py)."""
 
 from __future__ import annotations
 
@@ -44,6 +46,7 @@ from app.integrations.bluesky_connection import BlueskyConnection  # noqa: E402
 from app.integrations.bluesky_live import LiveAccount, _Allowlist, allowed  # noqa: E402
 from app.logging_setup import redact  # noqa: E402
 from app.products import images  # noqa: E402
+from tests.channels import test_bluesky  # noqa: E402
 from tests.channels.test_etsy import Etsy, call, market_next, shop_context, views_approval  # noqa: E402
 from tests.cycle.test_agent import ROOMY, rows  # noqa: E402
 from tests.cycle.test_loop_shapes import run  # noqa: E402
@@ -752,3 +755,45 @@ def test_nothing_is_offered_or_made_while_bluesky_is_off(data_dir: Path) -> None
     work = next(r for r in fake.sent if request_kind(r) == "work")
     assert not {t["name"] for t in work["tools"]} & tools.BLUESKY_TOOLS
     assert agent.execute_approved() == []
+
+
+# --- From 0.24.0 (formerly test_fixes_0240.py) ---
+
+
+# --- Bluesky: never the same post twice ---------------------------------------------------------------------------
+
+
+def test_a_post_that_repeats_a_live_one_is_refused(data_dir: Path) -> None:
+    agent, _, _ = posted(data_dir)
+    ctx = post_context(agent)
+    again = a_post(agent, ctx, text=f"{WORDS} #Neu")  # live, #50 was #47 with a hashtag more
+    assert not again.ok and "it says what your post " in again.text and "never the same post twice" in again.text
+    assert a_post(agent, ctx, text="Bewerbungstipp: Nach zwei Wochen freundlich nachfragen. #Bewerbung").ok
+    assert bluesky.same_words(
+        "Ein Tipp für Vermieter.\n\n🤖 Written by an AI, approved by a human.", "Ein Tipp für Vermieter!"
+    )
+    assert not bluesky.same_words("Ein Tipp für Vermieter.", "Ein Tipp für Mieter, ganz anders.")
+
+
+# --- From 0.32.0 (formerly test_fixes_0320.py) ---
+
+
+# --- 2. an English post has the room its own AI line leaves ----------------------------------------------------------
+
+
+def test_an_english_post_has_the_room_its_ai_line_leaves_and_a_german_one_hears_by_how_much(data_dir: Path) -> None:
+    assert bluesky.WORDS_CHARS == {"de": 239, "en": 258}
+    [spec] = [d for d in tools.definitions(etsy=True, bluesky=True) if d["name"] == "propose_bluesky_post"]
+    field = spec["input_schema"]["properties"]["text"]
+    assert field["maxLength"] == 258  # the room of the English line; the guide says both
+    assert "the words alone have 258 in English and 239 in German" in tools.guide_text("bluesky").replace("\n   ", " ")
+    agent, _ = test_bluesky.listed(data_dir)
+    ctx = test_bluesky.post_context(agent)
+    words = "x" * 250
+    german = test_bluesky.a_post(agent, ctx, text=words, language="de", link=None)
+    assert not german.ok and "would be 311 characters with the AI line Ember's code adds" in german.text, german.text
+    assert "shorten your words by 11" in german.text
+    english = test_bluesky.a_post(agent, ctx, text=words, language="en")  # live: "text is too long: 250 of 239"
+    assert english.ok, english.text
+    too_long = test_bluesky.a_post(agent, ctx, text="y" * 259, language="en")
+    assert not too_long.ok and "text is too long: 259 of 258 characters" in too_long.text, too_long.text

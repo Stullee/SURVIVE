@@ -7,7 +7,8 @@ solely by the plan". Now a Ventures project in the plan tree holds one Explore s
 owner sets its worth, pins it or holds it; a venture cycle that finds nothing to do leaves it waiting until tomorrow.
 The owner's "no title or tag edits before 10-20", a sentence the plan and the critic never read, is a freeze Ember's
 code keeps, and a hold says whose it is.
-"""
+
+Tests from 0.36.0 (formerly test_fixes_0360.py)."""
 
 from __future__ import annotations
 
@@ -73,16 +74,7 @@ def test_the_rebuilt_tree_keeps_its_nodes_and_an_existing_hold_is_embers(tmp_pat
     conn.commit()
     conn.close()
     assert migrate(db_file, discover_migrations(), backup_dir=tmp_path / "backups") == [
-        89,
-        90,
-        91,
-        92,
-        93,
-        94,
-        95,
-        96,
-        97,
-        98,
+        m.version for m in discover_migrations() if m.version > 88
     ]
     conn = sqlite3.connect(db_file)
     conn.row_factory = sqlite3.Row
@@ -141,15 +133,7 @@ def test_the_current_instructions_become_the_first_rules_one_a_paragraph_or_a_li
     conn.commit()
     conn.close()
     assert migrate(db_file, discover_migrations(), backup_dir=tmp_path / "backups") == [
-        90,
-        91,
-        92,
-        93,
-        94,
-        95,
-        96,
-        97,
-        98,
+        m.version for m in discover_migrations() if m.version > 89
     ]
     conn = sqlite3.connect(db_file)
     conn.row_factory = sqlite3.Row

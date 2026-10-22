@@ -12,7 +12,8 @@ paying.
 * A draft append past 64 KB was paid for, then thrown away; a workshop folder four levels deep likewise. Both are
   refused before the call now, and a paid draft that still doesn't fit is kept in a file of its own.
 * A long library document went on being studied (and paid for) after its 60 learnings were full.
-"""
+
+Tests from 0.15.0 and 0.39.6 (formerly test_fixes_0140_caps_modes.py, test_fixes_0396.py)."""
 
 from __future__ import annotations
 
@@ -38,6 +39,7 @@ from tests.economy_helpers import START, ScriptedTransport, make_economy, messag
 from tests.learning.test_library import add
 from tests.learning.test_review import next_day
 from tests.owner.test_owner_loop import owner
+from tests.plan.test_cycle_line import lined
 from tests.plan.test_roadmap import planner_texts, section
 from tests.tools.test_draft import DRAFT, notes
 from tests.ventures.test_knowledge_parts import context_of
@@ -464,3 +466,47 @@ def test_the_migration_keeps_the_cycles_and_the_library(data_dir: Path) -> None:
             " ('live', 0, 'Again', 100, 1, 'sha2', '2026-09-30T00:00:00Z')"
         )
     conn.close()
+
+
+# --- From 0.39.6 (formerly test_fixes_0396.py) ---
+
+
+# --- 3. the owner's day keeps half of the cap until 08:00 ---
+
+
+def at_hour(agent: Agent, hour: int) -> None:
+    local = agent.clock.now().astimezone(agent.clock.tz)
+    ahead = (hour - local.hour) % 24 or 24
+    agent.clock.advance(hours=ahead, minutes=-local.minute)
+
+
+def test_until_eight_a_scheduled_cycle_leaves_half_the_cap_for_the_owners_day(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent, _ = lined(data_dir, titles=())
+    settings, clock = agent.settings, agent.clock
+    daily = metering.usd_cap_to_micros(settings.daily_spend_cap_usd)
+    at_hour(agent, 3)
+    assert metering.night(clock)
+    assert metering.event_reserve(settings, clock, "schedule") == int(daily * metering.NIGHT_RESERVE_SHARE)
+    assert metering.event_reserve(settings, clock, "owner") == 0  # the owner's own wake spends what it needs
+    spent = daily // 2 + 100_000  # more than the night's half: the next scheduled cycle waits for the morning
+    monkeypatch.setattr(agent.economy.books, "cap_spend_on", lambda scope, day: spent)
+    agent._set_time("next_wake_at", clock.now() - timedelta(minutes=1))
+    decision = agent.decide()
+    assert not decision.run and decision.reason == "Half of the daily cap is kept for your day until 8:00"
+    assert decision.wait_until == clock.at(clock.today(), metering.MORNING_HOUR)
+    at_hour(agent, 9)  # the morning: a fifth is kept for events until 20:00, the rest is the day's
+    assert not metering.night(clock)
+    assert metering.event_reserve(settings, clock, "schedule") == int(daily * metering.EVENT_RESERVE_SHARE)
+    assert agent.decide().trigger == "schedule"
+
+
+def test_the_nights_half_is_kept_with_event_wake_ups_off_too(data_dir: Path) -> None:
+    agent, _ = lined(data_dir, titles=())
+    settings = agent.settings.model_copy(update={"wake_on_events": False, "wake_on_decision": False})
+    daily = metering.usd_cap_to_micros(settings.daily_spend_cap_usd)
+    at_hour(agent, 23)
+    assert metering.event_reserve(settings, agent.clock, "schedule") == 0
+    at_hour(agent, 2)
+    assert metering.event_reserve(settings, agent.clock, "schedule") == int(daily * metering.NIGHT_RESERVE_SHARE)

@@ -8,7 +8,8 @@
 4. W3: GET /api/site/download records nothing: the dashboard records the download it saved with a POST.
 5. W4: an options.json nested too deep starts safe mode instead of stopping the container.
 6. No GET route writes to the database.
-"""
+
+Tests from 0.40.3 (formerly test_fixes_0403_report.py)."""
 
 from __future__ import annotations
 

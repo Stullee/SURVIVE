@@ -7,28 +7,34 @@ one page drawn fresh with pypdfium2 at 600 pixels wide, about $0.19 a run, then 
 Now propose_kdp_book's check draws one page of each kind itself, free, measures every page (rows to write in, white
 space, the calendar, the AI line) and lists what to check with the owner's last words; a paperback is proposed only in
 a later reply of the cycle that checked that very file, with qa, which the owner reads on the request.
-"""
+
+Also tests from 0.40.1 and 0.40.2 (formerly test_fixes_0401.py, test_fixes_0402.py)."""
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
+import os
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
+import pypdfium2
 import pytest
+from docx import Document
 from fpdf import FPDF
 from PIL import Image
 
 from app.agent import loop, tools
 from app.agent.sandbox import Jail
 from app.integrations import kdp
-from app.products import make, markup, pagecheck, pdf
+from app.products import make, markup, pagecheck, pdf, word
 from tests.channels.test_etsy import call
 from tests.cycle.test_agent import rows
 from tests.owner.test_owner_loop import owner
 from tests.products.test_kdp import front, next_reply, project, publishing
+from tests.products.test_kdp import project as book_line
 
 SETTINGS = "---\npage: 6x9\nmargin: 16\nsize: 12.5\nline_height: 1.15\ntable: grid\nfooter: Seite {page}\n---\n\n"
 AI_LINE = "Dieses Buch wurde mit Hilfe von KI erstellt und vor der Veröffentlichung geprüft."
@@ -359,3 +365,242 @@ def test_the_tool_the_guide_and_the_fixed_prompt() -> None:
     assert "A paperback's check also draws its pages fresh, one of each kind (or pages: '6, 83')" in flat
     assert "with qa: what you saw on its pages, point by point. Old pictures or checklists are no check." in flat
     assert "propose_kdp_book's check draws a paperback's pages" in " ".join(tools.guide_text("workshop").split())
+
+
+# --- From 0.40.1 (formerly test_fixes_0401.py) ---
+
+
+# --- 1. the check draws a week ---
+
+
+def planner(weeks: int = 4) -> str:
+    """A planner like the Haushaltsbuch: one-off pages first (a title page, the year, its goals, the quarters), then a
+    month and its weeks, and the AI line alone on the last page."""
+    year = "# Jahresübersicht 2027\n\n| Monat | Einnahmen | Ausgaben |\n|---|---|---|\n" + "| | | |\n" * 12
+    goals = "## Finanzielle Jahresziele 2027\n\n**Ziel 1:**\n::: lines 3\n\n**Ziel 2:**\n::: lines fill\n"
+    quarters = "## Sparziele pro Quartal\n\n| Quartal | Sparziel |\n|---|---|\n" + "| | |\n" * 4
+    quarters += "\n**Notizen**\n::: lines fill\n"
+    first = date(2027, 1, 4)
+    pages = ["# Haushaltsbuch 2027\n\nDein Jahr im Überblick\n", year, goals, quarters, month("Januar")]
+    pages += [week(n, first + timedelta(days=7 * (n - 1)), "::: lines fill") for n in range(1, weeks + 1)]
+    return SETTINGS + "\n::: pagebreak\n\n".join([*pages, AI_LINE])
+
+
+def test_a_check_draws_a_week_before_the_one_off_pages() -> None:
+    """Live (analysis-0.40.0, 3.3): of the Haushaltsbuch's 84 pages a check drew 1 to 5 and 83: the two marked pages,
+    then the kinds in the order they first appear. The week, 53 of its pages, wasn't drawn."""
+    checked = pagecheck.check(rendered(planner()))
+    weeks = next(numbers for numbers in checked.kinds if len(numbers) == 4)
+    last = len(checked.pages)
+    assert len(checked.kinds) + 1 > pagecheck.PAGES_SHOWN  # more kinds than a check draws
+    assert {1, last} <= {p.number for p in checked.pages if p.blank_share > pagecheck.BLANK_SHARE}  # title, AI page
+    assert weeks[0] in checked.shown  # the week, first
+    assert {1, last} <= set(checked.shown)  # then what is marked
+    assert len(checked.shown) == pagecheck.PAGES_SHOWN
+
+
+def test_a_book_with_few_kinds_draws_one_of_each_as_before() -> None:
+    checked = pagecheck.check(rendered(SETTINGS + "\n::: pagebreak\n\n".join(["# Titel", AI_LINE, month("Januar")])))
+    assert checked.shown == [1, 2, 3]
+
+
+# --- 1. the AI line under writing lines ---
+
+
+def test_the_ai_line_under_writing_lines_is_not_alone() -> None:
+    """The AI line on a last page of writing lines holds few words, but the page is full: not "little else"."""
+    lined = SETTINGS + "# Titel\n\n::: pagebreak\n\n## Ziele für 2028\n::: lines 12\n\n---\n\n" + AI_LINE
+    checked = pagecheck.check(rendered(lined))
+    page = checked.pages[-1]
+    assert checked.ai_pages == [page.number] and page.words < pagecheck.ALONE_WORDS
+    said = "\n".join(checked.measures())
+    assert f"AI line: page {page.number}; page {page.number}, the last page, has {page.words} words." in said
+    alone = pagecheck.check(rendered(SETTINGS + "# Titel\n\n::: pagebreak\n\n" + AI_LINE))
+    assert "little else." in "\n".join(alone.measures())  # alone on its page, it still is
+
+
+# --- 2. room for two checks ---
+
+
+def test_a_cycle_has_room_for_two_checks_and_its_work() -> None:
+    """Live, four of the five cycles on the KDP book reached 64,000 bytes before they proposed it, and a check (six
+    pages of 2,700 bytes each and up to 4,000 characters of text) takes about 20,000 of it."""
+    check = pagecheck.PAGES_SHOWN * 2_700 + tools.MAX_RESULT_CHARS
+    needed = 64_000 - 10_000 + 2 * check  # what the cycles spent before a check, and two checks
+    assert needed <= loop.MAX_CONVERSATION_BYTES
+
+
+# --- 3. the check names the file the PDF was made from ---
+
+
+def made(ctx: tools.ToolContext, source: str, output: str) -> None:
+    """A PDF made as the agent makes one: with the make_document tool."""
+    done = call(ctx, "make_document", {"source": source, "output": output, "word": False, "pictures": False})
+    assert done.ok, done.text
+
+
+def older(jail: Jail, path: str) -> None:
+    """``path`` written an hour earlier than it was."""
+    file = jail.root / path
+    os.utime(file, (file.stat().st_mtime - 3_600, file.stat().st_mtime - 3_600))
+
+
+def test_the_check_says_what_the_interior_was_made_from(data_dir: Path) -> None:
+    """Live (analysis-0.40.0, 3.2), the PDFs v19 to v22 were all made from v18.md, the spec still named v15.pdf (the
+    book the owner rejected), and each cycle on the book spent its first steps finding out which file the book was."""
+    agent, ctx = publishing(data_dir)
+    jail = ctx.workspace
+    spec = book(jail, haushaltsbuch(weeks=21), "books/hb-v15", project(agent))
+    assert "Made with make_document" not in check(ctx, spec).text  # a PDF made otherwise: no source known
+    made(ctx, "books/hb-v15.md", "books/hb-v15.pdf")
+    text = jail.read("books/hb-v15.md")
+    [row] = rows(agent, "SELECT path, source, source_sha256 FROM made_pdfs")
+    assert row == {
+        "path": "books/hb-v15.pdf",
+        "source": "books/hb-v15.md",
+        "source_sha256": hashlib.sha256(text.encode()).hexdigest(),
+    }
+    assert "Made with make_document from books/hb-v15.md (unchanged since)." in check(ctx, spec).text
+    jail.write("books/hb-v15.md", text + "\nNoch eine Zeile.\n")
+    changed = check(ctx, spec).text
+    assert "Made with make_document from books/hb-v15.md (changed since: make_document it again" in changed
+
+
+def test_the_pdf_itself_names_no_workspace_file(data_dir: Path) -> None:
+    """What the PDF was made from is kept in the database: the files Ember makes go to buyers and to KDP as they are."""
+    _, ctx = publishing(data_dir)
+    ctx.workspace.write("shop/cv.md", SETTINGS + "# Lebenslauf\n")
+    made(ctx, "shop/cv.md", "shop/cv.pdf")
+    document = pypdfium2.PdfDocument(ctx.workspace.read_bytes("shop/cv.pdf"))
+    try:
+        metadata = document.get_metadata_dict()
+    finally:
+        document.close()
+    assert not any("shop/" in str(value) or "sha256" in str(value) for value in metadata.values())
+
+
+def test_the_check_names_a_newer_pdf_of_the_same_book(data_dir: Path) -> None:
+    agent, ctx = publishing(data_dir)
+    jail = ctx.workspace
+    spec = book(jail, haushaltsbuch(weeks=21), "books/hb-v15", project(agent))
+    made(ctx, "books/hb-v15.md", "books/hb-v15.pdf")
+    older(jail, "books/hb-v15.pdf")
+    assert "is newer than" not in check(ctx, spec).text  # nothing newer yet
+    jail.write("books/other.md", SETTINGS + "# Ein anderes Buch\n")
+    made(ctx, "books/other.md", "books/other.pdf")
+    assert "is newer than" not in check(ctx, spec).text  # another book's PDF is no newer version of this one
+    made(ctx, "books/hb-v15.md", "books/haushaltsbuch-final.pdf")  # made from the same file, named otherwise
+    said = check(ctx, spec).text
+    assert "books/haushaltsbuch-final.pdf (" in said
+    assert ") is newer than books/hb-v15.pdf: if it is the book, set the spec's manuscript to it." in said
+
+
+def test_a_pdf_made_before_0401_is_known_by_its_name(data_dir: Path) -> None:
+    """The live book's PDFs were made before 0.40.1, which kept no source: but v22.pdf is v15.pdf's name but for its
+    version."""
+    agent, ctx = publishing(data_dir)
+    jail = ctx.workspace
+    spec = book(jail, haushaltsbuch(weeks=21), "books/hb-v15", project(agent))
+    older(jail, "books/hb-v15.pdf")
+    data, _ = pdf.render(markup.parse(jail.read("books/hb-v15.md")))
+    jail.write_bytes("books/hb-v22.pdf", data)  # no record of what it was made from
+    assert not rows(agent, "SELECT id FROM made_pdfs")
+    assert ") is newer than books/hb-v15.pdf: if it is the book" in check(ctx, spec).text
+
+
+# --- From 0.40.2 (formerly test_fixes_0402.py) ---
+
+
+# --- 4. placeholders ---
+
+KASSE = "# Kassenbuch 2027\n\nGestaltet von [Verlag/Herausgeber]\n\n- [ ] Belege sortiert\n- [x] Konto geprüft\n\n"
+
+
+def test_a_placeholder_the_pages_print_is_found_and_a_box_or_a_notes_number_is_none() -> None:
+    """Live, the Kassenbuch's last page printed "Gestaltet von [Verlag/Herausgeber]", and its check found nothing."""
+    source = SETTINGS + KASSE + "Siehe Anmerkung [1].\n\n" + AI_LINE + "\n"
+    checked = pagecheck.check(rendered(source), language="German")
+    assert checked.placeholders == ["page 1: [Verlag/Herausgeber]"]
+    assert "a placeholder printed: page 1: [Verlag/Herausgeber]" in checked.findings()
+    assert "Placeholders printed (replace each with real words): page 1: [Verlag/Herausgeber]." in checked.measures()
+    clean = pagecheck.check(rendered(source.replace("[Verlag/Herausgeber]", "Jane Doe")), language="German")
+    assert clean.placeholders == [] and clean.findings() == []
+    assert "Placeholders: none (no [words in brackets], Lorem ipsum or TODO)." in clean.measures()
+    unfinished = pagecheck.check(rendered(SETTINGS + "Lorem ipsum dolor sit amet.\n\nPreis: TODO\n"))
+    assert [p.split(": ", 1)[1] for p in unfinished.placeholders] == ["Lorem ipsum", "TODO"]
+
+
+def test_a_book_that_prints_a_placeholder_is_never_proposed(data_dir: Path) -> None:
+    agent, ctx = publishing(data_dir)
+    unfilled = haushaltsbuch(weeks=21).replace("Dein Jahr im Überblick", "Gestaltet von [Verlag/Herausgeber]")
+    path = book(ctx.workspace, unfilled, "books/hb", book_line(agent))
+    checked = check(ctx, path)
+    assert "Placeholders printed (replace each with real words): page 1: [Verlag/Herausgeber]." in checked.text
+    next_reply(ctx)
+    refused = propose(ctx, path, QA)
+    assert not refused.ok
+    assert (
+        "books/hb.pdf prints a placeholder (page 1: [Verlag/Herausgeber]): write the real words in its source, or take"
+        " the sentence out, make it again and check it" in refused.text
+    )
+    book(ctx.workspace, haushaltsbuch(weeks=21), "books/hb", book_line(agent))
+    assert "Placeholders: none" in check(ctx, path).text
+    next_reply(ctx)
+    assert propose(ctx, path, QA).ok
+
+
+# --- 5. a table's widths ---
+
+LONG = "| Nr. | Datum | Beleg-Nr. | Text | Einnahme | Ausgabe | Bestand |"
+
+
+SHORT = "| Nr. | Datum | Beleg | Text | Ein € | Aus € | Bestand |"
+
+
+EVEN = "|---|---|---|---|---|---|---|"
+
+
+SHARED = "|---|----|----|------------|----|----|----|"
+
+
+def cash_book(header: str, dashes: str, page: str = "6x9", rows_: int = 12) -> markup.Document:
+    """Two Kassenblatt pages as the agent set them: a table to fill in on each."""
+    table = f"{header}\n{dashes}\n" + "| | | | | | | |\n" * rows_
+    return markup.parse(SETTINGS.replace("6x9", page) + f"## Januar\n\n{table}\n::: pagebreak\n\n{table}")
+
+
+def tables(document: markup.Document) -> list[markup.Table]:
+    return [b for b in document.main if isinstance(b, markup.Table)]
+
+
+def test_dashes_of_unequal_length_share_out_a_tables_width() -> None:
+    [even] = tables(markup.parse("| Nr. | Text | Betrag |\n|---|---|---|\n| | | |\n"))
+    assert even.widths is None  # by what the columns hold, as before
+    [shared] = tables(markup.parse("| Nr. | Text | Betrag |\n|:---|------------|---:|\n| | | |\n"))
+    assert shared.widths == [3 / 18, 12 / 18, 3 / 18] and shared.align == ["left", "left", "right"]
+    with pytest.raises(markup.DocumentError):
+        markup.parse("| Nr. | Text |\n|--|---|\n| | |\n")  # each column 3 dashes at least, as before
+
+    def word_widths(document: markup.Document) -> list[float]:
+        table = Document(io.BytesIO(word.render(document))).tables[0]
+        return [round(cell.width.mm) for cell in table.rows[0].cells]
+
+    before, after = word_widths(cash_book(SHORT, EVEN)), word_widths(cash_book(SHORT, SHARED))
+    assert after[3] >= 2 * before[3] and after[3] == max(after)  # the Word copy as the PDF: Text takes the width
+
+
+def test_a_books_narrow_column_to_write_words_in_is_named() -> None:
+    """Live, the Kassenbuch's "Text", where each entry is described, was 12 mm on 48 pages."""
+    _, report = pdf.render(cash_book(LONG, EVEN))
+    [narrow] = [w for w in report.warnings if "narrow" in w]
+    assert narrow.startswith(
+        "a column to write in is narrow: 'Text' 12 mm (Nr. 10, Datum 16, Beleg-Nr. 21, Text 12, Einnahme 23, Ausgabe"
+        " 20, Bestand 19 mm) on pages 1, 2: give it the width with shorter words in the other columns' headers"
+    )
+    assert "(|---|----|------------|)" in narrow
+    _, fixed = pdf.render(cash_book(SHORT, SHARED))
+    assert not [w for w in fixed.warnings if "narrow" in w]
+    _, a4 = pdf.render(cash_book(LONG, EVEN, page="A4"))
+    assert not [w for w in a4.warnings if "narrow" in w]  # only a book is checked
+    assert "dashes of unequal length share out the width" in tools.guide_text("documents")
+    assert "Give a column for words (Text, Ziel) its width" in tools.guide_text("kdp")

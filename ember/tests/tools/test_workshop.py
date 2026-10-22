@@ -3,7 +3,9 @@ an upgrade request.
 
 The model calls go through the dry-run fake, which also emulates the Files API in memory; a scripted Raw answer
 stands for the code execution run, with the files it "left in $OUTPUT_DIR".
-"""
+
+Also tests from 0.15.0, 0.24.0 and 0.39.2 (formerly test_fixes_0140_live_fixes.py, test_fixes_0240.py,
+test_fixes_0392.py)."""
 
 from __future__ import annotations
 
@@ -806,3 +808,124 @@ def test_the_workshop_can_use_its_own_model() -> None:
 def test_the_workshop_tool_and_guide_fit() -> None:
     assert "workshop" in tools.GUIDES and len(tools.guide_text("workshop")) <= tools.MAX_RESULT_CHARS
     assert tools.SPECS["request_upgrade"].fields["workshop_script"].required is False
+
+
+# --- From 0.15.0 (formerly test_fixes_0140_live_fixes.py) ---
+
+
+# --- LIVE 2: a run that brought back only its script ----------------------------------------------------------------
+
+
+def test_a_workshop_run_with_only_its_script_back_is_not_ok() -> None:
+    script = "workshop/scripts/render-a-print-ready-7.py"
+    run_ = workshop.Run(
+        task="Render a poster",
+        script_used=None,
+        inputs=[],
+        kept=[(script, 4_096)],
+        script_path=script,
+        answer="Saved shop/posters/bauhaus_geometric_no1.png (4961 x 7016) and a preview.png.",
+        cost=893_929,
+    )
+    ok, text, summary = workshop.report(run_, lambda source, body: body)
+    assert not ok and workshop.made(run_) == []
+    assert "Only the script came back (bauhaus_geometric_no1.png, preview.png didn't)" in text
+    assert "every file must be saved into $OUTPUT_DIR" in text and summary.endswith("only its script")
+    run_.kept.append(("workshop/out/poster.png", 150_000))
+    ok, text, _ = workshop.report(run_, lambda source, body: body)
+    assert ok and "Only the script" not in text
+
+
+def test_a_refused_file_is_not_reported_as_lost() -> None:
+    script = "workshop/scripts/x-1.py"
+    run_ = workshop.Run(
+        task="Render a poster",
+        script_used=None,
+        inputs=["workshop/in/logo.png"],
+        kept=[(script, 900)],
+        refused=[("poster.png", "larger than 40 MP")],
+        script_path=script,
+        answer="Used logo.png. Saved poster.png to $OUTPUT_DIR/poster.png",
+        cost=890_000,
+    )
+    ok, text, _ = workshop.report(run_, lambda source, body: body)
+    assert not ok and "Not kept: poster.png: larger than 40 MP." in text and "Only the script" not in text
+    run_.refused.clear()
+    run_.answer += " and $OUTPUT_DIR/thumb.png, thumb.png"
+    _, text, _ = workshop.report(run_, lambda source, body: body)
+    assert "Only the script came back (poster.png, thumb.png didn't)" in text  # names, once each; no input
+
+
+def test_the_task_says_files_go_into_the_output_folder() -> None:
+    prompt = workshop.Workshop._prompt("Save as shop/posters/a.png", [], None)
+    assert "save it by its file name at the top of $OUTPUT_DIR (e.g. $OUTPUT_DIR/x.png), or it is lost." in prompt
+
+
+# --- From 0.24.0 (formerly test_fixes_0240.py) ---
+
+
+# --- the workshop: a kept script gets its files again; a file the task names must be handed over ----------------------
+
+
+def test_a_kept_script_run_again_without_files_gets_its_first_run_s_files(data_dir: Path) -> None:
+    agent, fake = workshop_cycle(
+        data_dir,
+        {"script.py": b"print(1)\n", "chart.png": png()},
+        {"task": "Make a price chart: chart.png.", "files": "data/prices.csv"},
+        before=lambda agent: agent.roots()[0].write("data/prices.csv", "shop,price\nA,4.5\n"),
+    )
+    [first] = rows(agent, "SELECT script_path FROM workshop_runs")
+    ids = [fake._new_file("chart.png", png(), True), fake._new_file("script.py", b"print(2)\n", True)]
+    again = {"task": "Again, with the new prices.", "script": first["script_path"]}
+    fake.script.extend([Plan(PLAN), ToolCalls([("workshop", again)]), workshop_answer(ids), Reply("Done."), JOURNAL])
+    agent.run_cycle("schedule")
+    second = rows(agent, "SELECT inputs FROM workshop_runs ORDER BY id")[1]
+    assert json.loads(second["inputs"]) == ["data/prices.csv", first["script_path"]]
+    answer = rows(agent, "SELECT result FROM tool_calls WHERE tool = 'workshop' ORDER BY id")[1]["result"]
+    assert "Handed over with the script, as its first run had them: data/prices.csv." in answer
+
+
+def test_a_task_that_names_a_file_it_doesn_t_hand_over_is_refused_before_it_is_paid(data_dir: Path) -> None:
+    task = "Match the look of 'shop/cover.png' (light grey, navy title): cover-v2.png, 1000 x 750 pixels."
+    fake = FakeTransport(script=[Plan(PLAN), ToolCalls([("workshop", {"task": task})]), Reply("Done."), JOURNAL])
+    agent, _ = run(data_dir, fake, before=lambda agent: agent.roots()[0].write_bytes("shop/cover.png", png()))
+    answer = result(agent)
+    assert answer["status"] == "error"
+    assert "the task names shop/cover.png, which the run can't see: hand it over in files" in answer["result"]
+    assert rows(agent, "SELECT COUNT(*) AS n FROM workshop_runs") == [{"n": 0}]
+    assert not [r for r in fake.sent if r.get("tools") == [prompts.CODE_TOOL]]
+
+
+# --- From 0.39.2 (formerly test_fixes_0392.py) ---
+
+
+def test_the_workshop_says_first_where_it_kept_a_file_its_task_put_elsewhere() -> None:
+    """Live, the helper answered "Files exported", and only the line after it said where the file was."""
+    task = "Read books/haushaltsbuch-v13.md, keep 9 rows a week and write the result to books/haushaltsbuch-v14.md."
+    script = "workshop/scripts/read-the-markdown-file-63.py"
+    run = workshop.Run(
+        task=task,
+        script_used=None,
+        inputs=["books/haushaltsbuch-v13.md"],
+        kept=[("workshop/out/haushaltsbuch-v14.md", 24_728), (script, 2_048)],
+        script_path=script,
+        answer="Done. Files exported: haushaltsbuch-v14.md",
+        cost=101_000,
+    )
+    ok, text, _ = workshop.report(run, lambda source, body: body)
+    lines = text.split("\n")
+    assert ok and lines[:3] == [
+        "Workshop run (cost $0.1010).",
+        "Your task named books/haushaltsbuch-v14.md: the workshop kept it as workshop/out/haushaltsbuch-v14.md (it"
+        " keeps what it makes in its folder, whatever a task says: use that path, or copy the file with"
+        " workspace_write mode copy).",
+        "Done. Files exported: haushaltsbuch-v14.md",
+    ]
+    chart = workshop.Run(
+        task="Make chart.png, 1200 x 800 pixels, from shop/sales.csv.",
+        script_used=None,
+        inputs=["shop/sales.csv"],
+        kept=[("workshop/out/chart.png", 20_000)],
+        answer="Made chart.png.",
+    )
+    assert "Your task named" not in workshop.report(chart, lambda source, body: body)[1]

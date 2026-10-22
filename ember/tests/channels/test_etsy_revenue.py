@@ -2,7 +2,9 @@
 sale counted nowhere (the balance, the runway, the money goal, a venture's earnings) until the owner recorded it by
 hand. Once the owner turns it on, each sync records the revenue of paid orders with Ember's listings, Etsy's fees on
 them and their refunds, as entries made by 'etsy', with the keys of the owner's buttons: an order is recorded once,
-an order the owner recorded stays theirs, and an entry that would kill the agent waits for the owner."""
+an order the owner recorded stays theirs, and an entry that would kill the agent waits for the owner.
+
+Also tests from 0.12.0 (formerly test_small_defects.py)."""
 
 from __future__ import annotations
 
@@ -15,12 +17,18 @@ import pytest
 
 pytest.importorskip("httpx2")
 
+import json  # noqa: E402
+
 from app.config import Settings  # noqa: E402
 from app.db import Database, discover_migrations, migrate  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from app.integrations import etsy, etsy_publisher, etsy_revenue  # noqa: E402
 from tests.channels.test_etsy import listed  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
+from tests.cycle.test_agent import (  # noqa: E402
+    make_agent,
+    plan,
+    rows,  # noqa: E402
+)
 from tests.economy_helpers import owner as owner_entry  # noqa: E402
 
 LISTING = 900_000_001
@@ -262,3 +270,25 @@ def test_the_ledger_keeps_its_rows_and_takes_etsys_numbers(tmp_path: Path) -> No
         with pytest.raises(sqlite3.IntegrityError, match="append-only"):
             conn.execute("UPDATE ledger SET amount_micros = 1 WHERE id = 5")
     upgraded.close()
+
+
+# --- From 0.12.0 (formerly test_small_defects.py) ---
+
+
+def test_older_orders_still_to_record_keep_their_button(data_dir: Path) -> None:
+    agent, _ = make_agent(data_dir, [plan(steps=[], sleep=600)])
+    scope = agent.scope()
+    with agent.db.transaction() as conn:
+        for n in range(25):
+            day = f"2026-09-{n + 1:02d}T10:00:00Z"
+            status = "paid" if n < 2 else "fully refunded"
+            conn.execute(
+                "INSERT INTO etsy_orders (mode, session, receipt_id, ordered_at, total, total_cents, currency, items,"
+                " synced_at, status) VALUES (?, ?, ?, ?, '4.90 EUR', 490, 'EUR', ?, ?, ?)",
+                (scope.mode, scope.session, 100 + n, day, json.dumps([]), day, status),
+            )
+        orders = etsy_publisher.orders_json(conn, scope)
+    receipts = [o["receipt_id"] for o in orders]
+    assert receipts[:20] == list(range(124, 104, -1)) and receipts[20:] == [101, 100]  # older, but not recorded yet
+    assert all(o["recordable"] for o in orders[20:])
+    assert rows(agent, "SELECT COUNT(*) AS n FROM etsy_orders")[0]["n"] == 25

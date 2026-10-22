@@ -13,7 +13,8 @@
    pushes pushed nothing (repro/plan/r1_launch_never_closes.py); a launch step waiting on a channel that is off did
    the same to the channels that are on (repro/plan/r1b_channel_off.py). Now a launch counts once its first marketing
    is out.
-"""
+
+Tests from 0.39.3 and 0.39.7 (formerly test_fixes_0393.py, test_fixes_0397.py)."""
 
 from __future__ import annotations
 
@@ -260,3 +261,42 @@ def test_a_launch_step_waiting_on_a_channel_that_is_off_keeps_no_weekly_step_fro
         duties(agent, line, ALL)
     )
     assert waits(agent, line, ALL)[PINS] is None
+
+
+# --- From 0.39.7 (formerly test_fixes_0397.py) ---
+
+
+# --- 2. a venture cycle takes no line the owner holds (4.4) ---
+
+
+def test_a_venture_cycle_takes_no_line_the_owner_holds(data_dir: Path) -> None:
+    """The repro: an ordinary cycle was refused a request about a line the owner holds, and a venture cycle filed it."""
+    agent, _ = lined(data_dir, titles=())
+    book = project(agent, *BOOK)
+    tracker = project(agent, *TRACKER)
+    keep(agent)
+    hold(agent, book)
+    ctx = working(agent, one_line=False)  # a venture cycle: it works on no one line
+    ctx.venture = True
+    refused = call(ctx, "request_approval", {**AGAIN, "project_id": book})
+    assert not refused.ok and f"your owner holds product line #{book} ({LATER}): no request for it" in refused.text
+    assert not rows(agent, "SELECT id FROM approvals")  # 0.39.5: request #1, waiting for the owner
+    noted = call(ctx, "project_update", {"project_id": book, "note": "Waits for my owner's word"})
+    assert noted.ok  # its record is kept, as in any cycle
+    reopened = call(ctx, "project_update", {"project_id": book, "status": "active"})
+    assert not reopened.ok and f"your owner holds product line #{book}" in reopened.text
+    asked = call(ctx, "request_approval", {**AGAIN, "project_id": tracker, "payload": "tracker v2"})
+    assert asked.ok and ctx.state.focus_project_id is None  # a line nobody holds: as before, and no line taken
+    assert rows(agent, "SELECT project_id FROM approvals") == [{"project_id": tracker}]
+
+
+def test_a_cycle_on_another_line_hears_that_the_owner_holds_this_one(data_dir: Path) -> None:
+    agent, _ = lined(data_dir, titles=())
+    book = project(agent, *BOOK)
+    tracker = project(agent, *TRACKER)
+    keep(agent)
+    hold(agent, book)
+    refused = call(working(agent, line=tracker), "request_approval", {**AGAIN, "project_id": book})
+    # 0.39.5: "this cycle works on product line #...: no request for project #..., whose work waits for a cycle of
+    # its own", which a held line doesn't get
+    assert not refused.ok and f"your owner holds product line #{book} ({LATER})" in refused.text

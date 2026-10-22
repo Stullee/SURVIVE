@@ -6,7 +6,9 @@ ran it back to back (three failures in a minute, or a refused cycle every round 
 each started a full cycle (two approvals 83 seconds apart: $2.57 in 8 minutes). Maintenance's one cycle a day held
 only after a completed cycle. A waiting request cut the sleep to 60 minutes at the owner's options, not the 240 the
 notes said. And on the days the clocks change, the evening reserve ended at 19:00 or 21:00, and in autumn the scheduler
-decided every second for an hour."""
+decided every second for an hour.
+
+Tests from 0.15.0 (formerly test_fixes_0140_wakes.py)."""
 
 from __future__ import annotations
 

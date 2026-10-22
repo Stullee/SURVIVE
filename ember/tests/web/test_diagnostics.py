@@ -1,11 +1,14 @@
-"""The diagnostics report the owner copies when something looks wrong: complete where it matters, never secret."""
+"""The diagnostics report the owner copies when something looks wrong: complete where it matters, never secret.
+
+Also tests from 0.40.1 (formerly test_fixes_0401.py)."""
 
 from __future__ import annotations
 
 import json
 import re
 from collections.abc import Callable, Iterator
-from datetime import timedelta
+from datetime import date, timedelta
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,12 +16,14 @@ from fastapi.testclient import TestClient
 from app import diagnostics, logging_setup
 from app.agent import plan as plan_tree
 from app.agent import ventures, weights
+from app.agent.sandbox import Jail
 from app.agent.store import canonical
 from app.config import LoadedSettings, Settings
 from app.economy import clock
 from tests.cycle.test_agent import plan, reply, text, tools
 from tests.economy_helpers import ScriptedTransport
 from tests.owner.test_owner_api import post
+from tests.products.test_kdp_pages import week
 
 QUESTION = "Printable meal-planning templates sounds like a good idea, will you create them by image generation"
 # 0.40.3 (analysis-0.40.1 codebase, 7): the app runs on the real clock here and prunes texts older than 30 days at its
@@ -328,3 +333,26 @@ def test_no_text_can_pose_as_a_section_and_the_options_keep_their_secrets(
     assert "abcd1234keystring" not in text and options["etsy_keystring_set"] is True and "etsy_keystring" not in options
     assert "Stefan Beispiel" not in text and options["email_owner_name_set"] is True
     assert "email_owner_name" not in options and options["email_password_set"] is False
+
+
+# --- From 0.40.1 (formerly test_fixes_0401.py) ---
+
+
+# --- 8. the report shows a long file's end ---
+
+
+def test_the_report_shows_a_long_text_file_s_start_and_end(tmp_path: Path) -> None:
+    """Live (analysis-0.40.0, 3.6), the report cut the KDP book's source (27,517 characters) after its 37th week, and
+    its back matter, where the AI line had gone alone onto a page, had to be pieced together from the cycles' reads."""
+    jail = Jail(tmp_path)
+    days = [date(2027, 1, 4) + timedelta(days=7 * n) for n in range(104)]  # two years of weeks: over 20,000 characters
+    weeks = "".join(week(day.isocalendar().week, day, "::: lines fill") for day in days)
+    book = f"# Haushaltsbuch 2027 und 2028\n\n{weeks}\n## Ziele für 2029\n::: lines fill\n"
+    assert len(book) > diagnostics.WORKSPACE_FILE_CHARS
+    jail.write("books/hb.md", book)
+    shown = diagnostics._workspace_texts(jail, jail.walk(10).entries)
+    assert "# Haushaltsbuch 2027 und 2028" in shown and "## Ziele für 2029" in shown  # its start and its end
+    left_out = len(book) - diagnostics.WORKSPACE_FILE_CHARS
+    assert f"… [{left_out:,} characters left out] …" in shown
+    jail.write("notes/short.md", "Short.")
+    assert "Short." in diagnostics._workspace_texts(jail, jail.walk(10).entries)  # a short file whole, as before

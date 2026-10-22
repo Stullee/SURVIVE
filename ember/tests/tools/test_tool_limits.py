@@ -11,7 +11,8 @@ and a journal's closing tags taken off in linear time.
    on, and keeps it as sent: the next step still reads the whole conversation from the prompt cache.
 3. A journal's closing tags were taken off by a pattern that took a run of spaces' length squared (20,000 spaces after a
    field's mark: 0.6 s; 200,000: about a minute).
-"""
+
+Also tests from 0.32.0 (formerly test_fixes_0320.py)."""
 
 from __future__ import annotations
 
@@ -432,3 +433,16 @@ def test_closing_tags_are_taken_off_in_linear_time() -> None:
     assert tools._unclosed("Did it. </entry>\n </parameter>\n") == "Did it."
     assert tools._unclosed("Did it.  ") == "Did it.  " and tools._unclosed("a </b> c") == "a </b> c"
     assert tools._unclosed("</next>") == "" and tools._unclosed(f"x{spaces}") == f"x{spaces}"
+
+
+# --- From 0.32.0 (formerly test_fixes_0320.py) ---
+
+
+def test_the_guides_say_how_often_a_cycle_may_use_a_tool_and_a_cut_off_call_hears_what_fits() -> None:
+    # the fixed prompt has no room for every tool's cap: the guides of the ones the agent met mid-plan say theirs
+    assert "A cycle makes\n  3 spreadsheets at most" in tools.guide_text("spreadsheets")
+    assert "At most 2 posts a cycle." in tools.guide_text("bluesky")
+    assert "At most 2 pins a cycle." in tools.guide_text("pinterest")
+    assert all("{CAP:" not in tools.guide_text(topic) for topic in tools.GUIDES)
+    assert loop.cut_call("workspace_write") == loop.CUT_CALL and "Write a long file in parts" in loop.CUT_CALL
+    assert loop.cut_call("venture_case") == loop.CUT_OTHER and "file" not in loop.CUT_OTHER  # live: told of a file

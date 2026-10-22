@@ -1,5 +1,7 @@
 """The journal is never lost (0.12.0, FIX NOW 11): a cycle whose reflection wrote no journal got "Goal: …" alone, and
-the limit of 4 tool calls per turn skipped a journal that came fifth (live: cycle #35's journal was lost)."""
+the limit of 4 tool calls per turn skipped a journal that came fifth (live: cycle #35's journal was lost).
+
+Also tests from 0.19.2 (formerly test_fixes_0192.py)."""
 
 from __future__ import annotations
 
@@ -46,3 +48,26 @@ def test_a_cycle_without_a_journal_gets_one_from_its_records(data_dir: Path) -> 
     assert lines[2].startswith("Done: workspace_list (")
     assert lines[3] == "Refused, failed or skipped (not done): no_such_tool (error)"
     assert lines[4].startswith("Cost: $")
+
+
+# --- From 0.19.2 (formerly test_fixes_0192.py) ---
+
+
+# --- the model's markup inside a text ------------------------------------------------------------------------------
+
+
+def test_a_journal_s_next_written_inside_its_entry_is_kept_as_its_next(data_dir: Path) -> None:
+    leaked = ToolCalls(
+        [
+            (
+                "write_journal",
+                {
+                    "summary": "Research done",
+                    "entry": 'It went well.</entry>\n<parameter name="next">Check the views on 10-07.</parameter>\n',
+                },
+            )
+        ]
+    )
+    agent, _ = run(data_dir, FakeTransport(script=[plan(steps=["research"]), Reply("Done."), leaked]))
+    [journal] = rows(agent, "SELECT entry, handoff FROM journal")
+    assert (journal["entry"], journal["handoff"]) == ("It went well.", "Check the views on 10-07.")

@@ -14,7 +14,8 @@
 3. A paid test in the plan. A change of a listing in the owner's running paid test (the critic's fix, a listing edit)
    waits ('paid') until the test ends, as propose_etsy_edit refuses it (preconditions.PAID); the line's keep-or-drop
    dates are read once it ends.
-"""
+
+Also tests from 0.39.8 (formerly test_fixes_0398.py)."""
 
 from __future__ import annotations
 
@@ -29,7 +30,7 @@ pytest.importorskip("httpx2")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app.agent import plan, tools, weights, workfiles  # noqa: E402
+from app.agent import paid, plan, store, tools, weights, workfiles  # noqa: E402
 from app.agent.fake_llm import Plan, Reply, ToolCalls  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from tests.channels.test_etsy import call, shop_context  # noqa: E402
@@ -41,10 +42,9 @@ from tests.plan.test_cycle_line import cycle, lined, now, working  # noqa: E402
 from tests.plan.test_marketing_order import CRITIC, critic, launched  # noqa: E402
 from tests.plan.test_owner_holds import LATER, hold, product_of  # noqa: E402
 from tests.plan.test_plan_tree import BOOK, TRACKER, keep, project  # noqa: E402
+from tests.plan.test_review_in_the_plan import held  # noqa: E402
 from tests.plan.test_step_brake import asked, candidate, closed_without_proposing, decided  # noqa: E402
 from tests.plan.test_tree_steers import plan_step, steered, step_id  # noqa: E402
-from tests.test_fixes_0398 import ads, keep_paid  # noqa: E402
-from tests.test_fixes_0402 import held  # noqa: E402
 from tests.tools.test_workshop import workshop_answer  # noqa: E402
 
 # --- 1. your hold, on files too ---
@@ -355,3 +355,89 @@ def test_a_lines_keep_or_drop_dates_wait_for_the_end_of_the_owners_paid_test(dat
 def decide_by(agent: Agent, line: int) -> dict[str, str]:
     [row] = rows(agent, f"SELECT decide_by FROM plan_nodes WHERE level = 'product' AND project_id = {line}")
     return dict(json.loads(row["decide_by"] or "{}"))
+
+
+# --- From 0.39.8 (formerly test_fixes_0398.py) ---
+
+
+# --- 5. the owner's paid test is tracked ---
+
+
+def ads(agent: Agent, listing: int, status: str = "approved_with_changes", named: bool = True) -> int:
+    """The owner's yes to a spend request naming ``listing`` (or none), as #128 was approved: "done starting from
+    now"."""
+    stamp = now(agent)
+    words = f"#{listing} - Coach bundle (4 views)" if named else "the shop's best listings"
+    with agent.db.transaction() as conn:
+        found = store.insert_approval(
+            conn,
+            agent.scope(),
+            1,
+            stamp,
+            type="spend_money",
+            title="Enable Etsy Ads: €1/day for 7 days on top 3 listings",
+            description=f"Please turn on Etsy Ads for these listings only, at a €1/day budget: {words}",
+            payload="Etsy Ads, €1/day budget, 7 days, ~€7 total.",
+            expected_cost="€7",
+            expected_benefit="views",
+        )
+        conn.execute(
+            "UPDATE approvals SET status = ?, decided_at = ?, decision_comment = 'done starting from now' WHERE id = ?",
+            (status, stamp, found),
+        )
+    return found
+
+
+def keep_paid(agent: Agent) -> list[str]:
+    with agent.db.transaction() as conn:
+        return paid.keep(conn, agent.scope(), agent.clock)
+
+
+def test_a_paid_tests_days_come_from_its_words() -> None:
+    assert paid.days_named("Enable Etsy Ads: €1/day for 7 days on top 3 listings") == 7
+    assert paid.days_named("a 14-day test at the minimum budget") == 14
+    assert paid.days_named("Etsy Ads 10 Tage lang") == 10
+    assert paid.days_named("Etsy Ads on the coach bundle") == paid.DEFAULT_DAYS
+
+
+def test_the_owners_yes_to_a_spend_on_embers_listings_is_a_test_shown_in_status_until_it_is_judged(
+    data_dir: Path,
+) -> None:
+    agent, _, listing = launched(data_dir)
+    with agent.db.transaction() as conn:
+        conn.execute("UPDATE etsy_listings SET views = 4 WHERE listing_id = ?", (listing,))
+    request_id = ads(agent, listing)
+    said = keep_paid(agent)
+    start, ends = agent.clock.today(), agent.clock.today() + timedelta(days=7)
+    assert said == [f"Request #{request_id} is a paid test of #{listing} from {start:%m-%d} to {ends:%m-%d}."]
+    assert keep_paid(agent) == []  # once
+    with agent.db.transaction() as conn:
+        conn.execute("UPDATE etsy_listings SET views = 9 WHERE listing_id = ?", (listing,))
+    running = "+5 views (4 to 9) and +0 favorites (0 to 0) on its 1 listing so far"
+    with agent.db.connection() as conn:
+        assert running in paid.status_text(conn, agent.scope(), agent.clock.today())
+    assert f"Paid test (your owner's spend, request #{request_id})" in agent.planner_preview()  # in STATUS
+    agent.clock.advance(days=8)
+    with agent.db.transaction() as conn:
+        conn.execute("UPDATE etsy_listings SET views = 20 WHERE listing_id = ?", (listing,))
+    [ended] = keep_paid(agent)
+    gained = "+16 views (4 to 20) and +0 favorites (0 to 0) on its 1 listing"
+    assert ended == f"The paid test of request #{request_id} ended: {gained}."
+    with agent.db.connection() as conn:
+        shown = paid.status_text(conn, agent.scope(), agent.clock.today())
+    assert f"ended {ends:%m-%d}" in shown and "Judge it now" in shown and "in 7 days" in shown
+    agent.clock.advance(days=paid.SHOWN_DAYS + 1)
+    with agent.db.connection() as conn:
+        assert paid.status_text(conn, agent.scope(), agent.clock.today()) == ""
+
+
+def test_a_spend_that_names_no_listing_of_embers_is_no_paid_test(data_dir: Path) -> None:
+    agent, _, listing = launched(data_dir)
+    ads(agent, listing, named=False)
+    with agent.db.transaction() as conn:
+        store.insert_approval(
+            conn, agent.scope(), 1, now(agent), type="spend_money", title="Ads", description="#123456789 is not ours",
+            payload="x", expected_cost="€1", expected_benefit="views",
+        )  # fmt: skip
+    assert keep_paid(agent) == []
+    assert not rows(agent, "SELECT id FROM paid_tests")

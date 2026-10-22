@@ -1,12 +1,15 @@
 """The owner's library (0.12.0, the owner's request): reference material the owner hands Ember (Etsy's guides to
 listings, titles and tags, for example), studied once and kept as learnings, so it never has to be read or analysed
-again."""
+again.
+
+Also tests from 0.15.0 (formerly test_fixes_0140_channels.py)."""
 
 from __future__ import annotations
 
 import base64
 import io
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -359,3 +362,34 @@ def test_the_report_shows_the_library_but_not_its_texts(ingress_client: TestClie
     assert "long-tail" not in shared and "Use all 13 tags" not in shared
     assert "-- learnings (the newest 20)" in full and "Use all 13 tags on every listing." in full
     assert "long-tail" not in full  # the texts themselves never
+
+
+# --- From 0.15.0 (formerly test_fixes_0140_channels.py) ---
+
+
+APP_JS = Path(__file__).parents[2] / "app" / "web" / "static" / "js" / "app.js"
+
+
+# --- FIX 26j: a library upload's timeout fits its size -------------------------------------------------------------
+
+
+def test_a_library_upload_has_a_timeout_that_fits_its_size() -> None:
+    script = APP_JS.read_text(encoding="utf-8")
+    assert 'request("POST", "api/library", body, { timeout: uploadTimeout(' in script
+    formula = "Math.min(UPLOAD_TIMEOUT_MAX_MS, REQUEST_TIMEOUT_MS + Math.ceil(chars / UPLOAD_CHARS_PER_SECOND) * 1000)"
+    assert f"return {formula};" in script
+    value = {k: int(v) for k, v in re.findall(r"var (UPLOAD_\w+|REQUEST_TIMEOUT_MS) = (\d+);", script)}
+    chars = -(-library.FILE_BYTES // 3) * 4  # the largest file, base64-encoded: about 10.7 million characters
+    per_second, most = value["UPLOAD_CHARS_PER_SECOND"], value["UPLOAD_TIMEOUT_MAX_MS"]
+    waits = min(most, value["REQUEST_TIMEOUT_MS"] + -(-chars // per_second) * 1000)
+    assert chars * 8 / 1_000_000 < waits / 1000 <= 180  # it arrives at 1 Mbit/s upstream; bounded at three minutes
+    # After a timeout the server may have stored it: the list is loaded again, and the owner told so.
+    assert 'err.kind === "timeout"' in script and "it may have been added all the same" in script
+
+
+def test_a_retried_upload_is_stored_once(ingress_client: Any) -> None:
+    upload = {"file_name": "Tags.pdf", "file_data": base64.b64encode(a_pdf(GUIDE)).decode()}
+    assert post(ingress_client, "api/library", upload).status_code == 201
+    again = post(ingress_client, "api/library", upload)  # the owner's retry after a timeout
+    assert again.status_code == 409 and again.json()["error"].startswith("this text is in the library already: #1")
+    assert [d["id"] for d in ingress_client.get("api/library").json()["items"]] == [1]

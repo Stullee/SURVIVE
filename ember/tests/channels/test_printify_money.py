@@ -6,7 +6,9 @@ went to the venture. Amounts carried the option's currency, not Printify's. A pu
 listing Ember never tracked, and one that never reached Etsy stayed 'publishing'. Printify's listings, and product
 lines without a venture, counted nowhere in the metrics, the listing test and the ventures' rules. The agent couldn't
 know a product's cost before proposing it. And a product that missed its margin was said to be deleted when its delete
-failed."""
+failed.
+
+Tests from 0.15.0 (formerly test_fixes_0140_printify.py)."""
 
 from __future__ import annotations
 

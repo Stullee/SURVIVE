@@ -2,7 +2,9 @@
 may not create Pins in production - use API Sandbox instead"). An approved pin failed with those words, which point to
 a sandbox whose pins nobody but their maker sees (Ember doesn't use it), and nothing said what the owner can do. Such a
 refusal of a pin or a board now says that the app needs Standard access: on the request, in what Ember's code did and
-in the System log, and the agent hears it at its next wake."""
+in the System log, and the agent hears it at its next wake.
+
+Tests from 0.30.1 (formerly test_pinterest_0301.py)."""
 
 from __future__ import annotations
 

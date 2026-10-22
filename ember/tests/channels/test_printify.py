@@ -3,7 +3,9 @@ made on order (one of its pictures, variants of one print area's shape with thei
 owner approves it (the first one is a new kind of business for them: never automatic); Ember's code creates it at
 Printify, publishes it to the Etsy shop only if every price keeps its margin after what making and shipping cost, and
 never twice; the owner's Undo deletes it; the sync reads the Etsy listing and the orders' costs. The live client is
-tested against a mocked Printify; nothing reaches Printify in a dry run."""
+tested against a mocked Printify; nothing reaches Printify in a dry run.
+
+Also tests from 0.15.0 and 0.32.0 (formerly test_fixes_0140_live_fixes.py, test_fixes_0320.py)."""
 
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ from app.agent.fake_llm import FakeTransport, request_kind  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from app.integrations import etsy, etsy_publisher, printify, printify_publisher, qa  # noqa: E402
+from app.integrations.bluesky import FakeBluesky  # noqa: E402
 from app.integrations.printify import (  # noqa: E402
     DISCLOSURE,
     Gone,
@@ -37,11 +40,17 @@ from app.integrations.printify import (  # noqa: E402
 from app.integrations.printify_live import LiveAccount, _Allowlist  # noqa: E402
 from app.logging_setup import redact  # noqa: E402
 from app.products import images  # noqa: E402
+from tests.channels import test_pinterest, test_printify  # noqa: E402
 from tests.channels.test_etsy import Etsy, call, shop_context, views_approval  # noqa: E402
-from tests.cycle.test_agent import ROOMY, rows  # noqa: E402
+from tests.cycle.test_agent import (  # noqa: E402
+    ROOMY,
+    make_agent,  # noqa: E402
+    rows,
+)
 from tests.cycle.test_loop_shapes import run  # noqa: E402
 from tests.economy_helpers import owner as owner_entry  # noqa: E402
 from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.queue_helpers import slot_comes  # noqa: E402
 
 PRINTING = ROOMY.model_copy(update={"printify_enabled": True})
 LIVE = Settings(printify_enabled=True, printify_api_token="pr1ntify-t0ken-value-xyz")
@@ -638,3 +647,139 @@ def test_nothing_is_offered_while_printify_is_off(data_dir: Path) -> None:
     assert agent.printify.account() is None and agent.pod.run() == []
     work = next(r for r in fake.sent if request_kind(r) == "work")
     assert not {t["name"] for t in work["tools"]} & tools.PRINTIFY_TOOLS
+
+
+# --- From 0.15.0 (formerly test_fixes_0140_live_fixes.py) ---
+
+
+# --- LIVE 3: PRINTIFY counts the proposals that wait ----------------------------------------------------------------
+
+
+def test_printify_says_whether_a_proposal_waits(data_dir: Path) -> None:
+    agent, _, _ = proposed(data_dir)
+    with agent.db.connection() as conn:
+        assert printify_publisher.text(conn, agent.scope()) == (
+            "No product of yours yet: 1 proposal waits for your owner's decision."
+        )
+    with agent.db.transaction() as conn:
+        conn.execute("UPDATE approvals SET status = 'withdrawn' WHERE executor = 'printify_product'")
+    with agent.db.connection() as conn:
+        assert printify_publisher.text(conn, agent.scope()) == (
+            "No product of yours yet, and none waiting (1 rejected, withdrawn or expired)."
+        )
+    fresh, _ = make_agent(data_dir / "fresh", [])
+    with fresh.db.connection() as conn:
+        assert printify_publisher.text(conn, fresh.scope()) == "No product of yours yet, and none proposed yet."
+
+
+def test_printify_says_an_approved_product_is_not_created_yet(data_dir: Path) -> None:
+    agent, _, request = proposed(data_dir)
+    assert owner(agent).decide(request, {"decision": "approve"}, "Owner").status == 200  # not executed yet
+    with agent.db.connection() as conn:
+        assert printify_publisher.text(conn, agent.scope()) == "No product of yours yet: 1 approved, not created yet."
+
+
+# --- From 0.32.0 (formerly test_fixes_0320.py) ---
+
+
+EVERYWHERE = ROOMY.model_copy(update={"printify_enabled": True, "bluesky_enabled": True, "pinterest_enabled": True})
+
+
+POSTER_TITLE = "Minimalist mountain poster, matte print"  # test_printify.a_proposal's
+
+
+def approve(agent: Any, request: int) -> None:
+    assert owner(agent).decide(request, {"decision": "approve"}, "Owner").status == 200
+
+
+def poster(data_dir: Path) -> tuple[Any, int]:
+    """A dry-run agent with Printify, Bluesky and Pinterest on (their fake accounts), the fake shop's first listing
+    live, and a poster Printify made of a product of Ember's live at Etsy: its listing's number."""
+    agent, _ = run(data_dir, FakeTransport(), cycles=4, settings=EVERYWHERE, brake=False)  # test_etsy.proposed
+    listing = rows(agent, "SELECT id FROM approvals WHERE executor = 'etsy_listing'")[0]["id"]
+    approve(agent, listing)
+    assert agent.execute_approved() == [(listing, "active")]
+    ctx = test_printify.pod_context(agent)
+    test_printify.read_catalog(ctx)
+    made = test_printify.a_proposal(agent, ctx)
+    assert made.ok, made.text
+    product = rows(agent, "SELECT MAX(id) AS id FROM approvals WHERE executor = 'printify_product'")[0]["id"]
+    approve(agent, product)
+    assert agent.execute_approved() == [(product, "active")]
+    [row] = rows(agent, "SELECT listing_id FROM printify_products")
+    return agent, int(row["listing_id"])
+
+
+def channels(agent: Any) -> tools.ToolContext:
+    """The tools of a cycle on the poster's line (the shop listing's: the product was proposed on it)."""
+    ctx = test_printify.pod_context(agent)
+    ctx.bluesky = tools.BlueskyAccess(FakeBluesky.HANDLE, 2, "")
+    ctx.pinterest = tools.PinterestAccess("ember-dry-run", 3)
+    return ctx
+
+
+def a_post(ctx: tools.ToolContext, link: str, **args: Any) -> tools.Outcome:
+    fields = {
+        "text": "Bauhaus colours for a small room: two strong tones and one neutral.",
+        "language": "en",
+        "link": link,
+        "reason": "People who decorate small rooms look for exactly this.",
+        **args,
+    }
+    return call(ctx, "propose_bluesky_post", fields)
+
+
+def a_pin(agent: Any, ctx: tools.ToolContext, listing_id: int) -> tools.Outcome:
+    agent.roots()[0].write_bytes("shop/pin-poster.png", test_pinterest.picture())
+    return call(
+        ctx,
+        "propose_pin",
+        {
+            "listing_id": listing_id,
+            "image": "shop/pin-poster.png",
+            "title": "Minimalist mountain poster",
+            "description": "A calm mountain line drawing, printed on matte paper and made on order.",
+            "alt_text": "A mountain line drawing in a black frame above a sofa",
+            "reason": "Pinterest searchers look for calm wall art; this sends them to the poster.",
+            "board_name": "Calm wall art",
+        },
+    )
+
+
+# --- 1. a post or a pin links a poster Printify made ----------------------------------------------------------------
+
+
+def test_a_post_and_a_pin_link_a_poster_printify_made_and_are_carried_out(data_dir: Path) -> None:
+    agent, listing_id = poster(data_dir)
+    ctx = channels(agent)
+    post = a_post(ctx, etsy.listing_url(listing_id))
+    assert post.ok, post.text  # live: "isn't one of your live listings"
+    shown = call(ctx, "etsy_listing", {"listing_id": listing_id})
+    assert shown.ok and "a pin or a post may link them" in shown.text
+    [request] = rows(agent, "SELECT id, action FROM approvals WHERE executor = 'bluesky_post'")
+    action = json.loads(request["action"])
+    assert action["link"] == etsy.listing_url(listing_id)
+    assert (action["link_title"], action["card_photo"]) == (POSTER_TITLE, None)  # Printify keeps its photos
+    pin = a_pin(agent, ctx, listing_id)
+    assert pin.ok, pin.text
+    [pinned] = rows(agent, "SELECT id FROM approvals WHERE executor = 'pinterest_pin'")
+    approve(agent, request["id"])
+    approve(agent, pinned["id"])
+    slot_comes(agent, "bluesky")  # 0.37.8: an English post in America's day
+    # Ember's code checks the listing again when it carries them out: still Ember's, still live
+    assert sorted(agent.execute_approved()) == [(request["id"], "active"), (pinned["id"], "active")]
+    assert rows(agent, "SELECT status FROM bluesky_posts") == [{"status": "active"}]
+    assert rows(agent, "SELECT status FROM pinterest_pins") == [{"status": "active"}]
+
+
+def test_a_poster_etsy_no_longer_shows_and_a_stranger_s_listing_stay_refused(data_dir: Path) -> None:
+    agent, listing_id = poster(data_dir)
+    ctx = channels(agent)
+    stranger = a_post(ctx, etsy.listing_url(12))
+    assert not stranger.ok and "#12 isn't one of your live listings" in stranger.text
+    with agent.db.transaction() as conn:
+        conn.execute("UPDATE printify_products SET state = 'inactive' WHERE listing_id = ?", (listing_id,))
+    idle = a_post(ctx, etsy.listing_url(listing_id))
+    assert not idle.ok and f"#{listing_id} isn't live at Etsy (deactivated)" in idle.text
+    pin = a_pin(agent, ctx, listing_id)
+    assert not pin.ok and f"#{listing_id} isn't live at Etsy (deactivated)" in pin.text

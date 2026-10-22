@@ -12,7 +12,8 @@ From the 0.37.0 analysis (sections 3.5, 4.6.1 and 4.6.2) and its reproductions (
   on its own sheet, a range of two columns, a COUNTA that counts the header and a template's column formula.
 - rows_csv made a CSV's header line a data row (#VALUE! in its formula and the total), and a trailing empty field kept
   the column's formula out.
-"""
+
+Tests from 0.15.0, 0.32.0 and 0.37.5 (formerly test_fixes_0140_factory.py, test_fixes_0320.py, test_fixes_0375.py)."""
 
 from __future__ import annotations
 
@@ -28,8 +29,14 @@ from typing import Any
 
 import pytest
 
-from app.products import make, sheets
+from app.agent.fake_llm import FakeTransport
+from app.products import images, make, sheets
+from tests.cycle.test_agent import ROOMY
+from tests.cycle.test_loop_shapes import run
+from tests.products.test_pictures import three_sheets
 from tests.products.test_products import jail
+from tests.tools.test_workspace_tools import a_spec, calling
+from tests.ventures import test_ventures
 
 INCOME = {
     "name": "Income",
@@ -434,3 +441,59 @@ def test_libreoffice_shows_the_numbers_the_pictures_show(tmp_path: Path) -> None
                 rows[last + 1] = [cell for cell, _ in table.total]
             for number, row in rows.items():
                 assert theirs[sheet.name][number - 1][: len(row)] == row, (name, sheet.name, number)
+
+
+# --- From 0.15.0 (formerly test_fixes_0140_factory.py) ---
+
+
+def test_a_spreadsheet_comes_with_a_picture_of_each_sheet(tmp_path: Path) -> None:
+    ws = jail(tmp_path)
+    three_sheets(ws)
+    made = make.spreadsheet(ws, "b.json", "shop/b.xlsx")
+    assert made.paths == ["shop/b.xlsx", "shop/b-preview.png", "shop/b-sheet2.png", "shop/b-sheet3.png"]
+    assert (
+        "Pictures of its sheets: shop/b-preview.png (Budget), shop/b-sheet2.png (Costs), shop/b-sheet3.png"
+        in (made.report[1])
+    )
+    assert images.png_size(ws.read_bytes("shop/b-sheet2.png")) != images.png_size(ws.read_bytes("shop/b-sheet3.png"))
+    data = json.loads(ws.read("b.json"))
+    data["sheets"] = data["sheets"][:1]
+    ws.write("b.json", json.dumps(data))
+    fewer = make.spreadsheet(ws, "b.json", "shop/b.xlsx")  # a sheet it no longer has loses its picture
+    assert fewer.removed == ["shop/b-sheet2.png", "shop/b-sheet3.png"] and ws.size_of("shop/b-sheet2.png") is None
+
+
+def test_make_image_shows_a_sheet_by_number_or_name(tmp_path: Path) -> None:
+    ws = jail(tmp_path)
+    three_sheets(ws)
+    make.spreadsheet(ws, "b.json", "shop/b.xlsx")
+    made = make.image(ws, "shop/photo.png", "shop/b.xlsx#Costs, shop/b.xlsx#4", "Three sheets")
+    assert made.paths == ["shop/photo.png"]
+    with pytest.raises(make.ProductError, match=r"shop/b\.xlsx#9: the workbook has no sheet '9'; its sheets are 1 "):
+        make.image(ws, "shop/photo.png", "shop/b.xlsx#9", "Title")
+
+
+# --- From 0.32.0 (formerly test_fixes_0320.py) ---
+
+
+# --- 5. a formula's cell in a title, a header or below the data is named ---------------------------------------------
+
+
+def test_a_formula_s_cell_in_a_header_or_below_the_data_is_named(data_dir: Path) -> None:
+    live = sheets.parse(a_spec("=B3-B4"), lambda path: "")
+    assert live.warnings == ["Summary row 6: B3 is the header row of Summary, whose data are rows 4 to 6"]
+    assert sheets.parse(a_spec("=B4-B5"), lambda path: "").warnings == []  # the fix, and a total, say nothing
+    assert sheets.parse(a_spec("=Income!C14"), lambda path: "").warnings == [
+        "Summary row 6: Income!C14 is an empty cell below the data and the total of Income, whose data are rows 4 to "
+        "12 (its total row 13)"
+    ]
+    assert sheets.parse(a_spec("=Income!C13-Expenses!C1"), lambda path: "").warnings == [
+        "Summary row 6: Expenses!C1 is the title of Expenses, whose data are rows 4 to 26 (its total row 27)"
+    ]
+    # make_spreadsheet says it in its Check line, beside the data rows it gives
+    agent, _ = run(data_dir, FakeTransport(script=[test_ventures.plan(steps=[])]), settings=ROOMY)
+    agent.roots()[0].write("drafts/budget.json", a_spec())
+    made = calling(agent, "make_spreadsheet", source="drafts/budget.json", output="products/budget.xlsx")
+    assert made.ok, made.text
+    assert "Data rows: Income 4-12 (total 13), Expenses 4-26 (total 27), Summary 4-6." in made.text
+    assert "Check: Summary row 6: B3 is the header row of Summary, whose data are rows 4 to 6." in made.text

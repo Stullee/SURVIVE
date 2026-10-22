@@ -7,7 +7,8 @@ guide and its own plan named the tool. Reading them brings no buyer: bluesky_pos
 but a venture cycle, an ordinary cycle's BLUESKY keeps the account's line with its live posts' reactions, and the daily
 review hears them. The tool names each post by its request's number (its record key at Bluesky said nothing to anyone),
 with the followers, the posts made today, the reactions a post and what Bluesky doesn't count.
-"""
+
+Tests from 0.37.7 (formerly test_fixes_0377.py)."""
 
 from __future__ import annotations
 

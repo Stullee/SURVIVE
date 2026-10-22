@@ -3,7 +3,9 @@ at once (its rules said to juggle, its plan named a project, a venture and a mil
 project): a licence bundle was listed in the cover-letter line, files and costs went to the wrong line. Now a cycle
 works on one line, a marketing cycle brings buyers to one line's listings, a venture cycle decides one venture, and
 the tools refuse another line's work for the rest of the cycle. 0.35.0: the plan tree takes each cycle's step, its
-line and its kind (tests/test_fixes_0350.py); READY's ranking and the marketing share retired."""
+line and its kind (tests/plan/test_tree_steers.py); READY's ranking and the marketing share retired.
+
+Tests from 0.28.0 and 0.33.0 (formerly test_fixes_0280.py, test_fixes_0330.py)."""
 
 from __future__ import annotations
 
@@ -22,6 +24,7 @@ from app.agent import (  # noqa: E402
     roadmap,
     store,
     tools,
+    ventures,  # noqa: E402
     weekly,
 )
 from app.agent.fake_llm import FakeTransport, Plan, request_kind  # noqa: E402
@@ -287,3 +290,27 @@ def test_the_status_line_shows_the_kind_of_cycle() -> None:
     snap.venture = True  # 0.37.0: each venture's next decision is a step of its own
     assert context._kind_line(snap) == "This is a venture cycle: YOUR STEP is a venture's next decision."  # type: ignore[arg-type]
     assert context._kind_line(SimpleNamespace(venture=False, marketing=False, marketing_apart=False)) == ""  # type: ignore[arg-type]
+
+
+# --- From 0.33.0 (formerly test_fixes_0330.py) ---
+
+
+# --- what any cycle may keep of another line or venture ---
+
+
+def test_any_cycle_keeps_another_line_s_records_and_parks_an_idea_its_work_stays_its_own(data_dir: Path) -> None:
+    agent, _ = lined(data_dir)
+    with agent.db.transaction() as conn:
+        idea = ventures.create(conn, agent.scope(), title="RSS pins", pitch="p", stage="idea", now=now(agent))
+    ctx = working(agent, line=1)
+    learned = {"venture_id": idea, "stage": "parked", "note": "an Etsy shop can't be claimed on Pinterest"}
+    assert call(ctx, "venture_update", learned).ok
+    assert rows(agent, f"SELECT stage FROM ventures WHERE id = {idea}") == [{"stage": "parked"}]
+    with agent.db.transaction() as conn:
+        other = ventures.create(conn, agent.scope(), title="Coaches", pitch="p", stage="idea", now=now(agent))
+    refused = call(ctx, "venture_update", {"venture_id": other, "stage": "researching"})
+    assert not refused.ok and "a venture cycle's work: this cycle works on product line #1" in refused.text
+    kept = call(ctx, "project_update", {"project_id": 2, "note": "Pinterest is set up: pin the poster"})
+    assert kept.ok and ctx.state.focus_project_id == 1
+    bet = call(ctx, "project_update", {"project_id": 2, "bet": "+5 views in 7 days: pins"})
+    assert not bet.ok and "no update for project #2" in bet.text

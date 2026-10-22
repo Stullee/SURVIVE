@@ -8,7 +8,8 @@ queue, each for its slot: in the channel's hours, hours apart, a listing at most
 And the Plan tab: its steps named no product ("Post it twice on Bluesky" three times read as one step three times), it
 took the blog for off while the cycles wrote its posts, a pin proposed "again" as QA asked became a second pin of the
 first, a Bluesky post asked through request_approval was never posted, and a German landlord tool got English posts.
-"""
+
+Tests from 0.37.8 (formerly test_fixes_0378.py)."""
 
 from __future__ import annotations
 

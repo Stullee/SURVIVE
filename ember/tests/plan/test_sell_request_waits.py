@@ -2,11 +2,12 @@
 
 At most 6 sell requests (store.PENDING_CAPS['sell']: a listing, a change of one, a Printify product, a KDP book) wait
 for the owner at once: propose_etsy_listing, propose_etsy_edit, propose_printify_product and propose_kdp_book refuse
-the next (tools._room_for_request). 0.37.9 taught the plan the publish and message limits (tests/test_fixes_0379.py),
-but "Propose the listing", proposing one again and the critic's fixes still looked ready while 6 sell requests
-waited: a cycle cut its sleep and paid for a plan (about $0.15 before any work) whose request the tool refused. Now
-such a step waits ('sales') and cuts no sleep; the cap itself stays as it is.
-"""
+the next (tools._room_for_request). 0.37.9 taught the plan the publish and message limits
+(tests/plan/test_limit_waits.py), but "Propose the listing", proposing one again and the critic's fixes still looked
+ready while 6 sell requests waited: a cycle cut its sleep and paid for a plan (about $0.15 before any work) whose
+request the tool refused. Now such a step waits ('sales') and cuts no sleep; the cap itself stays as it is.
+
+Tests from 0.38.1 (formerly test_fixes_0381.py)."""
 
 from __future__ import annotations
 

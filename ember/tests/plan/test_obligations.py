@@ -1,7 +1,9 @@
 """0.12.0: an obligations ledger. Promises were only prose: a venture cycle deferred the owner's quick fix, an answer
 that promised work for later was forgotten, a decision of the owner's was shown once, and "at most once a day" was a
 rule in the prompt only (the agent sent 5 messages in 8.5 hours). Now Ember's code keeps what the agent owes, shows it
-first in every plan, lets a venture cycle give way to it, and limits the messages that answer none of the owner's."""
+first in every plan, lets a venture cycle give way to it, and limits the messages that answer none of the owner's.
+
+Also tests from 0.15.0 and 0.33.0 (formerly test_fixes_0140_live_fixes.py, test_fixes_0330.py)."""
 
 from __future__ import annotations
 
@@ -13,14 +15,17 @@ from typing import Any
 import pytest
 
 from app.agent import obligations
+from app.agent import plan as plan_tree
 from app.agent.fake_llm import FakeTransport
 from app.agent.service import Agent
 from app.agent.store import AgentScope
 from tests.cycle.test_agent import rows
 from tests.cycle.test_loop_shapes import run
 from tests.owner.test_owner_loop import owner
+from tests.plan.test_cycle_line import cycle, lined, milestone, now
 from tests.plan.test_money_goal import call
 from tests.plan.test_roadmap import day, plan, planner_texts, section
+from tests.plan.test_roadmap import plan as idle
 from tests.ventures.test_ventures import VENTURING
 
 
@@ -189,3 +194,53 @@ def forcing(conn: Any, scope: AgentScope, today: date) -> list[int]:
 
 def _scope(scope: AgentScope) -> tuple[Any, ...]:
     return (scope.mode, scope.session, scope.life_id)
+
+
+# --- From 0.15.0 (formerly test_fixes_0140_live_fixes.py) ---
+
+
+# --- LIVE 9: the message that reports a kept promise gets through ---------------------------------------------------
+
+
+def test_a_kept_promise_can_be_reported_past_the_daily_message_limit(data_dir: Path) -> None:
+    agent, _ = run(data_dir, FakeTransport(script=[idle(steps=[])]))
+    assert call(agent, "message_owner", text="Update 1.").ok
+    assert call(agent, "message_owner", text="Site soon.", commits="Draft the website's home page", due=day(4)).ok
+    early = call(agent, "obligation_done", numbers="1", result="Wrote it, see message #2")
+    assert not early.ok and "naming #1 (the daily limit lets it through if it promises nothing new)" in early.text
+    assert not call(agent, "message_owner", text="The home page is done.").ok  # the limit holds for others
+    chained = call(agent, "message_owner", text="#1 is kept. Shop next.", commits="Open the shop", due=day(5))
+    assert not chained.ok and "2 messages today" in chained.text  # a report that promises anew is no exemption
+    told = call(agent, "message_owner", text="Promise #1 is kept: the home page is done (site_page 'index').")
+    assert told.ok, told.text
+    assert call(agent, "obligation_done", numbers="1", result="Told in message #3; site_page 'index'").ok
+    again = call(agent, "message_owner", text="About #1 once more.")
+    assert not again.ok and "2 messages today" in again.text  # once per promise, while it is open and untold
+
+
+# --- From 0.33.0 (formerly test_fixes_0330.py) ---
+
+
+# --- a miss is ranked, not forced ---
+
+
+def test_a_miss_neither_decides_the_cycle_nor_takes_its_line(data_dir: Path) -> None:
+    agent, _ = lined(data_dir)
+    missed = milestone(agent, 1, -1, "Ten views of the planner")
+    stamp = now(agent)
+    with agent.db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO obligations (mode, session, kind, what, due, created_at, milestone_id)"
+            " VALUES (?, ?, 'miss', 'decide', ?, ?, ?)",
+            (agent.scope().mode, agent.scope().session, stamp[:10], stamp, missed),
+        )
+    cycle(agent, project=2)  # line #2 is in progress
+    with agent.db.connection() as conn:
+        owing = obligations.open_rows(conn, agent.scope())
+        owed = [obligations.owed(conn, agent.scope(), r) for r in owing if obligations.presses(r, agent.clock.today())]
+        assert forcing(conn, agent.scope(), agent.clock.today()) == []  # nothing of the owner's
+    assert owed == [obligations.Owed(1)]  # pressing, on line #1, but not the owner's
+    with agent.db.transaction() as conn:  # 0.35.0: the plan tree weighs its steps; nothing is taken first for it
+        plan_tree.keep(conn, agent.scope(), now(agent), agent.clock.today(), {})
+        steered = plan_tree.steer(conn, agent.scope(), now(agent), agent.clock.today(), {})
+    assert steered.pick.decided in ("weight", "margin")

@@ -12,7 +12,8 @@ T5. make_document refuses an output name whose page pictures' names are too long
 T6. A send to an address on a socket opened before the seal is blocked in a sealed thread.
 T7. A whole number beyond what any field takes, and a blank optional text, get a refusal or nothing, never "the tool
     failed".
-"""
+
+Tests from 0.40.3 (formerly test_fixes_0403_tools.py)."""
 
 from __future__ import annotations
 

@@ -8,7 +8,8 @@ venture being explored is a node of the plan's Ventures, its next decision a ste
 case expects, an idea by its scores; the owner's wish and a park soon urgent), and a venture cycle is aimed at its
 step's venture. A promise or decision of no product is a step of the Owner project, and every promise and decision is
 weighed, worth at least PROMISE_WORTH and urgent as its day nears. The Ventures tab is the Plan tab's.
-"""
+
+Tests from 0.37.0 and 0.39.1 (formerly test_fixes_0370.py, test_fixes_0391.py)."""
 
 from __future__ import annotations
 
@@ -19,16 +20,25 @@ import pytest
 
 pytest.importorskip("httpx2")
 
+from datetime import timedelta  # noqa: E402
+from typing import Any  # noqa: E402
+
 from app import paths  # noqa: E402
-from app.agent import obligations, plan, views, weights  # noqa: E402
+from app.agent import desk, obligations, plan, ventures, views, weights  # noqa: E402  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from app.db import discover_migrations, migrate  # noqa: E402
+from tests.channels.test_etsy import call  # noqa: E402
 from tests.cycle.test_agent import rows  # noqa: E402
 from tests.owner.test_owner_loop import owner  # noqa: E402
-from tests.plan.test_cycle_line import lined, now  # noqa: E402
+from tests.plan.test_cycle_line import cycle, lined, now, working  # noqa: E402  # noqa: E402
 from tests.plan.test_exploring import NOW, explored, exploring_agent  # noqa: E402
-from tests.plan.test_plan_tree import keep  # noqa: E402
+from tests.plan.test_plan_tree import (  # noqa: E402
+    TRACKER,
+    keep,  # noqa: E402
+    project,
+)
 from tests.plan.test_promises import promise, steered  # noqa: E402
+from tests.plan.test_tree_steers import step_id  # noqa: E402
 from tests.ventures.test_ventures import DROPSHIPPING, ETSY, FIVERR  # noqa: E402
 
 SCRIPT = (paths.WEB_DIR / "static" / "js" / "app.js").read_text(encoding="utf-8")
@@ -65,7 +75,9 @@ def test_the_migration_drops_the_one_explore_step_and_a_venture_becomes_a_node(t
     conn.execute(node, (2, 1, "step", None, "explore@1", "create", "Explore your ventures", 1, NOW, NOW))
     conn.commit()
     conn.close()
-    assert migrate(db_file, discover_migrations(), backup_dir=tmp_path / "backups") == [91, 92, 93, 94, 95, 96, 97, 98]
+    assert migrate(db_file, discover_migrations(), backup_dir=tmp_path / "backups") == [
+        m.version for m in discover_migrations() if m.version > 90
+    ]
     conn = sqlite3.connect(db_file)
     conn.row_factory = sqlite3.Row
     explore = dict(conn.execute("SELECT status, closed_by, pinned, result FROM plan_nodes WHERE id = 2").fetchone())
@@ -228,3 +240,141 @@ def test_the_ventures_steps_list_and_the_plan_tabs_links() -> None:
     assert "renderVentureSteps(d);" in render and "renderVentureDesk" not in SCRIPT
     assert 'if (s.venture) return "venture #" + s.venture' in SCRIPT  # a venture's step names its venture
     assert 'if (name === "plan") { loadPlan(); loadRoadmap(); loadVentures(); }' in SCRIPT
+
+
+# --- From 0.39.1 (formerly test_fixes_0391.py) ---
+
+
+# --- 3. the ventures' steps ---
+
+
+def idea_steps(agent: Agent) -> dict[int, int]:
+    """The open triage step of each idea, by venture."""
+    with agent.db.connection() as conn:
+        found = plan.nodes(conn, agent.scope(), "level = 'step' AND status = 'open' AND template = 'triage@1'")
+        return {int(plan.venture_of(conn, agent.scope(), int(s["id"]))): int(s["id"]) for s in found}
+
+
+@pytest.mark.exploring
+def test_a_triage_names_the_other_ideas_waiting_and_a_ventures_step_waits_for_its_day(data_dir: Path) -> None:
+    """Live, six cycles in a row each parked one idea of a brainstorm, and an idea "paused until 10-20" came back the
+    next day: nothing could make a venture's step wait."""
+    agent = exploring_agent(data_dir)
+    triages = idea_steps(agent)
+    assert DROPSHIPPING in triages and len(triages) >= 4
+    step = triages[DROPSHIPPING]
+    with agent.db.transaction() as conn:  # the owner's Explore next: this cycle's step
+        plan.pin(conn, agent.scope(), step, True, "Owner", now(agent))
+    steer = explored(agent)
+    assert steer.kind == "venture" and steer.step is not None and steer.step.id == step
+
+    def your_step() -> str:
+        with agent.db.connection() as conn:
+            return plan.step_text(conn, agent.scope(), steer, explore=True, today=agent.clock.today())
+
+    others = [v for v in sorted(triages) if v != DROPSHIPPING]
+    titles = {v["id"]: v["title"] for v in rows(agent, "SELECT id, title FROM ventures")}
+    named = " · ".join(f'#{v} "{titles[v]}"' for v in others)
+    assert (
+        f"Other ideas wait for their triage: {named}: triage them in this cycle too (venture_update each: park the"
+        " ones you would park, with why; research the one that deserves it most). A cycle for each costs more than"
+        " its decision."
+    ) in your_step()
+    ctx = working(agent)
+    ctx.venture, ctx.state.step_id = True, step  # a venture cycle: no product line
+    later = triages[others[0]]
+    day = (agent.clock.today() + timedelta(days=5)).isoformat()
+    waited = call(
+        ctx, "plan_step", {"action": "wait", "step_id": later, "on": "date", "until": day, "why": "after the freeze"}
+    )
+    assert waited.ok and waited.text == f"Step #{later} waits on {day} (1 of {plan.WAITS_A_DAY} waits today)."
+    assert f"#{others[0]} " not in your_step().split("Other ideas wait for their triage: ")[1]
+    assert {c.step.id: c.waiting for c in explored(agent).found}[later] == "date"
+    tracker = project(agent, *TRACKER)
+    keep(agent)
+    demand = step_id(agent, tracker, "Write the demand note: searches, competitors, prices")
+    product = call(ctx, "plan_step", {"action": "wait", "step_id": demand, "on": "date", "until": day, "why": "x"})
+    assert not product.ok and f"step #{demand} isn't a step of your ventures" in product.text
+    done = call(ctx, "plan_step", {"action": "done", "why": "x"})
+    assert not done.ok and "action must be one of wait" in done.text  # a venture cycle's plan_step waits only
+    pinned = call(ctx, "plan_step", {"action": "wait", "on": "date", "until": day, "why": "after the freeze"})
+    assert not pinned.ok and f"your owner pinned step #{step}" in pinned.text  # 0.40.3: the owner's pin holds
+    with agent.db.transaction() as conn:
+        plan.pin(conn, agent.scope(), step, False, "Owner", now(agent))
+    own = call(ctx, "plan_step", {"action": "wait", "on": "date", "until": day, "why": "after the freeze"})
+    assert own.ok and own.text == f"Step #{step} waits on {day} (2 of {plan.WAITS_A_DAY} waits today)."  # YOUR STEP
+    agent.clock.advance(days=5)
+    lifted = keep(agent)
+    assert f"Plan tree: step #{later} is ready again ({day} has come)." in lifted
+    assert f"Plan tree: step #{step} is ready again ({day} has come)." in lifted
+
+
+def brainstorm_steps(agent: Agent) -> list[dict[str, Any]]:
+    return rows(
+        agent, f"SELECT status, result FROM plan_nodes WHERE template = '{plan.BRAINSTORM_TEMPLATE}' ORDER BY id"
+    )
+
+
+@pytest.mark.exploring
+def test_no_brainstorm_comes_within_a_week_of_one_whose_ideas_had_no_research(data_dir: Path) -> None:
+    """Live, a brainstorm's six ideas were all parked within a day, and the funnel they left empty brought the next
+    brainstorm at once: $1.76 in two days, nothing researched."""
+    agent = exploring_agent(data_dir)
+    for v in rows(agent, "SELECT id FROM ventures WHERE stage = 'idea'"):  # the owner parks the ideas: a thin funnel
+        assert owner(agent).decide_venture(v["id"], {"action": "park"}, "Stefan").status == 200
+    keep(agent)
+    assert [s["status"] for s in brainstorm_steps(agent)] == ["open"]
+    brainstormed = cycle(agent)
+    with agent.db.transaction() as conn:  # a brainstorm's six ideas, each parked by a triage before the next keeper
+        for n in range(6):
+            made = ventures.create(
+                conn,
+                agent.scope(),
+                title=f"Idea {n}",
+                pitch="A guess.",
+                stage="idea",
+                now=now(agent),
+                cycle_id=brainstormed,
+            )
+            ventures.update(conn, made, now(agent), stage="parked", parked_by="agent")
+    today = agent.clock.today()
+    ends = (today + timedelta(days=desk.BRAINSTORM_REST_DAYS)).isoformat()
+    rest = (
+        f"none of the last brainstorm's 6 ideas ({today.isoformat()}) went on past triage: the next brainstorm comes on"
+        f" {ends}, or once one of them is being researched"
+    )
+    keep(agent)
+    assert brainstorm_steps(agent) == [{"status": "dropped", "result": rest}]
+    agent.clock.advance(days=desk.BRAINSTORM_REST_DAYS - 1)
+    keep(agent)
+    assert len(brainstorm_steps(agent)) == 1  # not yet
+    agent.clock.advance(days=1)
+    keep(agent)
+    assert [s["status"] for s in brainstorm_steps(agent)] == ["dropped", "open"]
+
+
+def test_the_brainstorms_rest_reads_its_last_batch_of_ideas() -> None:
+    def idea(n: int, cycle_id: int, stage: str = "parked", researched: int = 0, by: str = "agent") -> dict[str, Any]:
+        return {
+            "id": n,
+            "created_by": by,
+            "created_cycle_id": cycle_id,
+            "created_at": "2026-10-12T21:40:00Z",
+            "stage": stage,
+            "researched": researched,
+        }
+
+    batch = [idea(n, 3711) for n in range(1, 7)]
+    later = "2026-10-14T09:00:00Z"
+    said = desk.brainstorm_rests(batch, later)
+    assert said == (
+        "none of the last brainstorm's 6 ideas (2026-10-12) went on past triage: the next brainstorm comes on"
+        " 2026-10-19, or once one of them is being researched"
+    )
+    assert desk.brainstorm_rests(batch, "2026-10-19T00:00:00Z") == ""  # a week on
+    # 0.40.2 (analysis-0.40.1, 3.4): an idea researched and parked, or researched and still an idea, doesn't end it
+    assert desk.brainstorm_rests([*batch[1:], idea(1, 3711, researched=1)], later) == said
+    assert desk.brainstorm_rests([*batch[1:], idea(1, 3711, stage="idea", researched=1)], later) == said
+    assert desk.brainstorm_rests([*batch[1:], idea(1, 3711, stage="researching")], later) == ""
+    assert desk.brainstorm_rests([idea(1, 3711), idea(2, 3700)], later) == ""  # one idea a cycle: no brainstorm
+    assert desk.brainstorm_rests([*batch, idea(9, 3720, by="owner"), idea(10, 3721)], later) == said  # not theirs

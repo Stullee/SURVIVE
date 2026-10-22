@@ -9,7 +9,8 @@ PR4. The page check measures the white space under a page's last mark when it ha
      names each of its 7 days once.
 PR5. '::: pagebreak' inside a box is refused (it printed two layers of text).
 PR6. With a sidebar, the Word copy starts a page at each '::: pagebreak' (a 2-page CV was 1 page in Word).
-"""
+
+Tests from 0.40.3 (formerly test_fixes_0403_pages.py)."""
 
 from __future__ import annotations
 

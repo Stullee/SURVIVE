@@ -8,7 +8,8 @@ the hold shrank to that fifth, and five times it fit by construction. After a ru
 5 times that is $13.22) a run went ahead with $3.10 left above the reserve, holding $0.62; it cost $3.21, and Ember
 died at -$0.08 without its last will. The 0.21.0 test (test_fixes_0140_money_guard) calls the guard without hold=, so
 it never took the workshop's own path. A research call's hold was never cut that way (the last test).
-"""
+
+Tests from 0.37.2 (formerly test_fixes_0372.py)."""
 
 from __future__ import annotations
 

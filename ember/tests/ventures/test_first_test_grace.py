@@ -13,7 +13,8 @@ milestone's one note of the owner's (each click over the last), and no take-back
 0.15.0's, nor Ember's code's. The planner showed it as the owner's word. Now what is unlocked is said from the grants
 that stand, no unlock or take-back writes a note, a change of the unlocks is the agent's news (Ember's code's take-backs
 too), and migration 0071 clears the notes that say a rule is unlocked while no grant of it stands.
-"""
+
+Tests from 0.16.3 and 0.39.1 (formerly test_fixes_0161.py, test_fixes_0391.py)."""
 
 from __future__ import annotations
 
@@ -41,6 +42,7 @@ from tests.cycle.test_loop_shapes import run  # noqa: E402
 from tests.economy_helpers import ScriptedTransport, make_economy  # noqa: E402
 from tests.owner.test_owner_loop import owner  # noqa: E402
 from tests.owner.test_policy import a_milestone  # noqa: E402
+from tests.plan.test_cycle_line import now  # noqa: E402
 
 OURS = next(m for m in discover_migrations() if m.name == "channels_unlocks")
 LIVE = ROOMY.model_copy(update={"dry_run": False, "anthropic_api_key": "sk-ant-api03-testkey-0123456789"})
@@ -640,3 +642,40 @@ def test_an_unlock_is_said_from_its_grant_and_each_change_is_news(data_dir: Path
     ]
     assert not unseen()
     assert rows(agent, f"SELECT owner_comment FROM milestones WHERE id = {goal}") == [{"owner_comment": None}]
+
+
+# --- From 0.39.1 (formerly test_fixes_0391.py) ---
+
+
+def test_a_first_tests_heads_up_once_given_is_owed_no_more(data_dir: Path) -> None:
+    """Live, OBLIGATIONS kept asking for the heads-up two messages had given, and the cycles tried to give it again."""
+    agent, pod = backed_pod(data_dir)
+    test = first_test_of(agent, pod)
+    on(agent, date.fromisoformat(test["due"]) - timedelta(days=stages.WARN_DAYS))
+    grade(agent)
+    [said] = warn(agent)
+
+    def owed() -> str:
+        with agent.db.connection() as conn:
+            return obligations.text(conn, agent.scope(), agent.clock.today())
+
+    asked = (
+        f"- {said} Work toward it first, or tell your owner once what it needs (name #{test['id']} in your message)."
+    )
+    assert asked in owed()
+    with agent.db.transaction() as conn:  # a message naming another number tells nothing of this one
+        store.insert_message(conn, agent.scope(), 1, f"Milestone #{test['id']}0 is met.", now(agent))
+    assert asked in owed()
+    agent.clock.advance(minutes=5)
+    with agent.db.transaction() as conn:
+        told = store.insert_message(
+            conn,
+            agent.scope(),
+            1,
+            f"First test #{test['id']} will likely miss: no poster passed my checks.",
+            now(agent),
+        )
+    assert (
+        f"- {said} You told your owner in message #{told}: work toward it; nothing more to tell them about it until it"
+        " changes."
+    ) in owed()

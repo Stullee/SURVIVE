@@ -1,6 +1,8 @@
 """0.15.0 (FIX NOW 3, 4, 5 and 7): safe mode keeps the owner's identity and the kill switch; every option's bound is in
 config.yaml, where Home Assistant checks it when the owner saves; the rules between options that it can't check are
-corrected instead of starting safe mode; and the secret scan's allowlist covers the tests' fake passwords."""
+corrected instead of starting safe mode; and the secret scan's allowlist covers the tests' fake passwords.
+
+Tests from 0.15.0 (formerly test_fixes_0140_safe_mode.py)."""
 
 from __future__ import annotations
 
@@ -390,8 +392,8 @@ def test_what_home_assistant_saves_ember_accepts(key: str, value: str) -> None:
 
 
 def test_the_secret_scan_allows_every_fake_password_in_the_repository() -> None:
-    """CI's Secret scan failed on both releases over tests/test_privacy.py's "aaaaaa-0bbbbb-ccccCd", a fake one letter
-    off the allowlisted one. The rule's allowlist must cover every value of its shape in the files."""
+    """CI's Secret scan failed on both releases over tests/web/test_privacy.py's "aaaaaa-0bbbbb-ccccCd", a fake one
+    letter off the allowlisted one. The rule's allowlist must cover every value of its shape in the files."""
     config = tomllib.loads((REPO_DIR / ".gitleaks.toml").read_text(encoding="utf-8"))
     (rule,) = [r for r in config["rules"] if r["id"] == "generated-password-6-6-6"]
     shape = re.compile(rule["regex"])
@@ -408,8 +410,9 @@ def test_the_secret_scan_allows_every_fake_password_in_the_repository() -> None:
 
 
 def test_a_secret_that_contains_another_is_masked_whole(monkeypatch: pytest.MonkeyPatch) -> None:
-    """tests/test_pinterest.py failed about one run in four, depending on the hash seed: test_etsy.py had registered
-    an Etsy refresh token that is part of the Pinterest one, and redact masked whichever came first in the set."""
+    """tests/channels/test_pinterest.py failed about one run in four, depending on the hash seed: test_etsy.py had
+    registered an Etsy refresh token that is part of the Pinterest one, and redact masked whichever came first in the
+    set."""
     from app import logging_setup
 
     etsy, pinterest = "r3fresh-t0ken-value", "pinr_r3fresh-t0ken-value"

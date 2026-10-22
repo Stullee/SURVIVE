@@ -7,7 +7,8 @@ Now propose_printify_edit asks the owner to approve a change; Ember's code makes
 prices and variants stay) and has Printify publish what changed to the same listing, once. The critic, the plan and
 etsy_listing read the product as Printify has it, changes included. The live client is tested against a mocked
 Printify; nothing reaches Printify in a dry run.
-"""
+
+Tests from 0.39.0 (formerly test_fixes_0390.py)."""
 
 from __future__ import annotations
 

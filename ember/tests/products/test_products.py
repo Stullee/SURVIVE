@@ -3,7 +3,8 @@
 The agent writes text; Ember's code makes the files. These tests pin what the agent is promised in its guides (the
 settings, the layout lines, the spreadsheet spec) and what a buyer gets: files that open, formulas that only reach
 this workbook, and pictures of the right size.
-"""
+
+Also tests from 0.19.2 and 0.24.0 (formerly test_fixes_0192.py, test_fixes_0240.py)."""
 
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ from app.agent.sandbox import Jail, Limits, SandboxError
 from app.products import checks, images, make, markup, pdf, selftest, sheets, word
 from app.products.markup import Box, Callout, Checklist, Columns, DocumentError, Heading, ListBlock, Photo, Table
 from app.products.theme import MIN_CONTRAST, contrast
+from tests.tools.test_workshop import png
 
 CV = """---
 title: CV
@@ -603,3 +605,130 @@ def test_the_self_test_makes_one_of_each() -> None:
     assert lines[10].startswith("Made out/ebook-cover.jpg: an ebook cover, 1600 x 2560 pixels")
     # 0.40.0: the book's page check (propose_kdp_book's)
     assert lines[11] == "Checked out/book.pdf's pages: 24 measured, pages 1, 24 drawn." and len(lines) == 12
+
+
+# --- From 0.19.2 (formerly test_fixes_0192.py) ---
+
+
+# --- sheet pictures: results, not formulas -------------------------------------------------------------------------
+
+
+BUDGET = {
+    "title": "Budget Planner",
+    "sheets": [
+        {
+            "name": "Income",
+            "title": "Monthly Income",
+            "columns": [{"title": "Source"}, {"title": "Planned"}, {"title": "Actual", "format": "usd"}],
+            "rows": [["Salary", 2800, 2800]],
+            "empty_rows": 8,
+            "totals": {"Planned": "sum", "Actual": "sum"},
+        },
+        {
+            "name": "Expenses",
+            "title": "Monthly Expenses",
+            "columns": [
+                {"title": "Category"},
+                {"title": "Planned"},
+                {"title": "Actual", "format": "usd"},
+                {"title": "Remaining", "format": "usd", "formula": "=B{row}-C{row}"},
+            ],
+            "rows": [["Rent", 850, 850], ["Groceries", 350, 382.5]],
+            "empty_rows": 20,
+            "totals": {"Planned": "sum", "Actual": "sum"},
+        },
+        {
+            "name": "Summary",
+            "title": "Monthly Summary",
+            "columns": [{"title": "Item"}, {"title": "Amount", "format": "usd"}],
+            "rows": [
+                ["Total Income", "=SUM(Income!C4:C12)"],
+                ["Total Expenses", "=Expenses!C26"],
+                ["Net", "=B4-B5"],
+                ["Rent", '=SUMIF(Expenses!A:A,"Rent",Expenses!C:C)'],
+                ["Verdict", '=IF(B6>0,"Saving","Overspent")'],
+            ],
+        },
+        {
+            "name": "Year Overview",
+            "columns": [
+                {"title": "Month"},
+                {"title": "Income"},
+                {"title": "Savings"},
+                {"title": "Rate", "format": "percent", "formula": "=IFERROR(C{row}/B{row},0)"},
+            ],
+            "rows": [["January", 2800, 300], ["March", 0, 0]],
+        },
+        {
+            "name": "Tracker",
+            "columns": [{"title": "Company"}, {"title": "Status"}],
+            "rows": [["A", "Applied"], ["B", "Interview"], ["C", "applied"]],
+        },
+        {
+            "name": "Counts",
+            "columns": [{"title": "Status"}, {"title": "Count", "formula": "=COUNTIF(Tracker!B:B,A{row})"}],
+            "rows": [["Applied"], ["Offer"]],
+        },
+    ],
+}
+
+
+def test_the_sheet_pictures_work_out_iferror_if_countif_sumif_and_other_sheets() -> None:
+    spec = sheets.parse(json.dumps(BUDGET), lambda path: "")
+    assert spec.warnings == []  # 0.37.5: a SUMIF of "Rent" over whole columns counts no total row
+    data = sheets.build(spec)
+    book = sheets.values(data)  # 0.37.5: the pictures are drawn from the file, worked out as these are
+    summary, year, counts = book["Summary"], book["Year Overview"], book["Counts"]
+    assert [summary[(r, 2)] for r in range(4, 9)] == [2800.0, 1232.5, 1567.5, 850.0, "Saving"]
+    assert [year[(r, 4)] for r in (2, 3)] == [300 / 2800, 0.0]  # IFERROR: a division by zero is 0
+    assert [counts[(r, 2)] for r in (2, 3)] == [2.0, 0.0]  # COUNTIF in any case, as Excel does
+    assert "=IFERROR(C3/B3,0) → 0" in sheets.workbook_text(data)
+    number, picture = sheets.picture(data, "Summary")
+    assert number == 3 and picture.width > 300
+    assert sheets._shown(-32.5, "usd") == "-$32.50" and sheets._shown(32.5, "usd") == "$32.50"
+
+
+def test_a_formula_that_cant_be_worked_out_is_still_shown_as_written() -> None:
+    spec = sheets.parse(
+        json.dumps({"sheets": [{"name": "S", "columns": [{"title": "A"}], "rows": [['=TEXT(TODAY(),"yyyy")']]}]}),
+        lambda path: "",
+    )
+    assert sheets.values(sheets.build(spec))["S"][(2, 1)] == '=TEXT(TODAY(),"yyyy")'
+
+
+def test_a_range_on_another_sheet_that_misses_its_data_is_reported() -> None:
+    budget = json.loads(json.dumps(BUDGET))
+    budget["sheets"][2]["rows"][:2] = [
+        ["Total Income", "=SUM(Income!C2:C9)"],
+        ["Total Expenses", "=SUM(Expenses!C4:C27)"],
+    ]
+    spec = sheets.parse(json.dumps(budget), lambda path: "")
+    assert spec.warnings == [
+        "Summary row 4: Income!C2:C9 leaves out some of the data of Income (rows 4 to 12; its total is in row 13): "
+        "Income!C4:C12 takes them all",
+        "Summary row 5: Expenses!C4:C27 counts the total row (row 26) of Expenses besides its data: Expenses!C4:C25 "
+        "takes the data alone",
+    ]
+
+
+def test_make_spreadsheet_says_where_the_data_rows_are(tmp_path: Path) -> None:
+
+    workspace = jail(tmp_path)
+    workspace.write("budget.json", json.dumps(BUDGET))
+    made = make.spreadsheet(workspace, "budget.json", "shop/budget.xlsx")
+    assert "Data rows: Income 4-12 (total 13), Expenses 4-25 (total 26), Summary 4-8," in " ".join(made.report)
+
+
+# --- From 0.24.0 (formerly test_fixes_0240.py) ---
+
+
+# --- make_image: '#' before a region ----------------------------------------------------------------------------------
+
+
+def test_a_picture_s_region_after_a_hash_is_read_as_its_region(tmp_path: Path) -> None:
+    ws = jail(tmp_path)
+    ws.write_bytes("shop/cover.png", png((600, 450)))
+    made = make.image(ws, "shop/photo.png", "shop/cover.png#@top", "Title")
+    assert made.report[0].startswith("Made shop/photo.png")
+    with pytest.raises(make.ProductError, match=r"\('file.png@top', 'file.xlsx#2@top'\)"):
+        make.image(ws, "shop/photo.png", "shop/cover.docx", "Title")

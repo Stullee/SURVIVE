@@ -1,4 +1,6 @@
-"""Ledger math and the owner's entries."""
+"""Ledger math and the owner's entries.
+
+Also tests from 0.12.0 (formerly test_small_defects.py)."""
 
 from __future__ import annotations
 
@@ -6,10 +8,12 @@ import uuid
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.economy.ledger import Scope
 from tests.economy_helpers import FakeClock, make_economy, metered, owner, request
+from tests.owner.test_owner_api import grant, post
 
 
 def key() -> str:
@@ -225,3 +229,18 @@ def test_starting_balance_is_recorded_once_and_never_in_safe_mode(data_dir: Path
     other = data_dir / "other"
     other.mkdir()
     assert make_economy(other, Settings(starting_balance_usd=0)).status().state == "unfunded"
+
+
+# --- From 0.12.0 (formerly test_small_defects.py) ---
+
+
+def test_the_ledger_goes_further_back_than_its_newest_twenty(ingress_client: TestClient) -> None:
+    for _ in range(25):
+        assert post(ingress_client, "api/ledger/grant", grant("1")).status_code == 201
+    newest = ingress_client.get("api/dashboard").json()["ledger"]["entries"]
+    assert len(newest) == 20
+    older = ingress_client.get(f"api/ledger?limit=100&before={newest[-1]['id']}").json()["entries"]
+    assert older and all(e["id"] < newest[-1]["id"] for e in older)
+    assert {e["id"] for e in newest} | {e["id"] for e in older} >= set(range(newest[-1]["id"] - len(older), 1))
+    script = (Path(__file__).parents[2] / "app" / "web" / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    assert '"api/ledger?limit=" + LEDGER_PAGE + "&before="' in script and "Show older entries" in script

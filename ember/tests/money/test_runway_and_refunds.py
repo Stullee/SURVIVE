@@ -7,7 +7,8 @@ E2. A system clock more than a day behind the last call is taken as right, with 
     call until the real time passes that call.
 E3. The runway's window counts its first day's corrections in the share of that day's charges it holds.
 E4. The reflection's reserve reads what the recent reflections are known to cost, and is at most its worst case.
-"""
+
+Tests from 0.40.3 (formerly test_fixes_0403_economy.py)."""
 
 from __future__ import annotations
 

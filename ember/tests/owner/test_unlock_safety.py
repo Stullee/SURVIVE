@@ -4,7 +4,9 @@ what Ember's code carries out (FIX NOW 26e).
 An automatic email's footer said the owner approved it before sending. Taking back every unlock, or Ember's own
 revocation, stopped only what an unlock held, not what it had approved. The kill switch left the unlocks standing, so
 its reset approved what a veto window held. Unlocks could be granted, and acted, while owner_user_ids named no one or
-in safe mode. And an unlock approved a reply of 329 words without "Re:" or a listing with one photo."""
+in safe mode. And an unlock approved a reply of 329 words without "Re:" or a listing with one photo.
+
+Tests from 0.15.0 and 0.23.1 (formerly test_fixes_0140_unlock_safety.py, test_fixes_0231.py)."""
 
 from __future__ import annotations
 
@@ -637,3 +639,61 @@ def test_email_replies_run_at_most_after_a_veto_window(data_dir: Path) -> None:
     with agent.db.connection() as conn:
         assert policy.grant(conn, agent.scope(), goal, "email_reply") is None  # taken back: manual
         assert policy.grants(conn, agent.scope(), goal)[0]["by"] == policy.REVOKED_BY
+
+
+# --- From 0.23.1 (formerly test_fixes_0231.py) ---
+
+
+# --- 6. replies a taken-back "auto" unlock approved ---
+
+
+def _copy(conn: Any, approval_id: int) -> int:
+    names = ", ".join(r[1] for r in conn.execute("PRAGMA table_info(approvals)") if r[1] != "id")
+    sql = f"INSERT INTO approvals ({names}) SELECT {names} FROM approvals WHERE id = ?"
+    return int(conn.execute(sql, (approval_id,)).lastrowid)
+
+
+def _grant(conn: Any, agent: Any, goal: int, level: str, now: str) -> Any:
+    cursor = conn.execute(
+        "INSERT INTO policy_grants (mode, session, milestone_id, rule, level, per_day, budget, by, created_at)"
+        " VALUES (?, ?, ?, 'email_reply', ?, 3, 10, 'Stefan', ?)",
+        (agent.scope().mode, agent.scope().session, goal, level, now),
+    )
+    return conn.execute("SELECT * FROM policy_grants WHERE id = ?", (cursor.lastrowid,)).fetchone()
+
+
+def test_replies_an_auto_unlock_approved_wait_for_the_owner_after_the_upgrade(data_dir: Path) -> None:
+    agent, transport = mail_cycle(data_dir, calls(("email_inbox", {})))
+    goal = a_milestone(agent)
+    queued = answer(agent, transport, goal)["id"]  # approved by an "auto" unlock, not sent yet
+    now = to_iso(agent.clock.now())
+    with agent.db.transaction() as conn:  # as 0.20.1 left them
+        conn.execute("DROP TRIGGER policy_grants_replies_veto")
+        auto = _grant(conn, agent, goal, "auto", now)
+        a_use(conn, queued, auto, now)
+        approve_as_code(conn, queued, now)
+        twin, begun = _copy(conn, queued), _copy(conn, queued)
+        a_use(conn, twin, auto, now)  # the same reply approved twice
+        a_use(conn, begun, auto, now)
+        executor.Executor._start(conn, begun, now, None)  # Ember's code began sending it: it runs on
+        upgrade = (paths.APP_DIR / "migrations" / "0076_reply_unlocks.sql").read_text(encoding="utf-8")
+        conn.execute(upgrade[upgrade.index("INSERT INTO policy_grants") :])  # 0.22.0 took the unlock back
+        vetoable = _copy(conn, queued)  # one the veto window the owner granted again carried: it stays approved
+        a_use(conn, vetoable, _grant(conn, agent, goal, "veto_window", now), now)
+        sql = (paths.APP_DIR / "migrations" / "0078_reply_unlocks_stop.sql").read_text(encoding="utf-8")
+        for statement in sql.split(";\n"):
+            if statement.strip():
+                conn.execute(statement)
+    assert status_of(agent, queued) == {
+        "status": "pending",
+        "decided_by": None,
+        "decision_comment": "Approved by your unlock, which was taken back (email replies run at most with a veto "
+        "window since 0.22.0) before Ember's code carried it out: it waits for you.",
+    }
+    closed = rows(agent, f"SELECT status, closed_by, result_note FROM approvals WHERE id = {twin}")[0]
+    assert (closed["status"], closed["closed_by"]) == ("failed", policy.REVOKED_BY)
+    assert closed["result_note"].endswith(f"The same request waits as #{queued}.")
+    assert status_of(agent, begun)["status"] == status_of(agent, vetoable)["status"] == "approved"
+    assert agent.execute_approved() == [(vetoable, "simulated")]  # not the one waiting for the owner
+    assert owner(agent).decide(queued, {"decision": "approve"}, "Stefan").status == 200
+    assert agent.execute_approved() == [(queued, "simulated")]

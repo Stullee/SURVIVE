@@ -9,7 +9,9 @@ The playbook was written only by the weekly look, once a week, which came right 
 when hardly any case existed, and which was skipped at every cycle once its view outgrew its budget: now each
 retrospective's lesson joins it as a hypothesis the day its case is kept, the look's view fits, the look curates, and
 the owner sees the playbook under Mind → Playbook. 0.35.0: READY retired; the plan tree takes each cycle's step and
-keeps a product going up to 3 cycles in a row (tests/test_fixes_0350.py)."""
+keeps a product going up to 3 cycles in a row (tests/plan/test_tree_steers.py).
+
+Tests from 0.30.0 (formerly test_fixes_0300.py)."""
 
 from __future__ import annotations
 

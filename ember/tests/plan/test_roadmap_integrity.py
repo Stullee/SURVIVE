@@ -6,8 +6,9 @@ a losing forecast by dropping its milestone, and take a venture live on a first 
 owner's drop of a bar opened the next one; a bar met days late after a sync gap was graded done; a parked venture's
 projects kept their bars; the print-on-demand venture backed under 0.12.0 kept its prose first test; a first sale
 recorded late could never count; and the agent's own views goal stayed self-reported. 0.35.0: the listing test's
-bars and milestone_plan retired (each product's decide-by dates in the plan tree: tests/test_fixes_0350.py).
-"""
+bars and milestone_plan retired (each product's decide-by dates in the plan tree: tests/plan/test_tree_steers.py).
+
+Tests from 0.15.0 and 0.24.0 (formerly test_fixes_0140_roadmap.py, test_fixes_0240.py)."""
 
 from __future__ import annotations
 
@@ -20,7 +21,16 @@ import pytest
 
 pytest.importorskip("httpx2")
 
-from app.agent import econ, metrics, predictions, roadmap, stages, tools, ventures  # noqa: E402
+from app.agent import (  # noqa: E402
+    econ,
+    metrics,
+    predictions,
+    prompts,  # noqa: E402
+    roadmap,
+    stages,
+    tools,
+    ventures,
+)
 from app.agent import plan as plan_tree  # noqa: E402
 from app.agent.fake_llm import FakeTransport  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
@@ -469,3 +479,29 @@ def test_the_focus_says_who_confirms_a_first_test_and_what_a_drop_costs(data_dir
     assert "or drop it (why; your odds on it count as missed)" in roadmap.focus_text(
         milestone(agent, goal), agent.clock.today(), None
     )
+
+
+# --- From 0.24.0 (formerly test_fixes_0240.py) ---
+
+
+def now(agent: Any) -> str:
+    return to_iso(agent.clock.now())
+
+
+# --- milestones Ember's code set, and channels that wait for the owner -----------------------------------------------
+
+
+def test_a_milestone_ember_s_code_set_says_its_date_doesn_t_move(data_dir: Path) -> None:
+    agent, project = started(data_dir)
+    with agent.db.transaction() as conn:  # a venture's first test (0.35.0: the listing test's bars retired)
+        made = roadmap.create(
+            conn, agent.scope(), title="First test: A", measure="Ember's code checks it", now=now(agent),
+            due=(agent.clock.today() + timedelta(days=21)).isoformat(), project_id=project, created_by="code",
+            kind="first_test", metric="views_total", target=10,
+        )  # fmt: skip
+    [bar] = rows(agent, f"SELECT * FROM milestones WHERE id = {made}")
+    assert roadmap.owner_said(bar) == " · set by Ember's code (its date doesn't move)"
+    with agent.db.connection() as conn:
+        card = roadmap.review_text(conn, agent.scope(), agent.clock.today(), "2000-01-01T00:00:00Z")
+    assert f"#{bar['id']} " in card and ", Ember's code checks and closes it, its date doesn't move)" in card
+    assert "never extend one whose date doesn't move" in prompts.REVIEW_RULES

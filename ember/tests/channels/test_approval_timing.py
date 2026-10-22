@@ -7,7 +7,8 @@ repro/outside/r6_stop_before_send.py, r1_kill_mid_round.py and r2_expired_veto.p
   the live page went on uploading every 15 minutes.
 - Requests expired only at a cycle's start, after the round's unlocks: on Resume after 8 days paused, an unlock
   approved an 8-day-old reply, and it was sent.
-"""
+
+Tests from 0.37.3 (formerly test_fixes_0373.py)."""
 
 from __future__ import annotations
 

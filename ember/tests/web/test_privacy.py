@@ -1,9 +1,12 @@
-"""What Ember shows others of the owner's and other people's data (0.11.2, app/privacy.py)."""
+"""What Ember shows others of the owner's and other people's data (0.11.2, app/privacy.py).
+
+Also tests from 0.15.0 and 0.19.2 (formerly test_fixes_0140_live_fixes.py, test_fixes_0192.py)."""
 
 from __future__ import annotations
 
 import pytest
 
+from app import privacy
 from app.privacy import CODE, REMOVED, Masker, Redactor, _digest, leave_out_third_party, secretish
 
 
@@ -121,3 +124,26 @@ def test_removed_words_are_found_wherever_they_were_copied() -> None:
     )
     assert redactor.apply("aaaaaa-0bbbbb-ccccCd and nothing else") == "aaaaaa-0bbbbb-ccccCd and nothing else"
     assert Redactor("other salt", redactor.digests).apply(password) == password  # the salt is part of the hash
+
+
+# --- From 0.15.0 (formerly test_fixes_0140_live_fixes.py) ---
+
+
+# --- LIVE 7: the one-time-code mask stays within a table cell -------------------------------------------------------
+
+
+def test_a_number_in_the_next_cell_is_not_a_code() -> None:
+    row = "9 | 55 | ok | 893929 | - | workshop/scripts/verify-and-fix-the-9.py | Verify and fix the existing file"
+    assert privacy.Masker()(row) == row
+    assert privacy.Masker()("Your verification code | is 483920") == "Your verification code | is 483920"
+    assert privacy.Masker()("| Verification code | 483920 |") == "| Verification code | 483920 |"  # DOCS says so
+    assert privacy.Masker()("Your verification code is 483920") == f"Your verification code is {privacy.CODE}"
+
+
+# --- From 0.19.2 (formerly test_fixes_0192.py) ---
+
+
+def test_the_code_word_pin_is_capitalised() -> None:
+    masker = privacy.Masker()
+    assert masker('"shape":"pin","subtitle":"Word Template · DIN 5008"').endswith('DIN 5008"')
+    assert masker("Your PIN is 4821") == "Your PIN is [masked]"

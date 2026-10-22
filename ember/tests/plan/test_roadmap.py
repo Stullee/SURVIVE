@@ -30,7 +30,7 @@ JOURNAL = ToolCalls([("write_journal", {"summary": "Planned ahead", "entry": "La
 @pytest.fixture(autouse=True)
 def no_money_goal(monkeypatch: pytest.MonkeyPatch) -> None:
     """These tests lay out a roadmap from empty: the money goal Ember's code keeps at its root (0.12.0) stays out of
-    them; tests/test_money_goal.py has it."""
+    them; tests/plan/test_money_goal.py has it."""
     monkeypatch.setattr(roadmap, "keep_money_goal", lambda *args, **kwargs: [])
 
 

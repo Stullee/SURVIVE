@@ -13,7 +13,8 @@ The analysis of 0.37.0 (analysis-0.37.0/ember-codebase-0.37.0.md, 3.1 and 3.2) f
 
 The tests until 0.37.5 replayed picks as if taking a step completed it (test_fixes_0353: each pick removed from the
 list). These run consecutive cycles in which taking a step completes nothing unless the cycle's work moves it.
-"""
+
+Tests from 0.37.6, 0.39.8 and 0.40.1 (formerly test_fixes_0376.py, test_fixes_0398.py, test_fixes_0401.py)."""
 
 from __future__ import annotations
 
@@ -28,7 +29,13 @@ import pytest
 
 pytest.importorskip("httpx2")
 
-from app.agent import obligations, plan, store, tools  # noqa: E402
+from app.agent import (  # noqa: E402
+    obligations,
+    plan,
+    store,
+    tools,
+    weights,  # noqa: E402
+)
 from app.agent.fake_llm import Plan, Reply, ToolCalls  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from tests.cycle.test_agent import rows  # noqa: E402
@@ -36,6 +43,8 @@ from tests.plan.test_cycle_line import cycle, lined, now  # noqa: E402
 from tests.plan.test_exploring import exploring_agent  # noqa: E402
 from tests.plan.test_marketing_order import PINS  # noqa: E402
 from tests.plan.test_plan_tree import ALL, BOOK, TRACKER, keep, project, request  # noqa: E402
+from tests.plan.test_plan_tree import BOOK as BOOK_TITLE  # noqa: E402
+from tests.plan.test_plan_tree import project as line  # noqa: E402
 from tests.plan.test_promises import promise  # noqa: E402
 from tests.plan.test_tree_steers import WORK, steered  # noqa: E402
 from tests.ventures.test_ventures import JOURNAL  # noqa: E402
@@ -550,3 +559,73 @@ def test_a_kdp_package_rejected_is_proposed_again(data_dir: Path) -> None:
     keep(agent)
     assert waits(agent, f"Propose the book again: request #{package} rejected", book) is None
     assert waits(agent, "You publish it at KDP", book) == "step"
+
+
+# --- From 0.39.8 (formerly test_fixes_0398.py) ---
+
+
+def test_the_book_the_owner_rejected_comes_before_a_promise_and_gets_a_second_cycle_a_day(data_dir: Path) -> None:
+    agent, _ = lined(data_dir, titles=())
+    book = project(agent, *BOOK_TITLE)
+    tracker = project(agent, *TRACKER)
+    keep(agent)
+    package = asked(agent, book, "kdp_package")
+    keep(agent)  # its stages up to the release
+    decided(agent, package, "rejected")  # "finally looking good. last small change is to extend the lines…"
+    keep(agent)
+    closed_without_proposing(agent)  # a cycle took the decision in
+    promise(agent, "Resubmit the Bluesky post once the mapping is fixed", days=4, line=tracker)
+    keep(agent)
+    again = f"Propose the book again: request #{package} rejected"
+    s = steered(agent)
+    found = candidate(s, again, book)
+    assert found.waiting is None and found.step.urgency == weights.REWORK
+    assert s.step is not None and s.step.title == again  # before the promise (live: 2.6 below 6.0)
+    taken = cycles(agent, 3)  # each takes it, and nothing moves for it: two tries today, then the brake
+    assert [t.title for t in taken[:2]] == [again, again]
+    assert taken[2].title != again and waits(agent, again, book) == "tried"
+    agent.clock.advance(days=4)  # 0.40.1 (analysis-0.40.0, 3.3): days after the decision, until it is proposed again
+    keep(agent)
+    assert candidate(steered(agent), again, book).step.urgency == weights.REWORK
+
+
+def test_a_request_that_expired_gets_no_rework_urgency(data_dir: Path) -> None:
+    agent, _ = lined(data_dir, titles=())
+    book = project(agent, *BOOK_TITLE)
+    keep(agent)
+    package = asked(agent, book, "kdp_package")
+    keep(agent)
+    decided(agent, package, "expired")
+    keep(agent)
+    closed_without_proposing(agent)
+    keep(agent)
+    assert candidate(steered(agent), "Propose the book again", book).step.urgency == 0.0
+
+
+# --- From 0.40.1 (formerly test_fixes_0401.py) ---
+
+
+# --- 4. the rejected book stays urgent ---
+
+
+def test_the_rejected_book_stays_urgent_until_it_is_proposed_again(data_dir: Path) -> None:
+    """Live (analysis-0.40.0, 3.3), the urgency of the owner's rejection ended 3 days after it, while five cycles had
+    run out of room before they proposed the book: from the fourth day it got one try a day, level with a review's
+    step."""
+    agent, _ = lined(data_dir, titles=())
+    book = line(agent, *BOOK_TITLE)
+    keep(agent)
+    package = asked(agent, book, "kdp_package")
+    keep(agent)
+    decided(agent, package, "rejected")
+    keep(agent)
+    closed_without_proposing(agent)
+    agent.clock.advance(days=4)
+    keep(agent)
+    again = f"Propose the book again: request #{package} rejected"
+    assert candidate(steered(agent), again, book).step.urgency == weights.REWORK
+    taken = cycles(agent, 3)  # each takes it and ends before it proposes: still two tries a day
+    assert [t.title for t in taken[:2]] == [again, again] and taken[2].title != again
+    asked(agent, book, "kdp_package")  # proposed again: its step is done
+    keep(agent)
+    assert not [c for c in steered(agent).found if c.step.title == again]

@@ -1,5 +1,8 @@
 """The daily business review (0.7.1): the scorecard Ember's code builds from its records, the review before the
-first plan of a day, and what the plans and the dashboard see of it."""
+first plan of a day, and what the plans and the dashboard see of it.
+
+Also tests from 0.19.2, 0.23.1, 0.24.0 and 0.33.0 (formerly test_fixes_0192.py, test_fixes_0231.py,
+test_fixes_0240.py, test_fixes_0330.py)."""
 
 from __future__ import annotations
 
@@ -10,15 +13,20 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.agent import context, prompts, review
-from app.agent.fake_llm import FakeTransport, Reply, request_kind, validate_request
+from app.agent import context, loop, prompts, review, roadmap, store
+from app.agent.fake_llm import Fail, FakeTransport, Reply, request_kind, validate_request
 from app.config import Settings
 from app.economy import pricing
-from app.economy.metering import REVIEW, MeteredModel, rough_token_count
+from app.economy.clock import to_iso
+from app.economy.metering import REVIEW, MeteredModel, NotSent, rough_token_count
+from tests.channels.test_pinterest import PINNING
+from tests.channels.test_printify import EVERYWHERE
 from tests.cycle.test_agent import rows
 from tests.cycle.test_loop_shapes import run, unbraked
 from tests.economy_helpers import owner as owner_entry
 from tests.owner.test_owner_loop import owner
+from tests.plan.test_roadmap import plan
+from tests.ventures.test_venture_channels import not_set_up
 
 
 def kinds(fake: FakeTransport, since: int = 0) -> list[str]:
@@ -342,3 +350,159 @@ def test_reviews_are_history(data_dir: Path) -> None:
     agent.run_cycle("schedule")
     with agent.db.transaction() as conn, pytest.raises(Exception, match="history cannot change"):
         conn.execute("UPDATE reviews SET focus = 'rewritten'")
+
+
+# --- From 0.19.2 (formerly test_fixes_0192.py) ---
+
+
+# --- the daily review's roadmap ------------------------------------------------------------------------------------
+
+
+def test_the_review_scorecard_shows_the_roadmap_before_the_projects(data_dir: Path) -> None:
+    agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]))
+    scope = agent.scope()
+    now = "2026-09-01T12:00:00Z"
+    with agent.db.transaction() as conn:
+        for number in range(12):
+            store.create_project(
+                conn,
+                scope,
+                cycle_id=1,
+                title=f"Product line {number} " + "x" * 50,
+                hypothesis="h" * 400,
+                next_step="n" * 150,
+                status="active",
+                now=now,
+            )
+        made = roadmap.create(conn, scope, title="Day 7: 10 views", measure="views", due="2026-09-20", now=now)
+    card = _scorecard(agent)
+    assert f'\n- due later this month: #{made} "Day 7: 10 views" (2026-09-20)' in card.text
+    assert card.text.index("ROADMAP") < card.text.index("PROJECTS")
+
+
+def _scorecard(agent: Any) -> review.Scorecard:
+    books, ledger_scope = agent.economy.books, agent.economy.life.scope()
+    with agent.db.connection() as conn:
+        return review.scorecard(
+            conn,
+            agent.scope(),
+            agent.clock,
+            books,
+            ledger_scope,
+            agent.economy.life.evaluate(),
+            dry_run=True,
+        )
+
+
+# --- From 0.23.1 (formerly test_fixes_0231.py) ---
+
+
+# --- 1. the daily review's attempts ---
+
+
+def test_a_free_retry_of_the_review_call_doesn_t_use_up_the_day_s_second_review(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(loop, "RETRY_DELAY_SECONDS", 0)
+    agent, fake = next_day(data_dir)
+    # the first call never reached the API (free, tried again at once); the retry's answer isn't JSON
+    fake.script.extend([Fail(NotSent("no connection")), Reply("Things are going fine.")])
+    agent.run_cycle("schedule")
+    assert [r["status"] for r in rows(agent, "SELECT status FROM llm_calls WHERE purpose = 'review'")] == [
+        "failed",
+        "ok",
+    ]
+    assert [r["status"] for r in rows(agent, "SELECT status FROM reviews")] == ["failed"]
+    with agent.db.connection() as conn:
+        assert review.sent_today(conn, agent.scope(), agent.clock.today()) == 1
+        assert review.due(conn, agent.scope(), agent.clock)
+    before = len(fake.sent)
+    agent.run_cycle("schedule")
+    assert "review" in kinds(fake, before)  # the day's second attempt
+
+
+def test_the_weekly_look_doesn_t_use_up_the_day_s_second_review(data_dir: Path) -> None:
+    agent, fake = next_day(data_dir)
+    agent.run_cycle("schedule")  # the review and the weekly look
+    agent.clock.advance(days=7)
+    fake.script.append(Reply("Things are going fine."))  # today's review isn't JSON; the weekly look follows
+    before = len(fake.sent)
+    agent.run_cycle("schedule")
+    assert kinds(fake, before)[:2] == ["review", "weekly"]
+    before = len(fake.sent)
+    agent.run_cycle("schedule")
+    assert "review" in kinds(fake, before)
+
+
+def test_answered_review_calls_count_whatever_happens_with_their_answer(data_dir: Path) -> None:
+    """0.22.0's guard stays: a review call answered and paid for counts at once, though nothing saved its review."""
+    agent, _ = next_day(data_dir)
+    scope, today, now = agent.scope(), agent.clock.today(), to_iso(agent.clock.now())
+    with agent.db.transaction() as conn:
+        assert review.due(conn, scope, agent.clock)
+        for _ in range(review.MAX_ATTEMPTS):
+            review.note_sent(conn, scope, today, now)
+        assert review.sent_today(conn, scope, today) == review.MAX_ATTEMPTS
+        assert not review.due(conn, scope, agent.clock)
+    agent.clock.advance(days=1)
+    with agent.db.connection() as conn:
+        assert review.sent_today(conn, scope, agent.clock.today()) == 0  # a new day
+
+
+# --- 3. every project stays named in the review ---
+
+
+def test_the_review_names_every_project_it_leaves_out() -> None:
+    lines = []
+    for pid in range(1, 41):
+        lines.append(f"#{pid} [active] Product line {pid} with a long enough title to fill its line · spent $0.10")
+        if pid % 3 == 0:
+            lines.append(f"   hypothesis: People buy product {pid}.")
+    text = "\n".join(lines)
+    for room in (2_000, 1_000, 700):
+        cut = review._cut_lines(text, room)
+        assert len(cut) <= room, room
+        for pid in range(1, 41):
+            assert f"#{pid} " in cut or f"#{pid}," in cut or cut.endswith(f"#{pid}]"), (room, pid)
+        assert "left out, for the scorecard's room: #" in cut
+    assert review._cut_lines(text, len(text)) == text
+
+
+# --- From 0.24.0 (formerly test_fixes_0240.py) ---
+
+
+def test_the_daily_review_hears_which_channels_wait_for_the_owner(data_dir: Path) -> None:
+    fake = FakeTransport()
+    agent, _ = run(data_dir, fake, cycles=1, settings=PINNING)
+    not_set_up(agent)
+    agent.clock.advance(days=1)
+    since = len(fake.sent)
+    agent.run_cycle("schedule")
+    [sent] = [r for r in list(fake.sent)[since:] if request_kind(r) == "review"]
+    card = sent["messages"][0]["content"][0]["text"]
+    assert "CHANNELS NOT READY (no request or tool can use them until then)\n- Pinterest: Switched on, but it" in card
+    assert "Your owner's dashboard shows it: don't ask them about it again." in card
+    assert loop._waiting("Pinterest", ("ok", None), "ok") == ""  # set up: nothing waits
+
+
+# --- From 0.33.0 (formerly test_fixes_0330.py) ---
+
+
+# --- the review hears which channels are ready ---
+
+
+def test_the_daily_review_hears_which_channels_are_ready(data_dir: Path) -> None:
+    fake = FakeTransport()
+    agent, _ = run(data_dir, fake, cycles=1, settings=EVERYWHERE)
+    agent.clock.advance(days=1)
+    since = len(fake.sent)
+    agent.run_cycle("schedule")
+    [sent] = [r for r in list(fake.sent)[since:] if request_kind(r) == "review"]
+    card = sent["messages"][0]["content"][0]["text"]
+    settings = EVERYWHERE
+    assert (
+        f"CHANNELS READY (their tools work now): Pinterest: ember-dry-run, at most {settings.pinterest_pins_per_day}"
+        f" pins a day; Bluesky: 0 followers, no post live, at most {settings.bluesky_posts_per_day} posts a day;"
+        f" Printify: at most {settings.printify_products_per_day} products a day." in card
+    )
+    assert "CHANNELS NOT READY" not in card

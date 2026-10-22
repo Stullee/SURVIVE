@@ -14,7 +14,8 @@ before the first sale.
   least MIN_FIRST_SALE_DAYS), and the "slow" knock-out compares those days with half the net runway.
 * The cold-outreach words skip what a case rules out, and read German and common English phrasings.
 * The desk's "decided in 7 days" counts the agent's and the owner's decisions, not Ember's code's automatic parks.
-"""
+
+Tests from 0.15.0 (formerly test_fixes_0140_ventures.py)."""
 
 from __future__ import annotations
 

@@ -1,4 +1,6 @@
-"""Fixes from the first live day: removing message text, the PDF guard, effort, the owner's to-do count."""
+"""Fixes from the first live day: removing message text, the PDF guard, effort, the owner's to-do count.
+
+Tests from the first live day (formerly test_live_day_fixes.py)."""
 
 from __future__ import annotations
 

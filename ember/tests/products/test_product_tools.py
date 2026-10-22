@@ -260,7 +260,7 @@ def test_the_prompts_tell_the_agent_to_make_files_and_ask_for_what_is_missing() 
     work = prompts.work_request(context_settings(), "brief", [])
     rules = work["system"][2]["text"]
     # 0.12.0: the owner's knowledge says the agent makes its files, request_upgrade's description when to ask for an
-    # ability; the rules no longer repeat them (tests/test_rule_audit.py)
+    # ability; the rules no longer repeat them (tests/cycle/test_rule_audit.py)
     assert "Look at the pictures of what you make before you show your work" in rules
     assert "file request_upgrade" in prompts.REFLECT_PROMPT
     assert "when a missing tool blocks a way to earn money" in tools.SPECS["request_upgrade"].description

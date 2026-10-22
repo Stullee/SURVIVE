@@ -8,11 +8,13 @@ no brainstorm was offered while the ideas ran low.
 
 - A backed venture is project work: Ember's code opens its project (once), ordinary cycles run its first test, READY
   has no "build" any more, a venture cycle isn't aimed at a backed venture, venture cycles run in explore only, and a
-  backed venture takes none of the room of the 8 being researched (tests/test_desk.py, tests/test_burn_modes.py).
+  backed venture takes none of the room of the 8 being researched (tests/ventures/test_desk.py,
+  tests/money/test_burn_modes.py).
 - A waiting message makes a venture cycle an ordinary one only when it woke the cycle; a scheduled venture cycle
-  answers it first (tests/test_obligations.py).
-- A due brainstorm keeps READY's last place (tests/test_desk.py).
-"""
+  answers it first (tests/plan/test_obligations.py).
+- A due brainstorm keeps READY's last place (tests/ventures/test_desk.py).
+
+Tests from 0.19.2 and 0.19.3 (formerly test_fixes_0192.py, test_fixes_0193.py)."""
 
 from __future__ import annotations
 
@@ -96,3 +98,43 @@ def test_backed_ventures_take_none_of_the_room_for_research(data_dir: Path) -> N
     refused = call(ctx, "venture_create", {"title": "One more", "pitch": "p", "stage": "researching"})
     assert not refused.ok and f"{ventures.MAX_ACTIVE} ventures are being researched already" in refused.text
     assert call(ctx, "venture_create", {"title": "An idea", "pitch": "p", "stage": "idea"}).ok
+
+
+# --- From 0.19.2 (formerly test_fixes_0192.py) ---
+
+
+def test_a_project_leaving_a_backed_venture_says_its_test_needs_one(data_dir: Path) -> None:
+    from tests.ventures.test_first_test_grace import backed_pod  # noqa: PLC0415
+
+    agent, pod = backed_pod(data_dir)
+    ctx = shop_context(agent)
+    with agent.db.transaction() as conn:
+        conn.execute(f"UPDATE projects SET venture_id = NULL WHERE venture_id = {pod}")
+        first, second = (
+            store.create_project(
+                conn,
+                agent.scope(),
+                cycle_id=1,
+                title=title,
+                hypothesis="h",
+                next_step="n",
+                status="active",
+                now="2026-09-01T12:00:00Z",
+                venture_id=pod,
+            )
+            for title in ("Posters", "Mugs")
+        )
+        other = ventures.create(
+            conn, agent.scope(), title="Mugs elsewhere", pitch="p.", stage="building", now="2026-09-01T12:00:00Z"
+        )
+    # 0.35.0: only the owner closes a project; a move to another venture leaves the test without one too
+    moved = call(ctx, "project_update", {"project_id": first, "venture_id": other})
+    assert moved.ok and "no open project now" not in moved.text
+    last = call(shop_context(agent), "project_update", {"project_id": second, "venture_id": other})
+    assert last.ok and last.text.endswith(
+        f"Venture #{pod} ({ventures_title(agent, pod)}) has no open project now: its test needs one."
+    )
+
+
+def ventures_title(agent: Any, venture_id: int) -> str:
+    return str(rows(agent, f"SELECT title FROM ventures WHERE id = {venture_id}")[0]["title"])

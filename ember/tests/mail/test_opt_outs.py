@@ -1,6 +1,8 @@
 """0.12.0: an email that asks not to be emailed again is caught in several languages and anywhere in the sender's own
 words (only "stop", "unsubscribe" and "abmelden" alone on the first line were), the agent marks what the check misses
-(mark_opt_out), the owner adds any address, and no new email is dropped (beyond 20 per check, the older ones were)."""
+(mark_opt_out), the owner adds any address, and no new email is dropped (beyond 20 per check, the older ones were).
+
+Also tests from 0.15.0 (formerly test_fixes_0140_live_fixes.py)."""
 
 from __future__ import annotations
 
@@ -16,6 +18,7 @@ from app.integrations import mail, mailstore
 from app.integrations.optout import opt_out
 from tests.cycle.test_agent import make_agent, plan, rows
 from tests.cycle.test_agent import tools as calls
+from tests.cycle.test_decision_wakes import asks_and_sleeps
 from tests.mail.test_mail import mail_cycle, raw_mail, tool_results
 from tests.owner.test_owner_api import post
 
@@ -191,3 +194,51 @@ def test_the_owner_adds_an_address_ember_never_emails(ingress_client: TestClient
     assert shown["address"] == "lena.h@example.org" and shown["reason"].endswith(" added it")
     script = (Path(__file__).parents[2] / "app" / "web" / "static" / "js" / "app.js").read_text(encoding="utf-8")
     assert '"api/email/suppressions"' in script and "Never emailed" in script
+
+
+# --- From 0.15.0 (formerly test_fixes_0140_live_fixes.py) ---
+
+
+# --- LIVE 11: an opt-out "replied" only to Ember's own email --------------------------------------------------------
+
+
+def incoming(uid: int, sender: str, body: str, in_reply_to: str | None = None) -> Any:
+    msg = EmailMessage()
+    msg["From"], msg["To"], msg["Subject"] = sender, "ember@mail.example", "Re: Hello"
+    msg["Date"], msg["Message-ID"] = "Mon, 28 Sep 2026 08:00:00 +0200", f"<m{uid}@example.org>"
+    if in_reply_to:
+        msg["In-Reply-To"] = in_reply_to
+    msg.set_content(body)
+    return mail.parse_message(msg.as_bytes(), uid)
+
+
+def test_an_opt_out_says_wrote_unless_it_answers_embers_email(data_dir: Path) -> None:
+    agent, _ = make_agent(data_dir, asks_and_sleeps(720))
+    agent.run_cycle("schedule")
+    scope = agent.scope()
+    with agent.db.transaction() as conn:
+        mailstore.store_outgoing(
+            conn,
+            scope,
+            approval_id=1,
+            message_id="<ours-1@ember>",
+            in_reply_to=None,
+            references=None,
+            from_addr="ember@mail.example",
+            from_name="Ember",
+            to_addr="ann@example.org",
+            subject="Hello",
+            body="Hello Ann.",
+            now="2026-09-28T07:00:00Z",
+        )
+    ann = incoming(61, "ann@example.org", "Stop", in_reply_to="<ours-1@ember>")
+    bob = incoming(62, "bob@example.org", "Bitte keine Werbung mehr.")
+
+    class Box(mail.FakeMailbox):
+        def fetch_new(self, after_uid: int, limit: int = 20, uidvalidity: Any = None, deadline: Any = None) -> Any:
+            return mail.FetchResult([ann, bob], 62, self.uidvalidity)
+
+    mailstore.fetch(agent.db, agent.clock, scope, Box(scope.session))
+    reasons = {r["address"]: r["reason"] for r in rows(agent, "SELECT address, reason FROM email_suppressions")}
+    assert reasons["ann@example.org"] == 'replied "Stop"'
+    assert reasons["bob@example.org"].startswith('wrote "')

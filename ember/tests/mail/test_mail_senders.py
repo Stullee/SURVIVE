@@ -6,7 +6,8 @@ topmost Authentication-Results header), and no list's, machine's or Ember's own.
 after a greeting and in more words, and cover the address Ember wrote to. A message the server doesn't hand over is
 asked for again (and skipped in the end); a failing mailbox is read less and less often. Text hidden by a style
 sheet, a colour or an offset is dropped from HTML mail.
-"""
+
+Tests from 0.15.0 (formerly test_fixes_0140_mail.py)."""
 
 from __future__ import annotations
 

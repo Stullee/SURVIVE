@@ -1,7 +1,9 @@
 """0.23.2: what the owner's park or kill of a venture stops, nothing carries on. A plan could still focus on a project
 waiting for the owner, the agent could plan milestones for the parked venture and its projects (an unlock of one
 carried their work on), its own milestones of the venture's projects stayed open, and listings and products could
-still join a waiting project."""
+still join a waiting project.
+
+Tests from 0.23.1 and 0.23.2 (formerly test_fixes_0231.py, test_fixes_0232.py)."""
 
 from __future__ import annotations
 
@@ -216,3 +218,156 @@ def test_the_set_aside_focus_doesn_t_cut_the_venture_s_pitch() -> None:
     )
     focus = section(brief, "FOCUS") or ""
     assert focus.startswith(note) and "Pitch: " in focus
+
+
+# --- From 0.23.1 (formerly test_fixes_0231.py) ---
+
+
+# --- 4.-5. the owner's park ---
+
+
+def parked_line(data_dir: Path) -> tuple[Any, Any, int, int, int]:
+    """An agent whose venture A has an active and an idea project; A's owner parks it. (agent, ctx, A, B, project)"""
+    agent, _ = listed(data_dir)
+    ctx = shop_context(agent)
+    now = to_iso(agent.clock.now())
+    with agent.db.transaction() as conn:
+        first, other = (
+            ventures.create(conn, agent.scope(), title=t, pitch="p.", stage="building", now=now) for t in ("A", "B")
+        )
+    made = call(
+        ctx,
+        "project_create",
+        {"title": "Under A", "hypothesis": "h", "status": "active", "venture_id": first},
+    )
+    idea = call(
+        ctx,
+        "project_create",
+        {"title": "Also under A", "hypothesis": "h", "status": "idea", "venture_id": first},
+    )
+    assert made.ok and idea.ok
+    assert owner(agent).decide_venture(first, {"action": "park", "comment": "Not now."}, "Stefan").status == 200
+    return agent, ctx, first, other, made.project_id
+
+
+def test_a_project_of_a_venture_the_owner_parked_stays_with_it(data_dir: Path) -> None:
+    agent, ctx, parked, other, project = parked_line(data_dir)
+    moved = call(ctx, "project_update", {"project_id": project, "venture_id": other})
+    assert not moved.ok and moved.text.endswith(
+        f"your owner parked venture #{parked}: its projects stay with it and wait until they take it up again. For "
+        "another venture, open a project of its own."
+    )
+    again = call(ctx, "project_update", {"project_id": project, "venture_id": other, "status": "active"})
+    assert not again.ok
+    assert rows(agent, f"SELECT status, venture_id FROM projects WHERE id = {project}") == [
+        {"status": "waiting", "venture_id": parked}
+    ]
+    with agent.db.transaction() as conn:  # a venture the agent parked itself: its projects move as before
+        made = store.create_project(
+            conn, agent.scope(), cycle_id=ctx.cycle_id, title="Under B", hypothesis="h", next_step="n",
+            status="idea", now=to_iso(agent.clock.now()), venture_id=other,
+        )  # fmt: skip
+        ventures.update(conn, other, to_iso(agent.clock.now()), stage="parked", parked_by="agent")
+        free = ventures.create(
+            conn, agent.scope(), title="C", pitch="p.", stage="building", now=to_iso(agent.clock.now())
+        )
+    assert call(ctx, "project_update", {"project_id": made, "venture_id": free}).ok
+
+
+def test_the_owner_s_park_keeps_a_project_s_status_and_taking_it_up_gives_it_back(data_dir: Path) -> None:
+    agent, ctx, parked, _, _ = parked_line(data_dir)
+    found = rows(agent, f"SELECT status, next_step, notes FROM projects WHERE venture_id = {parked} ORDER BY id")
+    assert [(r["status"], r["next_step"]) for r in found] == [("waiting", stages.PARKED_STEP)] * 2
+    assert found[0]["notes"].endswith(f"[owner] Your owner parked venture #{parked}. It was active.")
+    assert found[1]["notes"].endswith(f"[owner] Your owner parked venture #{parked}. It was idea.")
+    with agent.db.transaction() as conn:  # one kept before 0.35.0, with a next step of its own
+        older = store.create_project(
+            conn, agent.scope(), cycle_id=ctx.cycle_id, title="Older under A", hypothesis="h",
+            next_step="Order the sample poster", status="active", now=to_iso(agent.clock.now()), venture_id=parked,
+        )  # fmt: skip
+        stages.stop_projects(conn, parked, "parked", to_iso(agent.clock.now()))
+    [kept] = rows(agent, f"SELECT notes FROM projects WHERE id = {older}")
+    assert kept["notes"].endswith(
+        f"Your owner parked venture #{parked}. It was active; its next step: Order the sample poster"
+    )
+    idea = rows(agent, "SELECT id FROM projects WHERE title = 'Also under A'")[0]["id"]
+    assert owner(agent).decide_venture(parked, {"action": "back", "confirm": True}, "Stefan").status == 200
+    found = rows(agent, f"SELECT id, status, next_step, notes FROM projects WHERE venture_id = {parked} ORDER BY id")
+    assert [(r["status"], r["next_step"]) for r in found] == [
+        ("active", ""),
+        ("idea", ""),
+        ("active", "Order the sample poster"),
+    ]
+    assert found[2]["id"] == older
+    assert found[0]["notes"].endswith(f"[owner] Your owner took venture #{parked} up again.")
+    assert call(ctx, "project_update", {"project_id": idea, "status": "active"}).ok
+
+
+def test_a_project_stopped_at_the_upgrade_to_0_22_gets_a_true_next_step_when_taken_up(data_dir: Path) -> None:
+    """Migration 0077 kept nothing of what it overwrote: the project says so when its venture is taken up again."""
+    agent, _ = run(data_dir, FakeTransport(), cycles=1)
+    now = to_iso(agent.clock.now())
+    with agent.db.transaction() as conn:
+        venture = ventures.create(conn, agent.scope(), title="A", pitch="p.", stage="researching", now=now)
+        project = store.create_project(
+            conn, agent.scope(), cycle_id=1, title="Under A", hypothesis="h", next_step="n", status="active",
+            now=now, venture_id=venture,
+        )  # fmt: skip
+    assert owner(agent).decide_venture(venture, {"action": "park"}, "Stefan").status == 200
+    with agent.db.transaction() as conn:  # as 0077 left it
+        conn.execute(
+            "UPDATE projects SET notes = ? WHERE id = ?", (f"[owner] Your owner parked venture #{venture}.", project)
+        )
+    assert owner(agent).decide_venture(venture, {"action": "research"}, "Stefan").status == 200
+    assert rows(agent, f"SELECT status, next_step FROM projects WHERE id = {project}") == [
+        {"status": "waiting", "next_step": ""}  # 0.35.0: its steps are the plan tree's
+    ]
+
+
+def test_a_note_on_a_parked_venture_doesn_t_take_its_projects_up(data_dir: Path) -> None:
+    agent, _, parked, _, project = parked_line(data_dir)
+    assert owner(agent).decide_venture(parked, {"action": "note", "comment": "Later."}, "Stefan").status == 200
+    assert rows(agent, f"SELECT status, next_step FROM projects WHERE id = {project}") == [
+        {"status": "waiting", "next_step": stages.PARKED_STEP}
+    ]
+    assert owner(agent).decide_venture(parked, {"action": "kill"}, "Stefan").status == 200
+    assert rows(agent, f"SELECT status FROM projects WHERE id = {project}") == [{"status": "abandoned"}]
+
+
+# --- 7. the plan's projects in full ---
+
+
+def test_projects_the_owner_s_park_stopped_come_after_the_working_ones(data_dir: Path) -> None:
+    agent, ctx, parked, _, _ = parked_line(data_dir)
+    with agent.db.transaction() as conn:
+        alone = store.create_project(  # waiting on something else, of no venture: in its place
+            conn, agent.scope(), cycle_id=ctx.cycle_id, title="Waiting line", hypothesis="h", next_step="Ask",
+            status="waiting", now=to_iso(agent.clock.now()),
+        )  # fmt: skip
+        for n in range(10):
+            agent.clock.advance(minutes=1)
+            store.create_project(
+                conn, agent.scope(), cycle_id=ctx.cycle_id, title=f"Working line {n}", hypothesis="h",
+                next_step=f"List product {n}", status="active", now=to_iso(agent.clock.now()),
+            )  # fmt: skip
+        # as migration 0077 left them: changed at the upgrade, after everything the agent did
+        conn.execute(
+            "UPDATE projects SET updated_at = ? WHERE venture_id = ?",
+            (to_iso(agent.clock.now().replace(year=agent.clock.now().year + 1)), parked),
+        )
+        listed_ = store.open_projects(conn, agent.scope())
+    stopped = [int(p["id"]) for p in listed_ if p["venture_id"] == parked]
+    order = [int(p["id"]) for p in listed_]
+    assert order[-len(stopped) :] == stopped and len(stopped) == 2
+    working = [int(p["id"]) for p in listed_ if str(p["title"]).startswith("Working line")]
+    assert order.index(alone) > max(order.index(pid) for pid in working)  # by when it changed
+    assert order.index(alone) < order.index(stopped[0])
+    plan = agent.planner_preview()
+    projects = plan.split("== OPEN PROJECTS ==\n", 1)[1].split("\n== ", 1)[0]
+    assert "(the ones waiting while your owner parks their venture come last)" in projects.split("\n", 1)[0]
+    for pid in stopped:
+        assert f"\n#{pid} [waiting]" not in projects  # named in the first line only
+    nine = next(int(p["id"]) for p in listed_ if p["title"] == "Working line 9")
+    assert f"\n#{nine} [active] Working line 9 · spent $0.00" in projects  # 0.35.0: its steps are YOUR PLAN's
+    shown = call(ctx, "project_list", {})
+    assert shown.text.split("\n")[-1].startswith(f"#{stopped[-1]} [waiting]")

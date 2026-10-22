@@ -1,5 +1,7 @@
 """Etsy (0.8.0): the listing checks, the one-time connection, the live client against a mocked Etsy, the publisher
-with the dry run's fake shop, and what the agent and the owner see of it; and Etsy's API terms (0.8.1)."""
+with the dry run's fake shop, and what the agent and the owner see of it; and Etsy's API terms (0.8.1).
+
+Also tests from 0.19.2 (formerly test_fixes_0192.py)."""
 
 from __future__ import annotations
 
@@ -21,7 +23,12 @@ httpx2 = pytest.importorskip("httpx2")
 
 from app import paths  # noqa: E402
 from app.agent import plan as plan_tree  # noqa: E402
-from app.agent import prompts, review, tools  # noqa: E402
+from app.agent import (  # noqa: E402
+    prompts,
+    review,
+    store,  # noqa: E402
+    tools,
+)
 from app.agent.fake_llm import FakeTransport, request_kind, validate_request  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.economy.clock import Clock, to_iso  # noqa: E402
@@ -1695,3 +1702,62 @@ def test_a_page_read_s_question_names_no_address_on_its_site_in_any_form(
     site is what could carry data out: an IDN host, punycode, fullwidth letters, other dots and invisible characters
     all count as it. File names, product names and other sites pass."""
     assert tools._names_an_address(question, url) is refused
+
+
+# --- From 0.19.2 (formerly test_fixes_0192.py) ---
+
+
+# --- Etsy's numbers in the work steps ------------------------------------------------------------------------------
+
+
+def test_etsy_listing_shows_etsys_numbers_and_the_printify_listings(data_dir: Path) -> None:
+    agent, listing_id = _listed_shop(data_dir)
+    ctx = shop_context(agent)
+    scope = agent.scope()
+    with agent.db.transaction() as conn:
+        conn.execute(
+            "UPDATE etsy_listings SET views = 2, favorites = 1, synced_at = '2026-09-01T10:00:00Z'"
+            " WHERE listing_id = ?",
+            (listing_id,),
+        )
+        conn.execute(
+            "INSERT INTO printify_products (mode, session, approval_id, started_at, finished_at, status, product_id,"
+            " listing_id, currency, title, views, favorites, synced_at) VALUES (?, ?, ?, 'x', 'x', 'active', 'p1',"
+            " 800000002, 'EUR', 'Bauhaus Poster No.2', 1, 0, 'x')",
+            (scope.mode, scope.session, _an_approval(agent)),
+        )
+    listing = call(ctx, "etsy_listing", {})
+    assert listing.ok, listing.text
+    assert "Etsy's numbers as Ember's code read them at 2026-09-01 10:00" in listing.text
+    assert f"#{listing_id} " in listing.text and "· 2 views, 1 favorite, 0 sold" in listing.text
+    assert "Made through Printify" in listing.text and "#800000002 Bauhaus Poster No.2 · 1 view, 0 favorites" in (
+        listing.text
+    )
+    one = call(ctx, "etsy_listing", {"listing_id": listing_id})
+    assert one.ok and "2 views, 1 favorite, 0 sold." in one.text
+    poster = call(ctx, "etsy_listing", {"listing_id": 800000002})
+    assert poster.ok and "Bauhaus Poster No.2" in poster.text
+
+
+def _listed_shop(data_dir: Path) -> tuple[Any, int]:
+
+    return listed(data_dir)
+
+
+def _an_approval(agent: Any) -> int:
+    with agent.db.transaction() as conn:
+        cycle = conn.execute("SELECT MAX(id) FROM cycles").fetchone()[0]
+        return store.insert_approval(
+            conn,
+            agent.scope(),
+            cycle,
+            "2026-09-01T12:00:00Z",
+            type="sell",
+            title="Printify product: Bauhaus Poster No.2",
+            description="A poster.",
+            payload="Bauhaus Poster No.2",
+            expected_cost="none",
+            expected_benefit="a first order",
+            executor="printify_product",
+            action="{}",
+        )

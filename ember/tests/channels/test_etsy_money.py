@@ -9,7 +9,8 @@
 * An order with many lines failed the items CHECK and stopped every sync for 30 days, unseen.
 * Orders were read for the last 30 days only, so a longer gap lost them.
 * The Ledger tab skipped entries once new ones came in after "Show older entries".
-"""
+
+Tests from 0.15.0 (formerly test_fixes_0140_etsy_money.py)."""
 
 from __future__ import annotations
 

@@ -3,23 +3,28 @@ lines, data-backed no's among them ("Dropshipping ruled out by data: margins und
 anything. Now the owner pins a lesson: it is never dropped, a rewrite must keep it, and every plan and work step shows
 it first. After each daily review, a call of its own merges the lessons that say the same and retires those newer ones
 contradict; Ember's code checks its answer, keeps what it doesn't account for, and never lets it drop a pinned lesson
-or one with numbers."""
+or one with numbers.
+
+Also tests from 0.19.2 and 0.24.0 (formerly test_fixes_0192.py, test_fixes_0240.py)."""
 
 from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from app.agent import context, memory
+from app.agent import context, memory, news, tools
 from app.agent.fake_llm import FakeTransport, request_kind
 from app.agent.service import Agent
+from app.economy.clock import to_iso
 from tests.cycle.test_agent import rows
 from tests.cycle.test_loop_shapes import run
 from tests.learning.test_review import next_day
 from tests.owner.test_owner_loop import owner
 from tests.plan.test_roadmap import plan, planner_texts, section
+from tests.plan.test_roadmap import plan as fake_plan
 
 NO = "Dropshipping ruled out by data: margins under 5%."
 PINNED = "Never hand my owner design work."
@@ -118,3 +123,146 @@ def test_the_consolidation_never_drops_a_pinned_lesson_or_one_with_numbers() -> 
     )
     assert memory.consolidate(text, "not a dict", set(), 4_000) is None
     assert memory.consolidate(text, {"keep": [], "drop": []}, set(), 4_000) is None  # nothing changes
+
+
+# --- From 0.19.2 (formerly test_fixes_0192.py) ---
+
+
+# --- lessons ----------------------------------------------------------------------------------------------------------
+
+
+TOOLS = tuple(tools.SPECS)
+
+
+def test_a_full_lessons_file_drops_tool_limits_before_the_review_s_lesson() -> None:
+    lessons = (
+        "# Lessons\n\n"
+        "- [#c68] Printify blueprint 443 costs: making 6.28 EUR + shipping 5.39 EUR.\n"
+        "- [#c89] A decided action that isn't sent the same day costs a full day of runway for nothing.\n"
+        "- [#c93] workspace_write caps content at 2,500 chars per call.\n"
+        "- [#c96] project_create fails at 8 open projects.\n"
+    )
+    cap = len(lessons.encode()) - 40
+    kept, dropped = memory._drop_oldest(lessons, cap, set(), TOOLS)
+    assert dropped == 1 and "workspace_write" not in kept and "A decided action" in kept and "project_create" in kept
+    # Without the tools' names, the lesson without a number went first (0.12.0's rule alone).
+    before, _ = memory._drop_oldest(lessons, cap, set())
+    assert "A decided action" not in before
+    # A word that is also a tool's name (research, draft, look) doesn't make a business lesson a tool's.
+    assert memory.identifiers(["research", "look", "project_create"]) == {"project_create"}
+
+
+def test_an_upgrade_marks_the_lessons_about_the_tools_its_notes_name_to_re_check() -> None:
+    """0.21.0 (analysis 0.20.1, FIX NOW 14): they were deleted, each upgrade, also "photos must be visibly distinct"."""
+    lessons = (
+        "# Lessons\n\n"
+        "- [#c96] project_create fails at 8 open projects; fold new work into an existing project.\n"
+        "- [#c93] workspace_write caps content at 2,500 chars per call.\n"
+        "- [#c89] A decided action that isn't sent the same day costs a day of runway.\n"
+        "- [#c37] Pinned: project_create a project per product line.\n"
+    )
+    notes = "## 0.19.1\n- project_create no longer refuses a ninth open project. project_list shows them."
+    pinned = {memory.lesson_key("Pinned: project_create a project per product line.")}
+    new, marked, retired = memory.recheck_for_release(lessons, notes, TOOLS, pinned, "0.19.1") or ("", [], [])
+    assert marked == ["project_create fails at 8 open projects; fold new work into an existing project."]
+    assert retired == []
+    assert (
+        "- [#c96] (re-check: 0.19.1 changed project_create) project_create fails at 8 open projects; fold new work"
+        " into an existing project.\n" in new
+    )
+    assert "workspace_write" in new and "A decided action" in new and "- [#c37] Pinned: project_create" in new
+    assert memory.recheck_for_release(lessons, "## 0.19.2\n- research is cheaper.", TOOLS, set(), "0.19.2") is None
+    again, _, _ = memory.recheck_for_release(new, notes, TOOLS, pinned, "0.20.0") or ("", [], [])
+    assert "(re-check: 0.20.0 changed project_create) project_create fails" in again and "0.19.1" not in again
+    # A marked lesson still is itself: for duplicates and pins (0.23.0, the review of 0.21.0)
+    marked_line = next(line for line in again.splitlines() if "(re-check:" in line)
+    assert memory.lesson_key(marked_line) == memory.lesson_key("- [#c1] project_create fails at 8 open projects;"
+                                                               " fold new work into an existing project.")  # fmt: skip
+    assert memory.lesson_text(marked_line).startswith("(re-check: 0.20.0 changed project_create) project_create")
+    seen = memory.consolidation_input(again, pinned, TOOLS)  # the consolidation sees the mark, so it keeps it
+    assert "(re-check: 0.20.0 changed project_create) project_create fails" in seen
+
+
+def test_a_full_lessons_file_gets_short_marks_and_says_what_it_retired() -> None:
+    """0.23.0 (review of 0.21.0): on a full file the marks deleted the oldest marked lessons, a pinned one marked by
+    an earlier upgrade too, and the event said they were only marked. Now: shorter marks first; only the oldest
+    unpinned ones the marks have no room for are retired, and said so."""
+    notes = "## 0.21.0\n- project_create changed."
+    pinned_line = "- [#c0] (re-check: 0.20.0 changed project_create) project_create: keep one per product line."
+    roomy = "# Lessons\n\n" + pinned_line + "\n- [#c99] project_create needs a title.\n"
+    for i in range(1, 100):  # filled to within a long mark of the cap, with room for a short one
+        line = f"- [#c{i}] Lesson {i} about prices: {'x' * 20}\n"
+        if len((roomy + line).encode()) > memory.CAPS["lessons"] - 15:
+            break
+        roomy += line
+    text, marked, retired = memory.recheck_for_release(
+        roomy, notes, TOOLS, {memory.lesson_key(pinned_line)}, "0.21.0"
+    ) or ("", [], [])
+    assert len(roomy.encode()) <= memory.CAPS["lessons"] < len(roomy.encode()) + 45  # a long mark doesn't fit
+    assert "- [#c99] (re-check) project_create needs a title.\n" in text and retired == []
+    assert len(text.encode()) <= memory.CAPS["lessons"]
+    assert marked == ["project_create needs a title."] and pinned_line in text
+    many = (
+        "# Lessons\n\n"
+        + pinned_line
+        + "\n"
+        + "".join(f"- [#c{i}] project_create note {i}: {'x' * 40}\n" for i in range(1, 60))
+    )
+    many = many[: many.rindex("\n", 0, memory.CAPS["lessons"]) + 1]  # just within the cap
+    text, marked, retired = memory.recheck_for_release(
+        many, notes, TOOLS, {memory.lesson_key(pinned_line)}, "0.21.0"
+    ) or ("", [], [])
+    assert len(text.encode()) <= memory.CAPS["lessons"] and pinned_line in text  # the pinned one stays
+    assert retired and retired[0].startswith("project_create note 1:") and len(marked) + len(retired) >= 50
+
+
+def test_the_first_cycle_after_an_upgrade_marks_them_once(data_dir: Path) -> None:
+    def before(agent: Any) -> None:
+        agent.db.set_meta(news.changelog_key(agent.scope().mode), "0.19.0")
+        lessons = "# Lessons\n\n- [#c96] project_create fails at 8 open projects.\n- [#c9] Keep the owner informed.\n"
+        with agent.db.transaction() as conn:
+            agent.memory().rewrite(conn, "lessons", lessons, "consolidation", "2026-09-01T08:00:00Z")
+
+    agent, _ = run(data_dir, FakeTransport(script=[plan(steps=[])]), before=before)
+    text = agent.memory().read("lessons")
+    assert "] (re-check: " in text and "changed project_create) project_create fails" in text
+    assert "Keep the owner informed." in text
+    events = [e["message"] for e in agent.db.recent_events(30)]
+    assert any(e.startswith("Ember's code marked 1 lesson(s) to re-check (tools ") for e in events)
+    assert agent.db.get_meta(f"agent.{agent.scope().mode}.lessons_version")
+
+
+# --- From 0.24.0 (formerly test_fixes_0240.py) ---
+
+
+def now(agent: Any) -> str:
+    return to_iso(agent.clock.now())
+
+
+# --- lessons: the one just added stays ------------------------------------------------------------------------------
+
+
+def test_a_lesson_just_added_isn_t_dropped_by_its_own_call_and_the_answer_names_what_went(data_dir: Path) -> None:
+    agent, _ = run(data_dir, FakeTransport(script=[fake_plan(steps=[])]))
+    new = "Before any propose_bluesky_post, call bluesky_posts first to see what is live."
+    old, i = "# Lessons\n\n", 0
+    while len(old.encode()) + len(new) + 12 <= memory.CAPS["lessons"]:  # full: the new lesson doesn't fit
+        i += 1
+        old += f"- [#c{i}] A lesson about buyers number {i}, kept for a while longer.\n"
+    agent.roots()[1].write("lessons.md", old)
+    mem = agent.memory()
+    with agent.db.transaction() as conn:
+        said = mem.update(conn, "lessons", "append", new, 1, now(agent), tuple(tools.SPECS))
+    assert new in mem.read("lessons")
+    assert "line(s) dropped to make room (" in said and '"A lesson about buyers number 1, kept' in said
+
+
+def test_the_lessons_just_added_go_last() -> None:
+    text = "# Lessons\n\n- [#c1] Buyers want A4.\n- [#c2] Use propose_bluesky_post only after bluesky_posts.\n"
+    cap = len(text.encode()) - 10
+    gone: list[str] = []
+    fresh = {memory.lesson_key("Use propose_bluesky_post only after bluesky_posts.")}
+    kept, dropped = memory._drop_oldest(text, cap, set(), tuple(tools.SPECS), fresh, gone)
+    assert dropped == 1 and gone == ["- [#c1] Buyers want A4."] and "propose_bluesky_post" in kept
+    before, _ = memory._drop_oldest(text, cap, set(), tuple(tools.SPECS))  # not fresh: the one naming a tool goes
+    assert "Buyers want A4." in before and "propose_bluesky_post" not in before

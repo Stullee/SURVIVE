@@ -7,7 +7,8 @@ owner had put first for the week ranked tenth, and none of the 24 cycles recorde
 that evening's ranking from the report. Now a promise is worth weights.PROMISE_WORTH (3; its product's worth when that
 is more) and urgent only from weights.PROMISE_NEAR_DAYS before its day, and one taken plan.PROMISE_TRIES times in a
 day without being kept (a decision once) weighs its worth alone until the day is over, where 0.37.0 kept the floor.
-"""
+
+Tests from 0.37.1, 0.40.1 and 0.40.2 (formerly test_fixes_0371.py, test_fixes_0401.py, test_fixes_0402.py)."""
 
 from __future__ import annotations
 
@@ -18,11 +19,23 @@ import pytest
 
 pytest.importorskip("httpx2")
 
+from datetime import timedelta  # noqa: E402
+
 from app.agent import plan, weights  # noqa: E402
-from tests.plan.test_cycle_line import now  # noqa: E402
+from tests.channels.test_etsy import call  # noqa: E402
+from tests.plan.test_cycle_line import (
+    lined,  # noqa: E402
+    now,  # noqa: E402
+    working,  # noqa: E402
+)
 from tests.plan.test_marketing_order import CRITIC, PINS, launched  # noqa: E402
-from tests.plan.test_plan_tree import keep  # noqa: E402
+from tests.plan.test_plan_tree import (
+    TRACKER,  # noqa: E402
+    keep,  # noqa: E402
+)
+from tests.plan.test_plan_tree import project as line  # noqa: E402
 from tests.plan.test_promises import promise  # noqa: E402
+from tests.plan.test_step_brake import asked, decided  # noqa: E402
 from tests.plan.test_tree_steers import steered  # noqa: E402
 
 KDP = 14
@@ -138,3 +151,83 @@ def test_a_live_products_first_pins_come_before_a_report_even_the_day_before_and
     on_its_day = steered(agent)
     assert on_its_day.step is not None and on_its_day.step.title.startswith(f"Keep promise #{report}: ")
     assert on_its_day.pick.parts is not None and on_its_day.pick.parts.total == pytest.approx(0.9 * (1 + 9 + 4.5))
+
+
+# --- From 0.40.1 (formerly test_fixes_0401.py) ---
+
+
+# --- 5. a promise waits for its day ---
+
+
+def test_a_promise_waits_on_a_date_until_two_days_before_it_is_due(data_dir: Path) -> None:
+    """Live (analysis-0.40.0, 3.4), three cycles took "Report milestone #18 outcome (sale or park) by 10-31", which
+    can't be kept before the milestone is judged on 10-24; each was refused when it tried to make it wait."""
+    agent, _ = lined(data_dir, titles=())
+    coach = line(agent, *TRACKER)
+    keep(agent)
+    owed = promise(agent, "Report milestone #18 outcome (sale or park) by 10-31", days=13, line=coach)
+    keep(agent)
+    [step] = [c for c in steered(agent).found if c.step.title.startswith("Keep promise")]
+    today, due = agent.clock.today(), agent.clock.today() + timedelta(days=13)
+    latest = due - timedelta(days=weights.PROMISE_NEAR_DAYS)
+
+    def wait(on: str, until: date | None = None, ref: int | None = None) -> str:
+        with agent.db.transaction() as conn:
+            day = until.isoformat() if until else None
+            why = "judged on 10-24"
+            return plan.wait_step(conn, agent.scope(), coach, step.step.id, on, ref, day, why, None, now(agent), today)
+
+    with pytest.raises(plan.PlanError, match=f"keeps your promise due {due}: it waits only on a date, until {latest}"):
+        wait("step", ref=step.step.id)
+    with pytest.raises(plan.PlanError, match=f"it waits until {latest} at the latest"):
+        wait("date", latest + timedelta(days=1))
+    assert f"waits on {latest}" in wait("date", latest)
+    assert next(c for c in steered(agent).found if c.step.id == step.step.id).waiting == "date"
+    assert owed  # the promise itself stays open: it is kept, or told why not, from its day on
+
+
+def test_a_promise_near_its_day_and_a_decision_wait_on_nothing(data_dir: Path) -> None:
+    agent, _ = lined(data_dir, titles=())
+    coach = line(agent, *TRACKER)
+    keep(agent)
+    promise(agent, "Report the coach bundle's views", days=2, line=coach)
+    keep(agent)
+    [step] = [c for c in steered(agent).found if c.step.title.startswith("Keep promise")]
+    tomorrow = (agent.clock.today() + timedelta(days=1)).isoformat()
+
+    def wait(step_id: int) -> str:
+        with agent.db.transaction() as conn:
+            return plan.wait_step(conn, agent.scope(), coach, step_id, "date", None, tomorrow, "later", None,
+                                  now(agent), agent.clock.today())  # fmt: skip
+
+    with pytest.raises(plan.PlanError, match="; now keep it, or tell your owner why you can't"):
+        wait(step.step.id)
+    package = asked(agent, coach, "etsy_listing")
+    decided(agent, package, "rejected")
+    keep(agent)
+    [taken_in] = [c for c in steered(agent).found if c.step.title.startswith("Obligation #")]
+    with pytest.raises(plan.PlanError, match=f"step #{taken_in.step.id} is your owner's"):
+        wait(taken_in.step.id)  # their decision is theirs, as before
+
+
+# --- From 0.40.2 (formerly test_fixes_0402.py) ---
+
+
+# --- 6. a promise of no line waits ---
+
+
+def test_a_promise_of_no_product_line_waits_on_a_date(data_dir: Path) -> None:
+    """Live, the promise to propose the Kassenbuch by 10-25, which KDP's weekly limit held until then, could only be
+    tried and refused, a cycle a day: plan_step said "this cycle works on no product line yet"."""
+    agent, _ = lined(data_dir, titles=())
+    promise(agent, "Propose the Kassenbuch at KDP", days=6)
+    keep(agent)
+    [step] = [c for c in steered(agent).found if c.step.title.startswith("Keep promise")]
+    ctx = working(agent, None)
+    ctx.state.step_id = step.step.id  # YOUR STEP
+    until = (agent.clock.today() + timedelta(days=4)).isoformat()
+    waited = call(ctx, "plan_step", {"action": "wait", "on": "date", "until": until, "why": "KDP's next week"})
+    assert waited.ok, waited.text
+    assert next(c for c in steered(agent).found if c.step.id == step.step.id).waiting == "date"
+    hold = call(ctx, "plan_step", {"action": "hold", "why": "KDP's next week"})
+    assert not hold.ok and "this cycle works on no product line yet" in hold.text  # the rest as before

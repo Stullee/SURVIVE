@@ -7,7 +7,9 @@ sat at its floor because four pins, hours old, had no click yet. A missed views 
 marketing first, added no more than one of those suggestions. Now a defect the critic found (a low score) comes first,
 then a missed bar's marketing, then a live product's launch marketing, then the critic's suggestions, and a channel is
 judged only on pins and posts live long enough to have results.
-"""
+
+Tests from 0.33.0, 0.35.3, 0.39.1 and 0.39.6 (formerly test_fixes_0330.py, test_fixes_0353.py, test_fixes_0391.py,
+test_fixes_0396.py)."""
 
 from __future__ import annotations
 
@@ -25,7 +27,14 @@ pytest.importorskip("httpx2")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import diagnostics  # noqa: E402
-from app.agent import plan, quality, store, weights  # noqa: E402
+from app.agent import (  # noqa: E402
+    plan,
+    quality,
+    reach,  # noqa: E402
+    store,
+    weights,
+)
+from app.agent import plan as plan_tree  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from app.config import LoadedSettings  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
@@ -250,3 +259,96 @@ def test_a_run_that_named_its_files_and_kept_none_is_not_told_to_name_them(data_
     records = diagnostics._agent(SimpleNamespace(agent=agent, db=agent.db), full=False)
     shown = records.split("-- workshop_runs\n", 1)[1].split("\n--", 1)[0].splitlines()
     assert shown[0].endswith(" | task | summary") and shown[1].endswith(" | Made the chart.")
+
+
+# --- From 0.33.0 (formerly test_fixes_0330.py) ---
+
+
+# --- reach that brings visitors ---
+
+
+def test_listing_edits_are_reach_but_not_the_visitors_a_fair_test_needs(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent, project = started(data_dir)
+    real = reach.funnels
+
+    def edited(conn: Any, scope: Any) -> dict[int, reach.Funnel]:
+        found = real(conn, scope)
+        found[project].edits = 5  # five edits of its titles and tags, nothing else
+        found[project].views, found[project].favorites = 20, 0  # short of day 14's 30 views and 2 favorites
+        return found
+
+    monkeypatch.setattr(reach, "funnels", edited)
+    with agent.db.connection() as conn:
+        funnel = reach.funnels(conn, agent.scope())[project]
+    assert (funnel.reach, funnel.traffic) == (5, 0)
+    assert "less than the 3 a fair test needs (not edits)" in funnel.text()
+    agent.clock.advance(days=14)
+    with agent.db.transaction() as conn:  # 0.35.0: day 14's decide-by date (the listing test's bars until 0.34.0)
+        happened = plan_tree.keep(conn, agent.scope(), now(agent), agent.clock.today(), {})
+    said = "\n".join(happened)
+    assert f"Plan tree: line #{project} on day 14: 20 views, 0 favorites, 0 orders after 0 reach actions" in said
+    assert "too little reach to judge it: one more try" in said  # not the owner's decision
+    [product] = rows(agent, f"SELECT decide_by FROM plan_nodes WHERE level = 'product' AND project_id = {project}")
+    assert '"day14": "retry"' in product["decide_by"]
+
+
+# --- From 0.39.1 (formerly test_fixes_0391.py) ---
+
+
+# --- 7. the critic's suggestions ---
+
+
+def critic_step(agent: Agent, line: int) -> plan.Candidate:
+    with agent.db.connection() as conn:
+        found = plan.candidates(conn, agent.scope(), now(agent), agent.clock.today(), {})
+    return next(c for c in found if c.step.product == line and c.step.title == CRITIC)
+
+
+def seen(agent: Agent, listing: int, views: int) -> None:
+    with agent.db.transaction() as conn:
+        conn.execute("UPDATE etsy_listings SET views = ? WHERE listing_id = ?", (views, listing))
+
+
+def test_the_critics_suggestions_weigh_as_a_chore_while_few_see_the_listing_or_its_checks_dont_pass(
+    data_dir: Path,
+) -> None:
+    """Live, ten checks scored 5 or 6 of 10, each change brought new fixes, and "The critic passes it" took 8 of the 10
+    cycles #257 to #266 while a listing had 0 to 4 views."""
+    agent, line, listing = launched(data_dir)
+    critic(agent, line, listing, 5)
+    quiet = critic_step(agent, line)
+    assert (quiet.step.kind, quiet.step.urgency) == ("chore", 0.0)  # no one sees it: its photo can't be judged yet
+    seen(agent, listing, weights.CRITIC_VIEWS)
+    heard = critic_step(agent, line)
+    assert (heard.step.kind, heard.step.urgency) == ("fix", weights.IMPROVE)  # one check without a pass
+    critic(agent, line, listing, 6)  # the second in a row
+    stuck = critic_step(agent, line)
+    assert (stuck.step.kind, stuck.step.urgency) == ("chore", 0.0)
+    critic(agent, line, listing, 3)  # a defect comes first, seen or not
+    defect = critic_step(agent, line)
+    assert (defect.step.kind, defect.step.urgency) == ("fix", weights.DEFECT)
+    seen(agent, listing, 0)
+    assert critic_step(agent, line).step.urgency == weights.DEFECT
+
+
+# --- From 0.39.6 (formerly test_fixes_0396.py) ---
+
+
+# --- 7. the critic's suggestions wait for views ---
+
+
+def test_the_critics_suggestions_wait_for_views_and_a_defect_still_comes_first(data_dir: Path) -> None:
+    """Live on 10-15, five cycles ($1.95) made new covers for listings 1 to 3 people had seen."""
+    agent, line, listing = launched(data_dir)
+    critic(agent, line, listing, 5)
+    assert critic_step(agent, line).waiting == "views"
+    assert "views" in plan.WAITS
+    seen(agent, listing, weights.CRITIC_VIEWS)
+    assert critic_step(agent, line).waiting is None  # seen: its suggestions weigh again
+    seen(agent, listing, 0)
+    critic(agent, line, listing, 3)  # a defect, seen or not
+    defect = critic_step(agent, line)
+    assert (defect.waiting, defect.step.urgency) == (None, weights.DEFECT)
+    assert defect.step.title == CRITIC

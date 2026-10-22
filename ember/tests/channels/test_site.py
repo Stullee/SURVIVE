@@ -1,7 +1,9 @@
 """0.13.0 (Phase E3): the owner's website. The agent writes pages in the products' markdown; Ember's code builds a
 static site from them in one audited template (every text escaped, no script, nothing from elsewhere), with the
 Impressum and the privacy page made from the owner's options only; the owner previews it, downloads it and publishes
-it. Ember never does."""
+it. Ember never does.
+
+Also tests from 0.15.0 (formerly test_fixes_0140_channels.py, test_fixes_0140_live_fixes.py)."""
 
 from __future__ import annotations
 
@@ -298,3 +300,114 @@ def test_diagnostics_never_show_the_owner_s_data(site_client: TestClient) -> Non
     assert "Stefan Muster" not in report and "Musterstraße" not in report and "shop@example.org" not in report
     assert '"site_owner_name_set": true' in report and '"site_address_set": true' in report
     assert "-- website" in report and '"slug": "index"' in report
+
+
+# --- From 0.15.0 (formerly test_fixes_0140_channels.py) ---
+
+
+APP_JS = Path(__file__).parents[2] / "app" / "web" / "static" / "js" / "app.js"
+
+
+# --- FIX 26m: the Impressum ----------------------------------------------------------------------------------------
+
+
+def test_an_impressum_with_email_as_its_only_contact_is_not_built() -> None:
+    email_only = site.Owner(WHO.legal_name, (), WHO.email)
+    with pytest.raises(site.SiteError, match="site_address needs the street and the postcode with the town"):
+        site.build([home()], email_only)
+    with pytest.raises(site.SiteError, match="site_owner_name is missing"):
+        site.build([home()], site.Owner("", WHO.address, WHO.email))
+    # The phone stays optional (name, postal address and email are what § 5 DDG asks), but if given it is one.
+    assert "Telefon" not in site.build([home()], WHO)["impressum.html"].decode()
+    with pytest.raises(site.SiteError, match="site_phone must be a phone number"):
+        site.build([home()], site.Owner(**{**WHO.__dict__, "phone": "call me"}))
+    imprint = site.build([home()], site.Owner(**{**WHO.__dict__, "phone": "+49 30 1234567"}))["impressum.html"]
+    assert "Telefon: +49 30 1234567" in imprint.decode()
+
+
+def test_an_impressum_without_a_phone_is_flagged(data_dir: Path) -> None:
+    """The site has no contact form: without a phone the email is the Impressum's only contact, so the card and the
+    plan say so (the phone stays optional)."""
+    assert WHO.advice() == ["site_phone is empty: the Impressum's only contact is the email (add a phone)"]
+    assert site.Owner(**{**WHO.__dict__, "phone": "+49 30 1234567"}).advice() == []
+    agent, _ = run(data_dir, FakeTransport(), cycles=0, settings=SITE)
+    with agent.db.transaction() as conn:
+        website.save(conn, agent.scope(), home(), None, "2026-09-30T10:00:00Z")
+    with agent.db.connection() as conn:
+        card = website.describe(conn, agent.scope(), SITE)
+        text = website.planner_text(conn, agent.scope(), website.owner(SITE))
+    assert card["status"] == "ok" and card["advice"] == WHO.advice()
+    assert "Ask your owner: site_phone is empty: the Impressum's only contact is the email (add a phone)." in text
+    script = APP_JS.read_text(encoding="utf-8")
+    assert 'arr(s.advice).length ? [h("dt", { text: "Advice" })' in script
+    with agent.db.connection() as conn:
+        phoned = SITE.model_copy(update={"site_phone": "+49 30 1234567"})
+        assert website.describe(conn, agent.scope(), phoned)["advice"] == []
+
+
+def test_the_impressum_needs_a_postal_address() -> None:
+    for lines, message in (
+        (("Stefan Muster", "Berlin"), "site_address needs the street and the postcode with the town"),
+        (("Musterstraße 1", "Berlin"), "site_address needs the street and the postcode with the town"),
+        (("12345 Berlin", "Musterstraße 1"), "site_address needs the street and the postcode with the town"),
+        (("c/o Studio", "12345 Berlin"), "site_address needs the street and the postcode with the town"),
+        (("Firma 2000 GmbH", "12345 Berlin"), "site_address needs the street and the postcode with the town"),
+        (
+            ("Postfach 12 34", "12345 Berlin"),
+            r"site_address must be where you can be found \(street, postcode and town",
+        ),
+        (("Packstation 123", "12345 Berlin"), r"site_address must be where you can be found"),
+    ):
+        with pytest.raises(site.SiteError, match=message):
+            site.build([home()], site.Owner(**{**WHO.__dict__, "address": lines}))
+    for lines in (
+        ("Musterstraße 1", "12345 Berlin"),
+        ("c/o Studio", "Hauptstr. 5a", "1010 Wien"),
+        ("Am Markt 3-5", "12345 Berlin"),
+        ("Musterstr.1", "12345 Berlin"),
+    ):
+        assert site.build([home()], site.Owner(**{**WHO.__dict__, "address": lines}))
+
+
+def test_a_business_id_is_named_as_one() -> None:
+    imprint = site.build([home()], site.Owner(**{**WHO.__dict__, "vat_id": "DE123456789-00001"}))["impressum.html"]
+    text = imprint.decode()
+    assert "Wirtschafts-Identifikationsnummer gemäß § 139c Abgabenordnung: DE123456789-00001" in text
+    assert "Umsatzsteuer" not in text
+    vat = site.build([home()], site.Owner(**{**WHO.__dict__, "vat_id": "DE123456789"}))["impressum.html"].decode()
+    assert "Umsatzsteuer-Identifikationsnummer gemäß § 27a Umsatzsteuergesetz: DE123456789" in vat
+
+
+def test_the_privacy_page_says_how_long_the_server_logs_are_kept() -> None:
+    privacy = site.build([home()], WHO)["datenschutz.html"].decode()
+    assert "Server-Protokollen" in privacy and "Die Protokolle werden gelöscht, sobald sie dafür nicht mehr" in privacy
+    assert "die genaue Frist richtet sich nach den Vorgaben des Anbieters" in privacy
+
+
+# --- From 0.15.0 (formerly test_fixes_0140_live_fixes.py) ---
+
+
+# --- LIVE 1: the site's address is a folder -------------------------------------------------------------------------
+
+
+def test_a_home_page_file_in_site_url_is_taken_off_the_address() -> None:
+    settings = Settings(**OWNER, site_url="https://ember-ai.de/index.html")
+    who = website.owner(settings)
+    assert who.url == "https://ember-ai.de" == website.address(settings)
+    assert website.address(Settings(site_url="https://example.org/shop/index.htm")) == "https://example.org/shop"
+    assert website.address(Settings(site_url="https://example.org/INDEX.HTML")) == "https://example.org"
+    files = site.build([home(), site.check("bewerbungs-tracker", "Tracker", "A tracker.", "Text.\n")], who)
+    assert (
+        b'<link rel="canonical" href="https://ember-ai.de/bewerbungs-tracker.html">' in files["bewerbungs-tracker.html"]
+    )
+    assert b"<loc>https://ember-ai.de/</loc>" in files["sitemap.xml"]
+    assert b"index.html/" not in files["sitemap.xml"] + files["robots.txt"] + files["index.html"]
+
+
+@pytest.mark.parametrize("url", ["https://example.org/page.html", "https://example.org/shop/start.php"])
+def test_a_site_url_naming_another_file_is_refused(url: str) -> None:
+    with pytest.raises(ValueError, match="site_url must be an https address without a query or a file name"):
+        Settings(site_url=url)
+    for fine in ("https://example.org", "https://example.org/", "https://example.org/v1.2/shop/"):
+        assert Settings(site_url=fine).site_url == fine
+    assert WHO.url == ""

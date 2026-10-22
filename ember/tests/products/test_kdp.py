@@ -1,19 +1,24 @@
 """0.25.0: Amazon KDP, phase A: books the agent makes and the owner publishes at KDP from their own account (Amazon
 has no API for KDP). Ember's code checks the package against KDP's rules: the words, the price, a paperback's interior
 (its trim, page count and margins) and its full cover (as wide as the pages make the spine), an ebook's Word file and
-its JPEG cover; the card gives the owner every field and file, and the plan lists the books."""
+its JPEG cover; the card gives the owner every field and file, and the plan lists the books.
+
+Also tests from 0.40.2 (formerly test_fixes_0402.py)."""
 
 from __future__ import annotations
 
 import io
 import json
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from PIL import Image
 
+from app import web
 from app.agent import never, news, obligations, prompts, tools
 from app.agent.fake_llm import FakeTransport, request_kind
 from app.agent.sandbox import Jail
@@ -24,6 +29,7 @@ from tests.channels.test_etsy import call, views_approval
 from tests.cycle.test_agent import ROOMY, rows
 from tests.cycle.test_loop_shapes import run
 from tests.owner.test_owner_loop import owner
+from tests.plan.test_plan_tree import request
 
 PUBLISHING = ROOMY.model_copy(update={"kdp_enabled": True, "kdp_author": "Jane Doe"})
 BACK = "A gentle daily journal for noticing what went well.|One page a day: three good things and room to write."
@@ -419,3 +425,90 @@ def test_a_cycle_with_kdp_on_shows_the_section_and_the_tool(data_dir: Path) -> N
     assert "== KDP ==\\nYour owner publishes your books at KDP by hand (Amazon has no API)" in planner
     assert "Author name: set by your owner." in planner and "Jane Doe" not in planner  # their name stays home
     assert {t["name"] for t in works[0]["tools"]} >= tools.KDP_TOOLS
+
+
+# --- From 0.40.2 (formerly test_fixes_0402.py) ---
+
+
+# --- 3. KDP's week ---
+
+
+def test_kdps_week_begins_on_sunday_at_midnight_utc() -> None:
+    sunday = datetime(2026, 8, 30, tzinfo=UTC)
+    assert kdp.week_start(datetime(2026, 9, 1, 12, tzinfo=UTC)) == sunday  # a Tuesday
+    assert kdp.week_start(datetime(2026, 9, 5, 23, 59, 59, tzinfo=UTC)) == sunday
+    assert kdp.week_start(datetime(2026, 9, 6, tzinfo=UTC)) == sunday + timedelta(days=7)
+    berlin = ZoneInfo("Europe/Berlin")
+    assert kdp.week_start(datetime(2026, 9, 6, 1, 30, tzinfo=berlin)) == sunday  # Saturday 23:30 in UTC
+    # live: the two books of Monday 10-19 held the Kassenbuch until Monday 10-26; KDP's week began on Sunday 10-25
+    assert kdp.next_week(datetime(2026, 10, 21, 14, 57, tzinfo=UTC), berlin) == "Sunday 10-25 at 02:00"
+    assert kdp.next_week(datetime(2026, 10, 21, 14, 57, tzinfo=UTC)) == "Sunday 10-25 at 00:00"
+
+
+def test_the_weekly_limit_ends_with_kdps_week(data_dir: Path) -> None:
+    agent, ctx = publishing(data_dir)
+    agent.clock.current = datetime(2026, 9, 5, 22, tzinfo=UTC)  # a Saturday
+    jail = ctx.workspace
+    manuscript = ebook(jail)
+    words = {"format": "ebook", "price": "2.99", "paper": None, "low_content": None, "subtitle": None,
+             "cover": {"front": "books/front.png"}, "project_id": project(agent)}  # fmt: skip
+    for n in (1, 2):
+        ctx.state = tools.CycleTools()
+        proposed(agent, ctx, spec(jail, manuscript, f"books/guide-{n}.json", **{**words, "title": f"Guide {n}"}))
+    ctx.state = tools.CycleTools()
+    third = spec(jail, manuscript, "books/guide-3.json", **{**words, "title": "Guide 3"})
+    refused = call(ctx, "propose_kdp_book", {"spec": third})
+    assert not refused.ok
+    assert (
+        "you proposed 2 ebooks this week (KDP's, from Sunday 00:00 UTC), and KDP lets an account create at most 2 new"
+        " ebooks a week: propose the next one from Sunday 09-06 at 00:00"
+    ) in refused.text
+    with agent.db.connection() as conn:
+        section = kdp.text(conn, agent.scope(), agent.clock.now(), "Jane Doe")
+    assert "proposed this week: 2 ebooks, 0 paperbacks (the next week begins Sunday 09-06 at 00:00)." in section
+    agent.clock.advance(hours=2)  # Sunday 00:00 UTC: KDP's next week
+    proposed(agent, ctx, third)
+    with agent.db.connection() as conn:
+        section = kdp.text(conn, agent.scope(), agent.clock.now(), "Jane Doe")
+    assert "proposed this week: 1 ebook, 0 paperbacks. Royalties" in section
+
+
+# --- 8. a KDP book's link ---
+
+
+def test_the_owner_adds_a_books_link_to_a_request_marked_done_without_one(data_dir: Path) -> None:
+    """Live, both Haushaltsbuch books were marked done with "published" alone, and the daily review planned pins and
+    posts "linking to Amazon" that nothing could make."""
+    agent, ctx = publishing(data_dir)
+    words = {"format": "ebook", "price": "2.99", "paper": None, "low_content": None, "subtitle": None,
+             "cover": {"front": "books/front.png"}, "project_id": project(agent)}  # fmt: skip
+    asked = proposed(agent, ctx, spec(ctx.workspace, ebook(ctx.workspace), "books/guide.json", **words))
+    who = owner(agent)
+    assert who.add_link(asked, {"result_link": "https://www.amazon.com/dp/B0TEST"}, "Owner").status == 409  # not done
+    assert who.decide(asked, {"decision": "approve"}, "Owner").status == 200
+    assert who.close(asked, {"outcome": "done", "result_note": "published"}, "Owner").status == 200
+    with agent.db.connection() as conn:
+        section = kdp.text(conn, agent.scope(), agent.clock.now(), "Jane Doe")
+    assert (
+        "published (no link at Amazon yet: your owner can add it on the request; until then nothing can link it)"
+        in (section)
+    )
+    bad = who.add_link(asked, {"result_link": "amazon dot com"}, "Owner")
+    assert bad.status == 422 and "plain http(s) link" in bad.body["error"]
+    link = "https://www.amazon.com/dp/B0TESTBOOK"
+    added = who.add_link(asked, {"result_link": link, "expected_version": 99}, "Owner")
+    assert added.status == 409 and "reload the page" in added.body["error"]
+    added = who.add_link(asked, {"result_link": link}, "Owner")
+    assert added.status == 200 and added.body["approval"]["result_link"] == link
+    assert added.body["approval"]["seen_cycle_id"] is None  # Ember reads it on its next wake
+    with agent.db.connection() as conn:
+        section = kdp.text(conn, agent.scope(), agent.clock.now(), "Jane Doe")
+    assert f"published at {link}" in section and "no link at Amazon yet" not in section
+    again = who.add_link(asked, {"result_link": link}, "Owner")
+    assert again.status == 409 and "has its link already" in again.body["error"]
+    other = request(agent, project(agent), "etsy_listing")
+    assert who.add_link(other, {"result_link": link}, "Owner").status == 409
+    assert any(f"added the link of request #{asked}" in e["message"] for e in agent.db.recent_events(5))
+    assert "/api/approvals/{approval_id}/link" in {getattr(r, "path", "") for r in web.router.routes}
+    script = (Path(__file__).parents[2] / "app" / "web" / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    assert 'panelButton(it, "link", "Add its Amazon link")' in script and 'url: url + "link"' in script

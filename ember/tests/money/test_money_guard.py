@@ -4,7 +4,9 @@ couldn't cover a 5x miss nor come down for a rare purpose, and one work step sen
 
 Review of 0.16.1: Reset estimates also cleared the workshop's run history (bug 8), the hold left out interrupted runs
 and, of 20 runs, the costliest one (bug 36), and after a call cost more than its hold the daily cap and the event
-reserve refused the reflection (bug 33)."""
+reserve refused the reflection (bug 33).
+
+Tests from 0.15.0 and 0.33.0 (formerly test_fixes_0140_money_guard.py, test_fixes_0330.py)."""
 
 from __future__ import annotations
 
@@ -562,3 +564,27 @@ def test_the_migration_keeps_the_calls_and_their_guard(tmp_path: Path) -> None:
             )
             conn.execute(f"UPDATE llm_calls SET {bad} WHERE status = 'pending'")
     db.close()
+
+
+# --- From 0.33.0 (formerly test_fixes_0330.py) ---
+
+
+def test_a_workshop_run_holds_what_the_day_has_left_never_less_than_its_worst_case(data_dir: Path) -> None:
+    settings = Settings(starting_balance_usd=50, daily_spend_cap_usd=4, cycle_spend_cap_usd=1, workshop_run_cap_usd=1.5)
+    economy = make_economy(data_dir, settings, clock=FakeClock())
+    model = economy.metered(FakeTransport(script=[Overrun(), Overrun()]))
+    first = model.open_cycle("test")
+    model.call(first, WORKSHOP, workshop(settings))  # a run like #423
+    model.close_cycle(first)
+    cycle = model.open_cycle("test")
+    asked = workshop(settings)
+    full, quote, money = (
+        model.reservation(asked, WORKSHOP),
+        model.quote(asked, WORKSHOP),
+        model.rooms(cycle, WORKSHOP)[1],
+    )
+    assert quote <= money < full  # 0.32.0 refused it: "the run holds $2.645 of the day, but only $2.237 is left"
+    held = model.reservation(asked, WORKSHOP, room=money)
+    assert held == money and model.reservation(asked, WORKSHOP, room=1) == quote
+    model.call(cycle, WORKSHOP, asked, hold=held)  # admitted: the guard holds what the workshop held
+    assert llm_calls(economy.db)[-1]["estimate_micros"] == held

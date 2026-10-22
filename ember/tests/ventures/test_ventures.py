@@ -1,4 +1,6 @@
-"""Ventures (0.10.0): the tree of ways to earn, venture cycles with the owner's share, and the owner's word on them."""
+"""Ventures (0.10.0): the tree of ways to earn, venture cycles with the owner's share, and the owner's word on them.
+
+Also tests from 0.39.6 (formerly test_fixes_0396.py)."""
 
 from __future__ import annotations
 
@@ -945,3 +947,16 @@ def test_ventures_parked_or_killed_before_the_upgrade_stop_their_projects(data_d
         "Under C": "active",
     }
     assert found["Under B"]["notes"] == f"[owner] Your owner killed venture #{ids['B']}."
+
+
+# --- From 0.39.6 (formerly test_fixes_0396.py) ---
+
+
+# --- 9. a marketplace with buyers of its own ---
+
+
+def test_a_venture_cycle_hears_that_another_marketplace_is_a_test_of_its_own() -> None:
+    """Live, triage parked Creative Fabrica, Zazzle and Teachers Pay Teachers untested, because the Etsy shop got no
+    views."""
+    rules = " ".join(prompts.VENTURE_RULES.split())
+    assert "the Etsy shop's views are no reason to park an idea there" in rules

@@ -8,7 +8,8 @@ search can cost several times its worst case. A research_check call had neither 
 MeteredModel._held): near the bottom of the balance a check whose quote fit once above the reserve was sent, and could
 cost more than was left. Research and its check now keep back what either cost on their model
 (metering.RESEARCH_PURPOSES): they send the same request.
-"""
+
+Tests from 0.37.4 (formerly test_fixes_0374.py)."""
 
 from __future__ import annotations
 

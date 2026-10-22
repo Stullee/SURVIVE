@@ -1,5 +1,7 @@
 """0.19.4: the Projects and Inbox tabs, reworked. A project card showed its revenue and API cost, never its expenses
-(Etsy's fees) or what it nets; and the Inbox showed a promise only on its message, which an older page may hold."""
+(Etsy's fees) or what it nets; and the Inbox showed a promise only on its message, which an older page may hold.
+
+Tests from 0.19.4 (formerly test_dashboard_0194.py)."""
 
 from __future__ import annotations
 

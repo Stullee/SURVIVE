@@ -3,7 +3,9 @@ limits (12 of 17 lessons), whose daily review's lesson was never kept and whose 
 demand", whose strategy still named a venture it had parked, and whose journal was refused for its length, which lost
 the handoff to the next cycle. Now the review's lesson is kept by Ember's code, each verdict names a bottleneck, a
 strategy that names a parked venture is an obligation, the lessons' consolidation may drop a tool's limit, and an
-over-long journal is cut instead of refused."""
+over-long journal is cut instead of refused.
+
+Tests from 0.18.0 (formerly test_learning_0180.py)."""
 
 from __future__ import annotations
 

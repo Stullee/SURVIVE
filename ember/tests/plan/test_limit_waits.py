@@ -11,7 +11,8 @@ the same report. And a promise to report weighed as a promise to ship (1.0), not
 
 These replay it: a step whose work a limit would refuse waits on the limit ('queue', 'messages'), isn't taken and cuts
 no sleep, exactly while the tool would refuse it; the caps themselves stay as they are.
-"""
+
+Tests from 0.37.9 (formerly test_fixes_0379.py)."""
 
 from __future__ import annotations
 

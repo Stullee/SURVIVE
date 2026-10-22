@@ -8,7 +8,8 @@ PL3. A report waits ('unread') while message_owner refuses every message: the ow
 PL4. A line's first listing waits behind a new demand note once its newest is older than the tool allows.
 PL5. plan_step wait refuses a step the owner pinned and a wait that would never lift; the owner lifts a wait.
 PL6. Closing a line closes what was owed on it: its promise isn't left open with no step.
-"""
+
+Tests from 0.40.3 (formerly test_fixes_0403_plan.py)."""
 
 from __future__ import annotations
 
@@ -30,6 +31,7 @@ from app.economy.clock import Clock, local_date, to_iso  # noqa: E402
 from tests.channels.test_etsy import call, started  # noqa: E402
 from tests.cycle.test_agent import rows  # noqa: E402
 from tests.owner.test_owner_api import post  # noqa: E402
+from tests.plan.test_channel_worth import FLOORED  # noqa: E402
 from tests.plan.test_cycle_line import cycle, lined, now, working  # noqa: E402
 from tests.plan.test_marketing_order import launched  # noqa: E402
 from tests.plan.test_owner_holds import first_marketing_out, waits, weekly  # noqa: E402
@@ -37,7 +39,6 @@ from tests.plan.test_plan_tree import ALL, TRACKER, keep, project  # noqa: E402
 from tests.plan.test_promises import promise  # noqa: E402
 from tests.plan.test_step_brake import asked, closed_without_proposing, decided, noted  # noqa: E402
 from tests.plan.test_tree_steers import steered  # noqa: E402
-from tests.test_fixes_0398 import FLOORED  # noqa: E402
 
 BERLIN = ZoneInfo("Europe/Berlin")
 APP = Path(__file__).parents[2] / "app"

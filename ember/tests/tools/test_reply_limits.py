@@ -1,6 +1,8 @@
 """0.12.0: follow-ups to 0.11.1. Every text a tool takes whole fits in one work reply (a payload of 8,000 characters,
 an email of 5,000 or a listing description of 4,000 never could), the venture brief no longer contradicts the rule on
-the owner's quick fixes, and a draft's photos are counted, each live listing's in its own line."""
+the owner's quick fixes, and a draft's photos are counted, each live listing's in its own line.
+
+Also tests from 0.15.0 (formerly test_fixes_0140_live_fixes.py)."""
 
 from __future__ import annotations
 
@@ -10,10 +12,15 @@ from pathlib import Path
 import pytest
 
 from app.agent import context, prompts, tools
+from app.agent.fake_llm import FakeTransport
 from app.integrations import etsy_publisher
 from app.integrations.etsy import FakeShop, NotSent
 from tests.channels.test_etsy import listed, proposed
+from tests.cycle.test_agent import rows
+from tests.cycle.test_loop_shapes import run
 from tests.owner.test_owner_loop import owner
+from tests.plan.test_money_goal import call
+from tests.plan.test_roadmap import plan as idle
 
 
 def test_every_whole_text_fits_in_one_reply() -> None:
@@ -61,3 +68,50 @@ def test_a_drafts_photos_are_counted(data_dir: Path, monkeypatch: pytest.MonkeyP
     text = shop(agent)
     assert "Fewer than 5 photos: #900000001 (1)." in text  # a draft had no count at all
     assert "live listings" not in text  # a draft isn't live
+
+
+# --- From 0.15.0 (formerly test_fixes_0140_live_fixes.py) ---
+
+
+# --- LIVE 6: length refusals with the numbers, notes cut --------------------------------------------------------------
+
+
+def test_a_too_long_field_is_refused_with_its_length_and_what_to_do(data_dir: Path) -> None:
+    agent, _ = run(data_dir, FakeTransport(script=[idle(steps=[])]))
+    long = call(agent, "workspace_write", path="drafts/article.md", mode="create", content="ä" * 2_742)
+    assert not long.ok
+    assert (  # 0.39.1: and how much to cut
+        "content is too long: 2,742 of 2,500 characters (cut 242): create with the first part, then append the rest"
+        in long.text
+    )
+    path = call(agent, "workspace_read", path="p" * 230 + ".md")
+    assert not path.ok and "path is too long: 233 of 200 characters (cut 33)." in path.text  # no remedy: none needed
+
+
+def test_owner_facing_notes_are_cut_not_refused(data_dir: Path) -> None:
+    agent, _ = run(data_dir, FakeTransport(script=[idle(steps=[])]))
+    filed = call(
+        agent,
+        "request_upgrade",
+        title="Read big PNGs",
+        problem="p" * 742,
+        proposed_change="c" * 650,
+        expected_benefit="Unblocks the poster venture.",
+        priority="high",
+    )
+    assert filed.ok and "problem was cut to 600 of its 742 characters" in filed.text, filed.text
+    [row] = rows(agent, "SELECT problem, proposed_change FROM upgrades")
+    assert len(row["problem"]) == 600 and row["problem"].endswith("…") and len(row["proposed_change"]) == 600
+    assert tools.SPECS["venture_update"].fields["learned"].cut
+
+
+# --- LIVE 10: a folder read as a file --------------------------------------------------------------------------------
+
+
+def test_reading_a_folder_points_at_workspace_list(data_dir: Path) -> None:
+    agent, _ = run(data_dir, FakeTransport(script=[idle(steps=[])]))
+    assert call(agent, "workspace_write", path="shop/notes.md", mode="create", content="Hi").ok
+    read = call(agent, "workspace_read", path="shop")
+    assert not read.ok and "shop is a folder: workspace_list lists it" in read.text
+    missing = call(agent, "workspace_read", path="nothing")
+    assert not missing.ok and "only text files" in missing.text

@@ -84,7 +84,7 @@ def test_a_move_up_is_judged_at_the_spending_from_before_the_mode_moved_down() -
     assert burn.judged(low, since) == pytest.approx(80 / 5.5)  # a runway built without its balance: the booked one
     assert burn.settle("maintenance", low, since) == "maintenance"
     # 0.42.0 (analysis-0.40.1 codebase, E1): the balance the runway is judged on, $30 of answered uncertain calls' worst
-    # case less than the booked one: 20 days, past focus's margin (tests/test_uncertain_bills.py)
+    # case less than the booked one: 20 days, past focus's margin (tests/money/test_uncertain_bills.py)
     assert burn.judged(status(200.0, money_in=2, balance=110_000_000, **week), since) == pytest.approx(110 / 5.5)
     # $7 of sales in the week: $80 at $5.50 less $1 a day lasts 17.8 days; $14 make it 22.9, enough for focus
     assert burn.settle("maintenance", status(None, money_in=2, window_net_in=7_000_000, **week), since) == "maintenance"

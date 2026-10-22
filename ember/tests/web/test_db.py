@@ -1,5 +1,10 @@
+"""The database: its migrations (applied once, backed up, rolled back, numbered), meta and events.
+
+Also tests from 0.12.0 (formerly test_small_defects.py)."""
+
 from __future__ import annotations
 
+import logging
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -335,3 +340,23 @@ def test_one_connection_for_the_process(tmp_path: Path) -> None:
     database.close()
     assert database.get_meta("anything") is None  # reopens after close
     database.close()
+
+
+# --- From 0.12.0 (formerly test_small_defects.py) ---
+
+
+def test_migrations_are_matched_by_name_not_only_by_number(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    ours, theirs = tmp_path / "ours", tmp_path / "theirs"
+    for folder, name in ((ours, "0001_first.sql"), (theirs, "0001_other.sql")):
+        folder.mkdir()
+        (folder / name).write_text("CREATE TABLE a (x INTEGER);", encoding="utf-8")
+    db_file = tmp_path / "ember.db"
+    assert migrate(db_file, discover_migrations(theirs), backup_dir=tmp_path / "b") == [1]
+    with pytest.raises(
+        MigrationError, match="migration 0001 in the database is 'other', but this version's is 'first'"
+    ):
+        migrate(db_file, discover_migrations(ours), backup_dir=tmp_path / "b")
+    (theirs / "0001_other.sql").write_text("CREATE TABLE a (x INTEGER); -- edited", encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        assert migrate(db_file, discover_migrations(theirs), backup_dir=tmp_path / "b") == []
+    assert "Migration 0001_other changed since it was applied" in caplog.text

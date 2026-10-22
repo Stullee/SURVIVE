@@ -2,7 +2,9 @@
 being decided) and Running (the backed and live ventures, each with its projects in its card, then the other
 projects). The owner saw the same work twice: a backed venture and the project Ember's code opens for it. 0.37.0: the
 Ventures tab is the Plan tab's (each venture being explored is a node of the plan), its views Ventures and Product
-lines."""
+lines.
+
+Tests from 0.27.0 (formerly test_ventures_tab_0270.py)."""
 
 from __future__ import annotations
 

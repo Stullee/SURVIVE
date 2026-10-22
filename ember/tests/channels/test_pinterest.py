@@ -2,7 +2,9 @@
 listings, on one of its boards or a new one); the owner approves it (the pin that makes the first board is a new public
 presence: never automatic); Ember's code makes the board and the pin, once, journaled, and the owner's Undo deletes it;
 the sync reads the pins' numbers for the plan and the metrics. The one-time connection and the live client are tested
-against a mocked Pinterest; nothing reaches Pinterest in a dry run."""
+against a mocked Pinterest; nothing reaches Pinterest in a dry run.
+
+Also tests from 0.15.0 (formerly test_fixes_0140_channels.py)."""
 
 from __future__ import annotations
 
@@ -25,10 +27,20 @@ httpx2 = pytest.importorskip("httpx2")
 from app.agent import audit, metrics, never, stages, tools  # noqa: E402
 from app.agent.fake_llm import FakeTransport, request_kind  # noqa: E402
 from app.config import Settings  # noqa: E402
-from app.economy.clock import Clock, to_iso  # noqa: E402
-from app.integrations import etsy, pinterest, qa  # noqa: E402
+from app.economy.clock import (  # noqa: E402
+    Clock,
+    from_iso,  # noqa: E402
+    to_iso,
+)
+from app.integrations import (  # noqa: E402
+    etsy,
+    pinterest,
+    pinterest_publisher,  # noqa: E402
+    qa,
+)
 from app.integrations.pinterest import (  # noqa: E402
     DISCLOSURE,
+    FakePinterest,  # noqa: E402
     NotSent,
     Pin,
     PinterestError,
@@ -38,7 +50,12 @@ from app.integrations.pinterest import (  # noqa: E402
     Upload,
 )
 from app.integrations.pinterest_connection import PinterestConnection  # noqa: E402
-from app.integrations.pinterest_live import LiveAccount, _Allowlist, connect  # noqa: E402
+from app.integrations.pinterest_live import (  # noqa: E402
+    DEFAULT_REFRESH_DAYS,  # noqa: E402
+    LiveAccount,
+    _Allowlist,
+    connect,
+)
 from app.logging_setup import redact  # noqa: E402
 from app.products import images  # noqa: E402
 from tests.channels.test_etsy import Etsy, call, market_next, shop_context, views_approval  # noqa: E402
@@ -827,3 +844,138 @@ def test_no_test_pin_without_a_live_listing_with_a_picture(data_dir: Path) -> No
     assert rows(agent, "SELECT COUNT(*) AS n FROM approvals WHERE executor = 'pinterest_test_pin'")[0]["n"] == 0
     [event] = rows(agent, "SELECT message FROM events WHERE message LIKE 'No test pin%'")
     assert "no live Etsy listing with a .png or .jpg photo" in event["message"]
+
+
+# --- From 0.15.0 (formerly test_fixes_0140_channels.py) ---
+
+
+DAY = 86_400
+
+
+# --- FIX 26k: Pinterest's refresh-token lifetime, read from its answer ------------------------------------------
+
+
+def test_the_refresh_token_s_lifetime_is_read_from_pinterest_s_answer(tmp_path: Path) -> None:
+    answer = {
+        "access_token": "pina_fresh-access",
+        "refresh_token": "pinr_fresh-refresh",
+        "expires_in": 30 * DAY,
+        "refresh_token_expires_in": 60 * DAY,
+    }
+    server, transport = mock({("POST", "/v5/oauth/token"): answer, ("GET", "/v5/user_account"): {"username": "p"}})
+    now = from_iso("2026-10-01T09:00:00Z")
+    clock = Clock(lambda: now)
+    store = TokenFile(tmp_path / "tokens.json")
+    connect(LIVE, clock, store, "the-code", "the-verifier", transport)
+    saved = store.load()
+    assert saved is not None
+    assert from_iso(saved.expires_at) == now + timedelta(days=30)
+    assert from_iso(saved.refresh_expires_at) == now + timedelta(days=60)
+    # Without it, the documented default (not a year).
+    del answer["refresh_token_expires_in"], answer["expires_in"]
+    connect(LIVE, clock, store, "the-code", "the-verifier", transport)
+    saved = store.load()
+    assert saved is not None and DEFAULT_REFRESH_DAYS == 60
+    assert from_iso(saved.refresh_expires_at) == now + timedelta(days=60)
+    assert from_iso(saved.expires_at) == now + timedelta(hours=1)
+
+
+def test_a_renewal_without_a_new_refresh_token_keeps_its_end(tmp_path: Path) -> None:
+    ends = to_iso(Clock().now() + timedelta(days=20))
+    renew = {"access_token": "pina_renewed", "expires_in": 30 * DAY}  # no new refresh token: the old one stays
+    account, _ = live_account(
+        tmp_path,
+        {("POST", "/v5/oauth/token"): renew, ("GET", "/v5/user_account"): {"username": "plannershop"}},
+        expires_at=to_iso(Clock().now()),
+        refresh_expires_at=ends,
+    )
+    account.info()
+    saved = account.tokens.load()
+    assert saved is not None and saved.access_token == "pina_renewed" and saved.refresh_expires_at == ends
+
+
+def test_an_unused_connection_is_renewed_before_it_lapses(data_dir: Path, tmp_path: Path) -> None:
+    renew = {
+        "access_token": "pina_renewed",
+        "refresh_token": "pinr_renewed",
+        "expires_in": 30 * DAY,
+        "refresh_token_expires_in": 60 * DAY,
+    }
+    soon = to_iso(Clock().now() + timedelta(days=3))
+    account, server = live_account(tmp_path, {("POST", "/v5/oauth/token"): renew}, refresh_expires_at=soon)
+    agent, _ = run(data_dir, FakeTransport(), settings=PINNING)
+    agent.pins.account = lambda: account  # no pins: the sync reads nothing, but keeps the connection
+    assert agent.pins.sync(force=True) is None
+    assert server.form(0) == {"grant_type": "refresh_token", "refresh_token": "pinr_r3fresh-t0ken-value"}
+    saved = account.tokens.load()
+    assert saved is not None and saved.refresh_token == "pinr_renewed"
+    assert from_iso(saved.refresh_expires_at) > Clock().now() + timedelta(days=59)
+    agent.pins.sync(force=True)
+    assert len(server.requests) == 1  # renewed once: it lasts 60 days again
+    assert FakePinterest(Clock(), None, lambda s: None).keep_alive() is None  # the dry run's account needs nothing
+
+
+def test_a_connection_made_under_0130_learns_pinterest_s_lifetime(tmp_path: Path) -> None:
+    renew = {
+        "access_token": "pina_renewed",
+        "refresh_token": "pinr_renewed",
+        "expires_in": 30 * DAY,
+        "refresh_token_expires_in": 60 * DAY,
+    }
+    # 0.13.0 stored a year for the refresh token; its access token expired while no pin was made.
+    account, server = live_account(
+        tmp_path, {("POST", "/v5/oauth/token"): renew}, expires_at=to_iso(Clock().now() - timedelta(days=1))
+    )
+    account.keep_alive()
+    saved = account.tokens.load()
+    assert saved is not None and saved.access_token == "pina_renewed"
+    assert from_iso(saved.refresh_expires_at) < account.clock.now() + timedelta(days=61)
+    account.keep_alive()  # fresh again: nothing to renew
+    assert len(server.requests) == 1
+
+
+def test_a_lapsed_connection_says_so(data_dir: Path, tmp_path: Path) -> None:
+    agent, _ = run(data_dir, FakeTransport())
+    store = TokenFile(tmp_path / "tokens.json")
+    connection = PinterestConnection(agent.db, agent.clock, LIVE, "live", 0, store)
+    tokens = some_tokens(agent.clock, expires=timedelta(days=30))
+    tokens.refresh_expires_at = to_iso(agent.clock.now() + timedelta(days=60))
+    store.save(tokens)
+    agent.clock.advance(days=45)  # the access token expired, the refresh token still renews it
+    assert connection.status() == ("ok", None) and connection.account() is not None
+    agent.clock.advance(days=16)  # unused for 61 days (the app was off): the connection ended
+    status, reason = connection.status()
+    assert status == "not_connected" and reason == (
+        "The connection expired: connect your account again (System, Pinterest)."
+    )
+    assert connection.account() is None
+
+
+# --- FIX 26l: a pin's listing, checked again before the pin is made ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        ("UPDATE etsy_listings SET state = 'inactive'", f"#{LISTING} isn't live at Etsy any more (deactivated)"),
+        ("UPDATE etsy_listings SET status = 'failed'", f"#{LISTING} isn't one of your live listings any more"),
+        (
+            "UPDATE etsy_listings SET auto_renew = 0, ends_at = '2000-01-31T00:00:00Z'",
+            f"#{LISTING} isn't live at Etsy any more (it ended on 2000-01-31)",
+        ),
+    ],
+)
+def test_an_approved_pin_whose_listing_stopped_being_live_is_not_made(data_dir: Path, change: str, reason: str) -> None:
+    agent, _, request = proposed(data_dir)
+    assert owner(agent).decide(request, {"decision": "approve"}, "Owner").status == 200
+    with agent.db.transaction() as conn:
+        conn.execute(change)
+    assert agent.execute_approved() == [(request, "failed")]
+    [row] = pin_rows(agent)
+    assert row["pin_id"] is None and row["error"] == reason
+    closed = rows(agent, f"SELECT status, result_note FROM approvals WHERE id = {request}")[0]
+    assert closed == {"status": "failed", "result_note": f"Not pinned: {reason}"}
+    assert agent.pinterest.account().state["boards"] == {}  # nothing reached Pinterest
+    assert rows(agent, f"SELECT status FROM action_journal WHERE approval_id = {request}") == [{"status": "failed"}]
+    with agent.db.connection() as conn:  # a pin refused before sending doesn't use one of the day's pins
+        assert pinterest_publisher.created_today(conn, agent.clock, agent.scope()) == 0

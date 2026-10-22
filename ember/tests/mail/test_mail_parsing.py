@@ -12,12 +12,14 @@ css_comment_timing.py).
    Printify product or upload to the website went out either.
 3. The CSS-comment pattern of the hidden-text filter took time growing with the square of a run of unclosed comments,
    and the 100,000-character cap came after it: one HTML email of 1 MB held the scheduler for 24 minutes.
-"""
+
+Tests from 0.39.5 and 0.39.7 (formerly test_fixes_0395.py, test_fixes_0397.py)."""
 
 from __future__ import annotations
 
 import imaplib
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from email.message import EmailMessage
 from pathlib import Path
@@ -498,3 +500,148 @@ def test_comments_don_t_count_toward_the_cap_and_an_unclosed_one_ends_the_sheet(
     assert len(full.css) == 100_000 and "/*" not in full.css
     full._style(".h{display:none}")
     assert len(full.css) == 100_000 and ".h" not in full.css
+
+
+# --- From 0.39.7 (formerly test_fixes_0397.py) ---
+
+
+# --- 1. a stop below a long thread (4.2) ---
+
+# Ember's longest email (2,500 characters) and its footer, as the repro writes it
+EMBER = ("Hallo Ann,\n\nich habe Ihren Shop gesehen und eine Idee fuer Ihre Produktbeschreibungen. " * 25)[:2_500]
+EMBER += '\n\n-- \nEmber, Etsy shop\nReply "stop" and I won\'t write again.\n'
+
+
+ATTRIBUTION = "Am 14.10.26 um 10:00 schrieb Ember:"
+
+
+def quoted(text: str) -> str:
+    return "\n".join(f"> {line}" for line in text.splitlines())
+
+
+def thread(rounds: int) -> str:
+    """Ember's emails and Ann's answers, each round quoting the last one whole: three rounds are the repro's thread."""
+    text = quoted(EMBER)
+    for _ in range(rounds):
+        text = quoted(f"Am 13.10.26 schrieb Ann:\n{text}\n\nDanke, ich ueberlege es mir.\n\n{EMBER}")
+    return text
+
+
+def below(rounds: int, answer: str = STOP_DE) -> str:
+    """Ann's answer below the thread, as Thunderbird writes it."""
+    return f"{ATTRIBUTION}\n{thread(rounds)}\n\n{answer}\n\nAnn\n"
+
+
+def below_html(rounds: int, answer: str = STOP_DE) -> str:
+    """The same in HTML, as Thunderbird writes it: each round's quote a blockquote in the next."""
+    ember = EMBER.replace("\n", "<br>")
+    html = f'<blockquote type="cite">{ember}</blockquote>'
+    for _ in range(rounds):
+        html = (
+            '<blockquote type="cite"><div class="moz-cite-prefix">Am 13.10.26 schrieb Ann:<br></div>'
+            f"{html}<p>Danke, ich ueberlege es mir.</p><p>{ember}</p></blockquote>"
+        )
+    return (
+        f'<html><body><div class="moz-cite-prefix">{ATTRIBUTION}<br></div>{html}<p>{answer}</p><p>Ann<br></p>'
+        "</body></html>"
+    )
+
+
+def test_the_threads_are_the_repro_s_and_one_longer_than_0_39_5_parsed() -> None:
+    assert len(thread(3)) == 10_259  # three rounds deep: the repro's
+    # twelve rounds: an HTML email's text past what 0.39.5 parsed (2 * BODY_CHARS, and the rest of that piece of HTML)
+    assert len(below(12)) > 40_000 and len(mail.html_to_text(below_html(12))) > 2 * mail.BODY_CHARS + mail._HTML_FEED
+
+
+@pytest.mark.parametrize("rounds", [3, 12], ids=["three-rounds", "twelve-rounds"])
+@pytest.mark.parametrize("html", [False, True], ids=["plain", "html"])
+def test_a_stop_below_a_long_thread_counts(rounds: int, html: bool) -> None:
+    """The repro: 0.39.5 caught a stop below one quote, and missed it below a thread of more than 8,000 characters (and
+    an HTML email's below more than 16,000, which wasn't parsed)."""
+    text = mail.html_to_text(below_html(rounds)) if html else below(rounds)
+    assert opt_out("Re: Idee", text) == STOP_DE
+    # what Ann quotes still never counts: Ember's footer ('Reply "stop"'), in every round of the thread
+    answer = "Danke, ich bestelle den Planer."
+    text = mail.html_to_text(below_html(rounds, answer)) if html else below(rounds, answer)
+    assert 'Reply "stop"' in text and opt_out("Re: Idee", text) is None
+
+
+def test_a_long_email_loses_what_it_quotes_first_the_oldest_first() -> None:
+    stored = mail.parse_message(from_ann(3, below(3)).as_bytes(), 3)
+    assert stored.body_cut and len(stored.body) <= mail.BODY_CHARS
+    lines = stored.body.splitlines()
+    assert lines[0] == ATTRIBUTION and lines[-3:] == [STOP_DE, "", "Ann"]  # 0.39.5: its first 8,000 characters
+    # the thread's oldest email (quoted four deep) is left out as one line; the three rounds after it are kept whole
+    assert [line for line in lines if line.endswith(mail.LEFT_OUT)] == [">>>> [...]"]
+    assert sum(line.lstrip("> ").startswith("Am 13.10.26 schrieb Ann:") for line in lines) == 3
+    assert sum(line.endswith("Danke, ich ueberlege es mir.") for line in lines) == 3
+    # an HTML thread too, read past its quote: the deeper rounds go first
+    html = mail.parse_message(from_ann(3, below_html(12), html=True).as_bytes(), 3)
+    assert html.body_cut and len(html.body) <= mail.BODY_CHARS and html.body.endswith(f"{STOP_DE}\n\nAnn")
+    left_out = [line for line in html.body.splitlines() if line.endswith(mail.LEFT_OUT)]
+    assert len(left_out) == 1 and left_out[0].startswith(">>")
+    # answered above the thread, the answer comes first as before
+    above = mail.parse_message(from_ann(3, f"{STOP_DE}\n\n{ATTRIBUTION}\n{thread(3)}\n").as_bytes(), 3)
+    assert above.body.startswith(f"{STOP_DE}\n\n{ATTRIBUTION}\n> ") and len(above.body) <= mail.BODY_CHARS
+    # a long text that quotes nothing keeps its first 8,000 characters, as before
+    long = mail.parse_message(from_ann(3, "Mein Vorschlag.\n" + "x" * 9_000).as_bytes(), 3)
+    assert long.body_cut and long.body == ("Mein Vorschlag.\n" + "x" * 9_000)[: mail.BODY_CHARS]
+
+
+def test_the_deepest_quote_goes_first_then_the_next_then_the_end() -> None:
+    text = (
+        "Below, as asked.\n\n> Ember's last email\n>> Ann's answer before it\n>>> Ember's first email, the oldest\n\n"
+        ">>> its second paragraph\n> More of Ember's last\n\nStop.\nAnn"
+    )
+    assert mail.fit_text(text, len(text)) == (text, False)
+    oldest = ">>> Ember's first email, the oldest\n\n>>> its second paragraph"  # its paragraphs go as one
+    assert mail.fit_text(text, len(text) - 1) == (text.replace(oldest, ">>> [...]"), True)
+    deeper = ">> Ann's answer before it\n" + oldest
+    assert mail.fit_text(text, len(text) - 60) == (text.replace(deeper, ">> [...]"), True)
+    every = "Below, as asked.\n\n> [...]\n\nStop.\nAnn"
+    assert mail.fit_text(text, len(every)) == (every, True)
+    assert mail.fit_text(text, 20) == (every[:20], True)  # only then is its end cut
+    assert mail.fit_text("no quote " * 3, 10) == ("no quote n", True)
+
+
+def test_an_html_email_is_read_past_its_quotes_up_to_a_cap() -> None:
+    # The text outside quotes still ends the parse after 2 * BODY_CHARS, as before
+    long = mail.html_to_text("<p>" + "Mein Vorschlag. " * 6_000 + "</p><p>Ende.</p>")
+    assert len(long) <= 2 * mail.BODY_CHARS + mail._HTML_FEED and "Ende." not in long
+    # A quote nested deep repeats its ">" on each line, so its text is many times its HTML (read whole, this 1 MB
+    # email would be 52 MB of text): it is read up to _QUOTED_CHARS
+    deep = "<blockquote>" * 255 + "a<br>" * 200_000 + "</blockquote>" * 255 + "<p>Stop.</p>"
+    started = time.perf_counter()
+    text = mail.html_to_text(deep)
+    assert time.perf_counter() - started < 5
+    assert mail._QUOTED_CHARS < len(text) < 2 * mail._QUOTED_CHARS and "Stop." not in text
+
+
+@pytest.mark.parametrize(
+    "made",
+    [
+        lambda: from_ann(3, below(3)).as_bytes(),
+        lambda: from_ann(3, below_html(12), html=True).as_bytes(),
+        lambda: with_photo(below(3)),
+    ],
+    ids=["plain", "html", "with-a-photo"],
+)
+def test_a_stop_below_a_long_thread_stops_the_approved_email(
+    data_dir: Path, imap: type[FakeIMAP], smtp: type[FakeSMTP], made: Callable[[], bytes]
+) -> None:
+    """The repro, end to end: the owner approved an email to Ann; her answer below the thread comes before the round
+    sends. An email over 1 MB (a photo) keeps its text the same way."""
+    agent, request = live_approved(data_dir)
+    agent.clock.advance(minutes=10)  # type: ignore[attr-defined]
+    imap.mails[3] = made()
+    assert agent.execute_approved() == [(request, "failed")]  # 0.39.5: sent
+    assert sent_to(smtp) == []
+    assert rows(agent, "SELECT address, reason FROM email_suppressions") == [
+        {"address": ANN, "reason": f'wrote "{STOP_DE}"'}
+    ]
+    assert approval(agent, request)["result_note"] == f"Not sent: {executor.SUPPRESSED}"
+    with agent.db.connection() as conn:
+        assert mailstore.inquiries(conn, agent.scope()) == []  # her stop doesn't wait to be answered
+    stored = rows(agent, "SELECT body, body_cut FROM emails WHERE uid = 3")[0]
+    assert stored["body_cut"] == 1 and len(stored["body"]) <= mail.BODY_CHARS
+    assert f"{STOP_DE}\n\nAnn" in stored["body"] and mail.LEFT_OUT in stored["body"]  # the agent reads it too

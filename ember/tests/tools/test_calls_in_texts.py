@@ -13,7 +13,8 @@ carry one call more.
 2. Of a call taken out of a journal, only one that only reads runs. Any other is refused with why, and the model makes
    it as a call of its own if it meant it: the reflection reads the refusal of a work step's journal.
 3. A call taken out of a journal and run counts toward the reply's four calls.
-"""
+
+Tests from 0.19.2, 0.24.0 and 0.39.4 (formerly test_fixes_0192.py, test_fixes_0240.py, test_fixes_0394.py)."""
 
 from __future__ import annotations
 
@@ -26,8 +27,16 @@ import pytest
 
 pytest.importorskip("httpx2")
 
-from app.agent import store, tools  # noqa: E402
-from tests.channels.test_etsy import call, shop_context  # noqa: E402
+from app.agent import (  # noqa: E402
+    prompts,  # noqa: E402
+    store,
+    tools,
+)
+from tests.channels.test_etsy import (  # noqa: E402
+    call,
+    shop_context,
+    started,  # noqa: E402
+)
 from tests.cycle.test_agent import make_agent, plan, rows, text  # noqa: E402
 from tests.cycle.test_agent import tools as calls  # noqa: E402
 
@@ -318,3 +327,96 @@ def test_journals_carry_no_more_calls_than_a_reply_runs(data_dir: Path) -> None:
     taken = rows(agent, "SELECT status FROM tool_calls WHERE tool = 'workspace_list' ORDER BY id")
     assert [t["status"] for t in taken] == ["ok"] * limit + ["skipped"] * (8 - limit)
     assert made_calls(agent).count(("write_journal", "act", "ok")) == 8
+
+
+# --- From 0.19.2 (formerly test_fixes_0192.py) ---
+
+
+def test_markup_naming_no_field_of_the_tool_is_left_alone() -> None:
+    spec = tools.SPECS["write_journal"]
+    raw = {"summary": "S", "entry": 'a <parameter name="title">x'}
+    assert tools.unleaked(spec, raw, []) == raw
+
+
+# --- From 0.24.0 (formerly test_fixes_0240.py) ---
+
+
+# --- the journal: a work step's is a draft, and another tool's call written inside a text runs on its own ----------
+
+
+def test_a_journal_written_while_working_is_kept_when_the_reflection_s_is_refused(data_dir: Path) -> None:
+    draft = {"summary": "Rebuilt the cover", "entry": "Made v13 and asked for it.", "next": "Check request #56 first."}
+    refused = {"summary": "s", "entry": "e", "x": 1}  # its own journal refused (live: "unknown field 'content'")
+    agent, transport = make_agent(
+        data_dir, [plan(), calls(("write_journal", draft)), calls(("write_journal", refused))]
+    )
+    assert agent.run_cycle("schedule").status == "completed"
+    journal = rows(agent, "SELECT phase, status, result FROM tool_calls WHERE tool = 'write_journal' ORDER BY id")
+    assert [(j["phase"], j["status"]) for j in journal] == [("act", "ok"), ("reflect", "error")]
+    assert journal[0]["result"] == tools.JOURNAL_DRAFT
+    assert rows(agent, "SELECT author, summary, entry, handoff FROM journal") == [
+        {"author": "agent", "summary": draft["summary"], "entry": draft["entry"], "handoff": draft["next"]}
+    ]
+    told = transport.sent[-1]["messages"][-1]["content"][-1]["text"]
+    assert prompts.JOURNAL_DRAFTED in told and prompts.JOURNAL_FIRST not in told
+
+
+def test_a_lesson_written_inside_the_journal_s_entry_leaves_the_journal_whole(data_dir: Path) -> None:
+    """Cycle #113: the model wrote memory_update inside write_journal's entry, its fields beside the journal's. 0.39.4:
+    the journal is kept, the call isn't run (a journal can quote someone else's call: the 0.39.4 tests above)."""
+    leaked = {
+        "summary": "Rebuilt the tracker's first photo",
+        "entry": 'Looked at both covers.</entry>\n<parameter name="next">Check request #56.</parameter>\n</invoke>\n'
+        '<invoke name="memory_update">\n<parameter name="file">lessons',
+        "content": "- For a first photo, show the table large enough to read.",
+        "mode": "append",
+    }
+    agent, _ = make_agent(data_dir, [plan(), text("Done."), calls(("write_journal", leaked))])
+    assert agent.run_cycle("schedule").status == "completed"
+    assert rows(agent, "SELECT author, entry, handoff FROM journal") == [
+        {"author": "agent", "entry": "Looked at both covers.", "handoff": "Check request #56."}
+    ]
+    made = rows(agent, "SELECT tool, phase, status, result FROM tool_calls ORDER BY id")
+    assert [(m["tool"], m["phase"], m["status"]) for m in made[-2:]] == [
+        ("write_journal", "reflect", "ok"),
+        ("memory_update", "reflect", "skipped"),
+    ]
+    assert "took the memory_update call you wrote inside entry out of it" in made[-2]["result"]
+    assert made[-1]["result"] == tools.TAKEN_OUT
+    assert "For a first photo" not in agent.memory().read("lessons")
+
+
+def test_a_project_update_written_inside_a_work_step_s_journal_is_left_to_a_call_of_its_own(data_dir: Path) -> None:
+    """Cycle #104's shape: project_update inside the entry, its project_id as text, its other fields beside. 0.39.4:
+    the draft is kept, and the update is the model's to make as a call of its own, as its answer says."""
+    agent, project = started(data_dir)
+    ctx = shop_context(agent)
+    leaked = {
+        "summary": "Found the cover's maths",
+        "entry": 'Checked the cover.</entry>\n<parameter name="next">Fix the cover.</parameter>\n</invoke>\n'
+        f'<invoke name="project_update">\n<parameter name="project_id">{project}',
+        "hypothesis": "Buyers pay for a cover with the building's numbers.",
+        "note": "Cover maths checked.",
+    }
+    made = call(ctx, "write_journal", leaked)
+    assert made.ok and made.text.startswith("Kept as your journal's draft")
+    refused = "Ember's code didn't run the project_update call you wrote inside write_journal"
+    assert f"{refused}: {tools.TAKEN_OUT}." in made.text
+    assert ctx.state.journal_draft == {
+        "summary": "Found the cover's maths",
+        "entry": "Checked the cover.",
+        "next": "Fix the cover.",
+    }  # noqa: E501
+    [row] = rows(agent, f"SELECT hypothesis, notes FROM projects WHERE id = {project}")
+    assert row["hypothesis"] != leaked["hypothesis"] and not (row["notes"] or "").endswith("Cover maths checked.")
+    again = {"project_id": project, "hypothesis": leaked["hypothesis"], "note": leaked["note"]}
+    made = call(ctx, "project_update", again)
+    assert made.ok and made.text.startswith(f"Project #{project}: updated.")
+    [row] = rows(agent, f"SELECT hypothesis, notes FROM projects WHERE id = {project}")
+    assert row["hypothesis"] == leaked["hypothesis"] and row["notes"].endswith("Cover maths checked.")
+
+
+def test_an_unknown_tool_written_inside_a_text_takes_nothing_out() -> None:
+    raw = {"summary": "s", "entry": 'e</invoke>\n<invoke name="nope">\n<parameter name="a">1', "content": "c"}
+    taken: list[tuple[str, dict[str, Any]]] = []
+    assert tools.unleaked(tools.SPECS["write_journal"], raw, [], taken) == raw and taken == []

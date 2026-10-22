@@ -4,7 +4,9 @@ name that wasn't the shop's. propose_bluesky_post's link takes two addresses, se
 the link is (one of Ember's live listings, or a page of the owner's website Ember's code knows), never the same twice;
 the second shows in the words as a clickable link, the AI line stays last, and the post keeps within Bluesky's 300
 characters. The approval shows it, Ember's code checks it again when it posts, and the reach of the product line it
-links counts the post."""
+links counts the post.
+
+Tests from 0.19.2 and 0.25.1 (formerly test_fixes_0192.py, test_bluesky_0251.py)."""
 
 from __future__ import annotations
 
@@ -17,16 +19,29 @@ import pytest
 
 pytest.importorskip("httpx2")
 
-from app.agent import reach, tools  # noqa: E402
-from app.integrations import bluesky, bluesky_publisher, etsy  # noqa: E402
-from app.integrations.bluesky import DISCLOSURE, Post, Upload  # noqa: E402
+from app.agent import (  # noqa: E402
+    reach,
+    store,  # noqa: E402
+    tools,
+)
+from app.integrations import (  # noqa: E402
+    bluesky,
+    bluesky_publisher,
+    etsy,
+    site_publisher,  # noqa: E402
+)
+from app.integrations.bluesky import (  # noqa: E402
+    DISCLOSURE,
+    FakeBluesky,  # noqa: E402
+    Post,
+    Upload,
+)
 from tests.channels.test_bluesky import LISTING, SITE, a_post, listed, post_context, post_rows  # noqa: E402
 from tests.cycle.test_agent import rows  # noqa: E402
 from tests.economy_helpers import START  # noqa: E402
 from tests.owner.test_owner_loop import owner  # noqa: E402
 from tests.owner.test_parked_lines import line_of, park  # noqa: E402
 from tests.queue_helpers import slot_comes  # noqa: E402
-from tests.test_fixes_0192 import blog_post  # noqa: E402
 
 LISTING_URL = etsy.listing_url(LISTING)
 PAGE = f"{SITE}/blog/wochenplan.html"
@@ -276,3 +291,144 @@ def test_a_second_link_to_a_listing_the_owner_parked_stops_the_post(data_dir: Pa
         " again" in refused.text
     )
     assert a_post(agent, ctx, text="Der Wochenplan, neu im Blog.", link=PAGE).ok  # the blog's page alone goes on
+
+
+# --- From 0.19.2 (formerly test_fixes_0192.py) ---
+
+
+def blog_post(agent: Any, slug: str, title: str = "Der Wochenplan") -> None:
+    scope = agent.scope()
+    with agent.db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO blog_posts (mode, session, slug, title, description, day, position, seen_at)"
+            " VALUES (?, ?, ?, ?, 'So planst du deine Woche.', '2026-09-01', 0, 'x')",
+            (scope.mode, scope.session, slug, title),
+        )
+
+
+# --- Bluesky: only pages Ember's code knows are there ---------------------------------------------------------------
+
+
+def test_a_blog_post_without_its_html_is_linked_at_its_address_with_its_card(data_dir: Path) -> None:
+    agent, _ = listed(data_dir)
+    ctx = post_context(agent)
+    blog_post(agent, "ki-agent-tagebuch-woche-1", "Mein erstes Tagebuch")
+    made = a_post(agent, ctx, text="Woche 1, ehrlich.", link=f"{SITE}/blog/ki-agent-tagebuch-woche-1")
+    assert made.ok, made.text
+    action = json.loads(rows(agent, "SELECT action FROM approvals WHERE executor = 'bluesky_post'")[-1]["action"])
+    assert action["link"] == f"{SITE}/blog/ki-agent-tagebuch-woche-1.html"
+    assert action["link_title"] == "Mein erstes Tagebuch"
+
+
+def test_a_page_ember_s_code_doesn_t_know_is_refused_with_the_pages_it_can_link(data_dir: Path) -> None:
+    agent, _ = listed(data_dir)
+    ctx = post_context(agent)
+    blog_post(agent, "ki-agent-tagebuch-woche-1")
+    for wrong in (f"{SITE}/blog/ki-agent-woche-1", f"{SITE}/impressum.html", f"{SITE}/live.html"):
+        refused = a_post(agent, ctx, text="Woche 1.", link=wrong)
+        assert not refused.ok and "isn't a page of your owner's website that Ember's code knows" in refused.text
+        assert f"{SITE}/blog/ki-agent-tagebuch-woche-1.html" in refused.text and f"{SITE}/blog/" in refused.text
+    other = a_post(agent, ctx, text="Woche 1.", link="https://example.org/blog/x.html")
+    assert not other.ok and "other sites aren't yours to promote" in other.text
+
+
+def test_the_known_pages_of_the_site() -> None:
+    db_meta: dict[str, str] = {}
+
+    class Db:
+        def get_meta(self, key: str) -> str | None:
+            return db_meta.get(key)
+
+    class Conn:
+        def execute(self, sql: str, params: Any) -> Any:
+            class Rows:
+                def fetchone(self) -> Any:
+                    return {"slug": params[-1], "title": "T", "description": "D"} if params[-1] == "known" else None
+
+                def fetchall(self) -> list[Any]:
+                    return []
+
+            return Rows()
+
+    scope = store.AgentScope("live", 0, 1)
+    base = "https://ember-ai.de"
+
+    def page(link: str) -> str | None:
+        found = site_publisher.known_page(Conn(), Db(), scope, base, link)  # type: ignore[arg-type]
+        return None if found is None else found[0]
+
+    assert page("https://ember-ai.de") == "https://ember-ai.de/"
+    assert page("https://EMBER-AI.de/index.html") == "https://ember-ai.de/"
+    assert (
+        page("https://ember-ai.de/blog") == page("https://ember-ai.de/blog/index.html") == "https://ember-ai.de/blog/"
+    )
+    assert page("https://ember-ai.de/blog/known") == "https://ember-ai.de/blog/known.html"
+    assert page("https://ember-ai.de/blog/known/") == "https://ember-ai.de/blog/known.html"
+    for missing in (
+        "https://ember-ai.de/blog/unknown.html",
+        "https://ember-ai.de/blog/index",
+        "https://ember-ai.de/live.html",
+        "https://ember-ai.de/links.html",
+        "https://ember-ai.de/blog/known.html?utm=x",
+        "http://ember-ai.de/blog/known.html",
+        "https://ember-ai.de.example.org/blog/known.html",
+    ):
+        assert page(missing) is None, missing
+    db_meta["integrations.live.live.on_server"] = '["live.html", "en/live.html", "live/banner.svg"]'
+    assert page("https://ember-ai.de/en/live.html") == "https://ember-ai.de/en/live.html"
+    assert page("https://ember-ai.de/live/banner.svg") is None
+
+
+def test_an_approved_post_with_a_missing_page_isnt_posted_and_one_without_html_is_posted_with_it(
+    data_dir: Path,
+) -> None:
+    agent, _ = listed(data_dir)
+    ctx = post_context(agent)
+    blog_post(agent, "wochenplan")
+    blog_post(agent, "alt", "Alt")
+    agent.settings = agent.settings.model_copy(update={"site_url": SITE})
+    agent.bluesky_posts.settings = agent.settings
+    for link in (f"{SITE}/blog/wochenplan.html", f"{SITE}/blog/alt.html"):
+        ctx.state = tools.CycleTools()
+        assert a_post(agent, ctx, text=f"Neu: {link[-12:]}", link=link).ok
+    good, gone = (r["id"] for r in rows(agent, "SELECT id FROM approvals WHERE executor = 'bluesky_post'"))
+    scope = agent.scope()
+    with agent.db.transaction() as conn:  # as an approved post of 0.19.1 had it: no ".html", or a page now gone
+        conn.execute("DROP TRIGGER approvals_action_fixed")
+        for request, link in ((good, f"{SITE}/blog/wochenplan"), (gone, f"{SITE}/blog/alt.html")):
+            action = json.loads(conn.execute(f"SELECT action FROM approvals WHERE id = {request}").fetchone()[0])
+            action.update(link=link, link_title="", link_description="")
+            conn.execute("UPDATE approvals SET action = ? WHERE id = ?", (json.dumps(action), request))
+        conn.execute("DELETE FROM blog_posts WHERE slug = 'alt' AND mode = ?", (scope.mode,))
+    for request in (good, gone):
+        assert owner(agent).decide(request, {"decision": "approve"}, "Owner").status == 200
+    done = dict(agent.execute_approved())
+    assert done == {good: "active"}  # 0.37.8: one post at a time, the next in its slot
+    slot_comes(agent, "bluesky")
+    done.update(agent.execute_approved())
+    assert done == {good: "active", gone: "failed"}
+    account = agent.bluesky.account()
+    [made] = account.state["posts"].values()
+    assert made["link"] == f"{SITE}/blog/wochenplan.html"
+    notes = {r["id"]: r["result_note"] for r in rows(agent, "SELECT id, result_note FROM approvals")}
+    assert "Its link went out as https://www.example.de/blog/wochenplan.html" in notes[good]
+    assert "isn't a page of your owner's website that Ember's code knows is there" in notes[gone]
+    assert [r["status"] for r in post_rows(agent)] == ["active", "failed"]
+
+
+def test_the_blog_section_gives_each_post_its_address(data_dir: Path) -> None:
+    agent, _ = listed(data_dir)
+    blog_post(agent, "wochenplan")
+    settings = agent.settings.model_copy(update={"site_url": SITE + "/index.html", "blog_enabled": True})
+    with agent.db.connection() as conn:
+        text = site_publisher.text(conn, agent.db, agent.scope(), settings)
+    assert f'{SITE}/blog/wochenplan.html "Der Wochenplan" (2026-09-01)' in text
+
+
+def test_a_long_reason_is_cut_not_refused(data_dir: Path) -> None:
+    agent, _ = listed(data_dir)
+    ctx = post_context(agent)
+    made = a_post(agent, ctx, text="Planer.", reason="r" * 400)
+    assert made.ok and "reason was cut to 300 of its 400 characters" in made.text
+    assert bluesky.TEXT_MAX == 300 and FakeBluesky.HANDLE
+    assert etsy.listing_url(1)

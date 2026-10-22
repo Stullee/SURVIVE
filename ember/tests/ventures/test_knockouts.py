@@ -2,23 +2,29 @@
 vendors' pages reached the owner. Now Ember's code checks each business case before it is proposed: cold outreach,
 accounts Ember would create, cash beyond the owner's venture budget, a first sale later than half the net runway, a
 sale that loses money, and demand without an independent page. A knocked-out venture isn't proposed until the case
-changes or the owner lifts that knock-out for it (reversibly, kept as history)."""
+changes or the owner lifts that knock-out for it (reversibly, kept as history).
+
+Also tests from 0.24.0 and 0.32.0 (formerly test_fixes_0240.py, test_fixes_0320.py)."""
 
 from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from app.agent import econ, evidence, knockouts, ventures, views
+from app.agent import econ, evidence, knockouts, tools, ventures, views
 from app.agent.fake_llm import FakeTransport, Reply, ToolCalls
 from app.agent.service import Agent
 from app.economy.clock import to_iso
+from tests.channels.test_etsy import call, shop_context, started
 from tests.cycle.test_agent import rows
 from tests.cycle.test_loop_shapes import run
 from tests.owner.test_owner_loop import owner
-from tests.ventures.test_ventures import CASE, DROPSHIPPING, JOURNAL, SCORES, VENTURING, plan, tool_results
+from tests.tools.test_workspace_tools import calling
+from tests.ventures import test_knockouts, test_venture_stages, test_ventures
+from tests.ventures.test_ventures import CASE, DROPSHIPPING, JOURNAL, NUMBERS, SCORES, VENTURING, plan, tool_results
 
 PAGE = "https://example.invalid/forum/sales"
 
@@ -128,3 +134,69 @@ def test_a_knocked_out_venture_is_proposed_only_once_the_owner_lifts_it(data_dir
     assert found(agent) == [("cash", False)]  # restored: a new proposal would be refused again
     with pytest.raises(sqlite3.IntegrityError, match="history cannot change"), agent.db.transaction() as conn:
         conn.execute("DELETE FROM knockout_overrides")
+
+
+# --- From 0.24.0 (formerly test_fixes_0240.py) ---
+
+
+def now(agent: Any) -> str:
+    return to_iso(agent.clock.now())
+
+
+# --- ventures: the knock-outs come with the numbers ------------------------------------------------------------------
+
+
+def test_a_venture_case_says_at_once_what_knocks_it_out(data_dir: Path) -> None:
+    agent, _ = started(data_dir)
+    ctx = shop_context(agent)
+    ctx.venture, ctx.net_runway_days = True, 32.0
+    with agent.db.transaction() as conn:
+        vid = ventures.create(
+            conn, agent.scope(), title="Worksheets on eduki", pitch="p.", stage="idea", now=now(agent)
+        )
+    made = call(ctx, "venture_case", {**NUMBERS, "venture_id": vid, "first_sale_days": 30})
+    assert made.ok and "Knocked out by Ember's code (it isn't proposed while one stands): " in made.text
+    assert "a first sale after half the runway (its first sale in 30 days, half the runway is 16 days)" in made.text
+
+
+# --- From 0.32.0 (formerly test_fixes_0320.py) ---
+
+
+# --- 3. a refused proposal keeps the rest of its update, and names every gap and knock-out at once -------------------
+
+
+def in_a_venture_cycle(agent: Any, tool: str, **args: Any) -> tools.Outcome:
+    """A call of a venture cycle's (its tools take a venture's scores and case)."""
+    return calling(agent, tool, venture=True, **args)
+
+
+@pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
+def test_a_refused_proposal_keeps_its_case_and_names_every_gap_and_knock_out_at_once(data_dir: Path) -> None:
+    agent, _ = run(data_dir, FakeTransport(script=[test_ventures.plan(steps=[])]), settings=test_ventures.VENTURING)
+    vid = test_ventures.DROPSHIPPING
+    # live (venture #23): its whole case, its scores before any research and the stage, in one call
+    first = in_a_venture_cycle(
+        agent, "venture_update", venture_id=vid, stage="proposed", **test_ventures.SCORES, **test_ventures.CASE
+    )
+    assert first.ok and first.summary == f"venture #{vid} updated (not all of it)", first.text
+    assert "Not done (the rest is saved): scores come from research: research venture #3 first" in first.text
+    assert (
+        "Not done (the rest is saved): venture #3 can't be proposed yet: a business case needs 2 research calls for "
+        "it that found something (it has 0); scores for revenue, doability, difficulty, risk, speed, cost; its numbers "
+        "(venture_case). Ember's code knocks it out too: no independent source for its demand (it has no evidence "
+        "yet: save an independent page's demand numbers with evidence)." in first.text
+    )
+    kept = test_ventures.venture(agent, vid)
+    assert {name: kept[name] for name in ventures.CASE_FIELDS} == test_ventures.CASE  # live: thrown away each time
+    assert (kept["stage"], kept["revenue"], kept["proposed_at"]) == ("idea", None, None)
+    # what it still needs, and nothing it sent before: research, its numbers, an independent page, the scores
+    for _ in range(ventures.RESEARCH_TO_PROPOSE):
+        test_venture_stages.researched(agent, vid)
+    test_knockouts.case(agent)
+    test_knockouts.independent(agent)
+    proposed = in_a_venture_cycle(agent, "venture_update", venture_id=vid, stage="proposed", **test_ventures.SCORES)
+    assert proposed.ok and "Venture #3: idea → proposed." in proposed.text and "Not done" not in proposed.text
+    assert test_ventures.venture(agent, vid)["stage"] == "proposed"
+    # a refusal with nothing else in the call is a refusal, as before
+    again = in_a_venture_cycle(agent, "venture_update", venture_id=vid, stage="live")
+    assert not again.ok and "a venture goes live once your owner backed it" in again.text
