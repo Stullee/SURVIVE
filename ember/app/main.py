@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from . import db as dbmod
-from . import events, paths
+from . import events, export, paths
 from .agent.owner import KILL_RESET_KEY, apply_kill_switch_reset
 from .agent.scheduler import Scheduler
 from .agent.service import Agent
@@ -122,6 +122,7 @@ def create_app(
     policy = AccessPolicy(dev_mode=dev_mode, owner_ids=loaded.settings.owner_user_ids, locked=loaded.owner_unknown)
     app.add_middleware(SecurityMiddleware, policy=policy)
     app.include_router(router)
+    app.state.exporter = export.Exporter()  # 0.43.0: the evaluation exports, one at a time
     app.mount("/static", StaticFiles(directory=paths.WEB_DIR / "static"), name="static")
     return app
 

@@ -3134,7 +3134,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.42.6 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.43.0 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3342,6 +3342,37 @@ model's replies and the tool calls' results become `[pruned]` and their inputs
 costs, tokens and purposes are kept. The database file then stops growing: it
 reuses the freed space but does not shrink. Words from messages removed before 0.11.2 were not
 registered: change such a password where it is used.
+
+### Evaluation export
+
+0.43.0. The report shows the latest 12 cycles and the newest rows of each record, and after 30 days the database
+keeps only the costs of the model's replies and tool calls, not their text. An evaluation of Ember's work (how she
+spends, builds, reasons, learns and explores, week by week: see `vision/evaluation.md` in the repository) needs more:
+the **Evaluation export** card under the report makes it, as one zip.
+
+- `ember.db`: the whole database, copied while Ember runs (a consistent snapshot), and shared like the report: other
+  people's text (the emails' subjects, texts and attachments, an opt-out's words, an email Ember proposed, the web
+  text of her research, your library and what its study drew from it) is left out with its length, and every other
+  text is masked as in the shareable report (addresses as `[email 1]`, the same address the same number throughout,
+  codes, tokens in links, phone numbers, IBANs, street addresses, your name and user ID, your personal options and
+  the words you removed). The salt of the removed words and their hashes are left out.
+- What each plan saw in the last 30 days (`plan_contexts`): since 0.43.0 every cycle keeps its plan's context for
+  30 days, like the replies, with the mail, research and library sections left out as in the report's PLANNER
+  CONTEXT.
+- `report.txt` (the shareable report as the export was made), `memory/` (her strategy, identity and lessons, masked)
+  and `workspace/`: the files she changed in the last 35 days, the newest first up to 300 MB. Her text files are
+  masked; **her products (PDF, Word, Excel, pictures) are as she made them**, as buyers and the platforms get them:
+  a book's author is your KDP author.
+- `outside.csv` and `week.csv` to fill in: what only you see (KDP's units and royalties, the ads' impressions and
+  clicks, the Anthropic Console's spend) and your week (minutes spent on Ember, instructions given, how it felt).
+- `manifest.json`: what is in it, how to read it (live rows have `mode = 'live'` or `simulated = 0`; older texts read
+  `[pruned]`), every table's rows and every file's size and SHA-256.
+
+**Make export** starts it; Ember works on meanwhile. It takes about a minute for a database of 100 MB on a PC, and
+several on a Raspberry Pi; the card says which step it is at. It is refused while another is being made, or when it
+would leave less than the 1 GB Ember keeps free on the disk. The newest two are kept in `/data/exports`, and
+Home Assistant's backups leave them out. As with the report: read it before you share it, and give it to a session
+that evaluates, not one that changes Ember's code.
 
 ## Money
 
@@ -3714,3 +3745,8 @@ ask you. The dashboard (System) shows the free space and warns below 1 GB. The
 text a workspace file held before the agent overwrote or deleted it is kept for
 `restore`: a deleted file's for 14 days, and all of them together take at most
 50 MB.
+
+0.43.0: the evaluation exports (see [Evaluation export](#evaluation-export)) are
+kept in `/data/exports`, the newest two, and Home Assistant's backups leave them
+out: each is a copy of the database and of the newest products, made again in
+a minute.

@@ -145,6 +145,7 @@ TABLES = (
     "listing_lines",  # 0.39.8
     "paid_tests",  # 0.39.8
     "made_pdfs",  # 0.40.1
+    "plan_contexts",  # 0.43.0: what each plan saw (the evaluation export shows it)
     "bets",
     "cases",
     "principles",
@@ -240,6 +241,33 @@ def report(state: AppState, *, full: bool = False) -> str:
     finally:
         _MARK.reset(mark)
         _MASK.reset(token)
+
+
+def shareable_masker(state: AppState) -> privacy.Masker:
+    """0.43.0: the shareable report's masker (the same addresses, names, subjects, the owner's identity and personal
+    options), for the evaluation export (export.py), which masks the whole database copy with it."""
+    return _masker(state, False)
+
+
+def shareable_context(text: str) -> str:
+    """0.43.0: a plan's context as the shareable report shows the next one (its mail, research and library sections
+    left out), unmasked."""
+    return _leave_out_preview(text)
+
+
+def shareable_input(tool: str, raw: str) -> str:
+    """0.43.0: a tool call's input as the shareable report shows it (an email's subject and text only as lengths)."""
+    return _email_input(tool, raw)
+
+
+def shareable_reason(reason: str | None) -> str | None:
+    """0.43.0: an opt-out's reason as the shareable report shows it (the sender's words only as their length)."""
+    return _their_words(reason)
+
+
+def shareable_approval(row: Any) -> dict[str, Any]:
+    """0.43.0: a request as the shareable report shows it (an email to someone else without its subject and text)."""
+    return _approval(row, False)
 
 
 def _masker(state: AppState, full: bool) -> privacy.Masker:

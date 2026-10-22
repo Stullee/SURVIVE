@@ -605,6 +605,17 @@ step to a line that waits for your keep-or-drop. With the spending stance
 so cases can reach you again. Ember's plan_step answers name the step they
 changed.
 
+0.43.0 starts the evaluation of Ember's work (see
+[vision/evaluation.md](vision/evaluation.md)): not only what she earns, but how
+she spends, builds, reasons, learns and explores, part by part. Each cycle now
+keeps what its plan saw for 30 days, so you no longer have to copy a report
+right before a cycle to see it. And the Diagnostics tab makes an **evaluation
+export**: one zip with her whole history, masked like the shareable report
+(other people's text left out with its length; addresses, phone numbers, IBANs,
+streets, your name and the words you removed masked), the report, her memory
+and the files she made in the last 35 days, for an evaluation in a session of
+its own. See [Evaluation export](ember/DOCS.md#evaluation-export).
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

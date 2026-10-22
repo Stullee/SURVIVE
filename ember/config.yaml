@@ -1,7 +1,7 @@
 # https://developers.home-assistant.io/docs/apps/configuration
 # Home Assistant calls these "apps" since 2026.2 (formerly "add-ons"); the file format is unchanged.
 name: Ember
-version: "0.42.6"
+version: "0.43.0"
 slug: ember
 description: A self-sustaining AI agent that has to earn more than its API calls cost.
 url: "https://github.com/Stullee/SURVIVE"
@@ -33,9 +33,15 @@ backup: cold
 # the database). Every backup holds the database itself, and the one Home
 # Assistant offers before an app update holds it as it was before. The
 # Supervisor matches a pattern against the end of each file's path; the
-# workspace can't hold a .db file.
+# workspace can't hold a .db file. 0.43.0: nor the evaluation exports in
+# /data/exports (each a copy of the database and of the newest products, made
+# again in a minute), nor what one cut short left (the workspace can't hold a
+# .zip file).
 backup_exclude:
   - "backups/ember-schema*.db"
+  - "exports/ember-evaluation-*.zip"
+  - "exports/.work-*"
+  - "exports/.*.part"
 
 watchdog: "http://[HOST]:[PORT:8099]/api/health"
 

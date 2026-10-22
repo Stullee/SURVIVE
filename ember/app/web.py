@@ -16,9 +16,9 @@ from typing import Annotated, Any
 from urllib.parse import quote, urlsplit
 
 from fastapi import APIRouter, Body, Path, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
 
-from . import diagnostics
+from . import diagnostics, export
 from . import events as event_log
 from .agent import owner as owner_side
 from .agent import views
@@ -1221,3 +1221,45 @@ def diagnostics_report(request: Request, full: bool = False) -> PlainTextRespons
     """A text report of the whole system for troubleshooting (never contains secrets): shareable, or with other
     people's text (emails, web pages) when ``full``."""
     return PlainTextResponse(diagnostics.report(_state(request), full=full), headers={"cache-control": "no-store"})
+
+
+# 0.43.0 (vision/evaluation.md): the evaluation export, made in the background and downloaded once it is made.
+def _exporter(request: Request) -> export.Exporter:
+    return request.app.state.exporter
+
+
+@router.get("/api/evaluation-export")
+def evaluation_export(request: Request) -> JSONResponse:
+    """Whether an export is being made (and its step), how the last one ended, and the newest one made."""
+    return JSONResponse(_exporter(request).status(), headers={"cache-control": "no-store"})
+
+
+@router.post("/api/evaluation-export")
+def evaluation_export_start(request: Request) -> JSONResponse:
+    """Starts an export (409 while one is being made, without a database or without room on the disk)."""
+    exporter = _exporter(request)
+    try:
+        exporter.start(_state(request))
+    except export.ExportError as exc:
+        return JSONResponse({"error": f"The export wasn't started: {exc}."}, status_code=409)
+    who = _owner(request) or "the owner"
+    event_log.record(_state(request).db, "info", "system", f"{who} started an evaluation export")
+    return JSONResponse(exporter.status(), status_code=202)
+
+
+@router.get("/api/evaluation-export/{name}")
+def evaluation_export_file(request: Request, name: Annotated[str, Path(max_length=120)]) -> Response:
+    """An export made, as a download."""
+    found = export.path_of(name)
+    if found is None:
+        return JSONResponse({"error": "No such export: make a new one."}, status_code=404)
+    return FileResponse(
+        found,
+        media_type="application/zip",
+        headers={
+            "content-disposition": _attachment(name),
+            "content-security-policy": "sandbox; default-src 'none'",
+            "x-content-type-options": "nosniff",
+            "cache-control": "no-store",
+        },
+    )

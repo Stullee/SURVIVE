@@ -17,6 +17,7 @@ link, an address with a zero-width space or a fullwidth @, a street with its pos
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import re
 import sqlite3
@@ -74,10 +75,13 @@ _PARTS = re.compile(r"[:=/@]")  # a word's parts are checked too ("login:secret"
 _EDGES = ".:!?*"
 
 
+@functools.lru_cache(maxsize=1 << 16)
 def secretish(word: str) -> bool:
     """Whether a word looks like a secret: letters with digits, a long number, an address, or a long mixed token.
 
     Removing a message registers only these words, so its ordinary words ("the", "Etsy") stay readable elsewhere.
+    0.43.0: remembered by its word (the same words recur through a text): the evaluation export redacts the whole
+    database with it, and this took half its time.
     """
     digits = sum(c.isdigit() for c in word)
     letters = any(c.isalpha() for c in word)

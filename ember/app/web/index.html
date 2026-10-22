@@ -768,6 +768,15 @@
         <p class="muted small diag-meta" id="diag-meta" hidden></p>
         <pre class="diag-report" id="diag-report" tabindex="0" hidden></pre>
       </article>
+      <article class="card" aria-labelledby="export-title">
+        <h2 id="export-title">Evaluation export</h2>
+        <p class="card-sub">Everything an evaluation of Ember's work needs, in one zip: her whole history (the database, shared like the report above: other people's text left out with its length, and addresses, codes, phone numbers, IBANs, streets, your name and the words you removed masked), what each of her plans saw in the last 30 days, the report, her memory, and the files she made in the last 35 days. Those files are as she made them, not masked: what buyers and the platforms get. Ember keeps working while it is made. Read its manifest.json before you share it.</p>
+        <div class="diag-actions" role="group" aria-label="Evaluation export">
+          <button type="button" class="btn btn-primary" id="export-make">Make export</button>
+          <a class="btn" id="export-download" href="api/evaluation-export" download hidden>Download</a>
+        </div>
+        <p class="form-status" id="export-status" role="status"></p>
+      </article>
     </section>
   </main>
 

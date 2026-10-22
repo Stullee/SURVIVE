@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import zlib
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
@@ -173,6 +174,26 @@ def save_call_text(conn: sqlite3.Connection, llm_call_id: int, text: str, stop_d
         "INSERT OR IGNORE INTO call_texts (llm_call_id, text, stop_details) VALUES (?, ?, ?)",
         (llm_call_id, text[:16_000], canonical(stop_details) if stop_details is not None else None),
     )
+
+
+def save_plan_context(conn: sqlite3.Connection, cycle_id: int, kind: str, text: str, now: str) -> None:
+    """0.43.0 (vision/evaluation.md): what a cycle's plan saw, compressed, once (a plan the worker's model makes after a
+    refusal sees the same context). The evaluation export shows it; db.prune_texts drops it after TEXT_DAYS."""
+    conn.execute(
+        "INSERT OR IGNORE INTO plan_contexts (cycle_id, created_at, kind, chars, context) VALUES (?, ?, ?, ?, ?)",
+        (cycle_id, now, kind, len(text), zlib.compress(text.encode(), 6)),
+    )
+
+
+def plan_context(conn: sqlite3.Connection, cycle_id: int) -> str | None:
+    """0.43.0: what cycle ``cycle_id``'s plan saw, or None (no plan, or pruned)."""
+    row = conn.execute("SELECT context FROM plan_contexts WHERE cycle_id = ?", (cycle_id,)).fetchone()
+    return context_text(row["context"]) if row else None
+
+
+def context_text(stored: bytes | None) -> str | None:
+    """A kept plan context as text (None once pruned)."""
+    return zlib.decompress(stored).decode() if stored is not None else None
 
 
 # --- projects ---
