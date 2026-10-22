@@ -208,7 +208,8 @@ def plain(text: str) -> str:
     for line in DISCLOSURE.values():
         text = text.replace(line, " ")
     text = _TAG.sub(" ", text)
-    text = re.sub(r"\S+\.[a-z]{2,}/\S*|(?:https?://|www\.)\S+", " ", text, flags=re.IGNORECASE)
+    # 0.42.2 (analysis-0.40.1 audit): a link without its scheme from a word's start only (quadratic on a long word)
+    text = re.sub(r"(?<!\S)\S+\.[a-z]{2,}/\S*|(?:https?://|www\.)\S+", " ", text, flags=re.IGNORECASE)
     return " ".join(re.findall(r"\w+", text.lower()))
 
 

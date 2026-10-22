@@ -49,6 +49,7 @@ from .estimate import (
     Unpriceable,
     expected_micros,
     plan_request,
+    prefix_request,
     worst_case_micros,
 )
 from .ledger import OUTSIDE_CYCLE_CAP, Books, EntryError
@@ -474,8 +475,12 @@ SPEED_NETTED_KEY = "economy.speed_netted"  # 0.39.8: the owner's own refunds (mi
 # for such a field with such a value costs the price table's price, and the calls already charged at their worst case
 # for it are settled once (settle_usage). Each new field took a release and a one-off settlement (usage.speed, 0.39.8),
 # and meanwhile the owner's refunds typed from the Console. Only the owner adds one (accept_usage, an owner route the
-# agent has no tool for); Ember's code never does, and any other value of the field stays at its worst case.
+# agent has no tool for); Ember's code never does, and any other value of the field stays at its worst case. 0.42.2
+# (analysis-0.40.1 audit): and only the owner takes one back (take_back_usage): one accepted by mistake, or a field that
+# came to cost more, stood at the price table's price until someone edited the database.
 STANDARD_USAGE_KEY = "economy.standard_usage"
+# 0.42.2 (analysis-0.40.1 audit): what taking one back does, as the owner is told before and after
+USAGE_TAKEN_BACK = "past refunds stay; calls from now on are charged at the worst case again"
 USAGE_FIELD = re.compile(r"[a-z][a-z0-9_]{0,63}")  # fullmatch: what a usage field's name can be
 USAGE_VALUE = re.compile(r"[ -~]{1,64}")  # fullmatch: a text value, printable ASCII (a number may be a count)
 _NO_PENDING = 2**63 - 1
@@ -671,10 +676,7 @@ def accept_usage(db: Database, clock: Clock, key: Any, value: Any, most: int, wh
     code doesn't know, and a value of it the owner already holds or that has calls to settle (else None: nothing
     changed); and only when it refunds at most ``most``, what the dashboard showed them (else UsageChanged). Again for
     the same field and value it settles what is left, usually nothing."""
-    if not isinstance(key, str) or not USAGE_FIELD.fullmatch(key) or key in _KNOWN_USAGE_KEYS:
-        raise EntryError("field", "name a usage field Ember's code doesn't know")
-    if not isinstance(value, str) or not USAGE_VALUE.fullmatch(value):
-        raise EntryError("value", "the value must be text of 1 to 64 characters")
+    key, value = _usage_pair(key, value)
     now = to_iso(clock.now())
     with db.transaction() as conn:
         held = standard_usage(db)
@@ -701,6 +703,45 @@ def accept_usage(db: Database, clock: Clock, key: Any, value: Any, most: int, wh
             )
         _book(db, conn, plan, now)
     return plan
+
+
+def take_back_usage(db: Database, clock: Clock, key: Any, value: Any, who: str) -> bool:
+    """0.42.2 (analysis-0.40.1 audit): the owner (``who``) no longer treats usage.``key`` = ``value`` as standard-priced
+    (accept_usage; by mistake, say, or the field came to cost more): answers with it are charged at their worst case
+    again from now on and offered again (usage_offers), as before they accepted it, in one transaction. What is settled
+    stays: the ledger only grows, so its refunds stay, and so do settle_usage's keys, so accepting it again settles only
+    the calls charged since. Returns whether they held it (else nothing changed: again, or a value never accepted)."""
+    key, value = _usage_pair(key, value)
+    with db.transaction() as conn:
+        held = standard_usage(db)
+        if value not in held.get(key, []):
+            return False
+        rest = [kept for kept in held.pop(key) if kept != value]
+        if rest:
+            held[key] = rest
+        conn.execute(
+            "INSERT INTO meta (key, value, updated_at) VALUES (?, ?, ?)"
+            " ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            (STANDARD_USAGE_KEY, json.dumps(held, sort_keys=True), to_iso(clock.now())),
+        )
+        events.record(
+            db,
+            "info",
+            "economy",
+            f'{who} took back usage.{key} "{value}" as the standard price: {USAGE_TAKEN_BACK}',
+            {"field": key, "value": value},
+        )
+    return True
+
+
+def _usage_pair(key: Any, value: Any) -> tuple[str, str]:
+    """The usage field and value the owner names (accept_usage, take_back_usage): a field Ember's code doesn't know and
+    a text value (else EntryError)."""
+    if not isinstance(key, str) or not USAGE_FIELD.fullmatch(key) or key in _KNOWN_USAGE_KEYS:
+        raise EntryError("field", "name a usage field Ember's code doesn't know")
+    if not isinstance(value, str) or not USAGE_VALUE.fullmatch(value):
+        raise EntryError("value", "the value must be text of 1 to 64 characters")
+    return key, value
 
 
 def event_reserve(settings: Settings, clock: Clock, trigger: str, working: int = 0) -> int:
@@ -1075,11 +1116,25 @@ class MeteredModel:
             input_tokens = self.transport.count_tokens(request)
         except Exception:  # noqa: BLE001 - same fallback as reserve()
             input_tokens = rough_token_count(request)
-        plan = plan_request(request, input_tokens + max(extra_tokens, 0))
+        plan = plan_request(request, input_tokens + max(extra_tokens, 0), self._prefix_tokens(request))
         price = self.settings.price_for(plan.model)
         if price is None:
             raise Unpriceable(f"model {plan.model!r} has no entry in the price table")
         return plan, price
+
+    def _prefix_tokens(self, request: Mapping[str, Any]) -> int | None:
+        """0.42.1 (analysis-0.40.1 codebase, 6.2 cache): the most tokens a 1-hour cache marker on ``request``'s tools
+        and system prompt can write (estimate.prefix_request), counted as its prompt is; None without one."""
+        try:
+            prefix = prefix_request(request)
+        except Unpriceable:
+            return None  # plan_request refuses the request
+        if prefix is None:
+            return None
+        try:
+            return self.transport.count_tokens(prefix)
+        except Exception:  # noqa: BLE001 - as the prompt's own count
+            return rough_token_count(prefix)
 
     def _expected(
         self, plan: Plan, price: ModelPrice, purpose: str, cycle_id: int, worst: int, cached: int | None = None
@@ -1125,7 +1180,9 @@ class MeteredModel:
 
     def _cached(self, cycle_id: int, model: str, ttls: tuple[str, ...]) -> int:
         """The prompt tokens the conversation's last call in this cycle cached (0 if its entry may be gone), counted as
-        the guard counted that call's prompt, so they compare with this one's."""
+        the guard counted that call's prompt, so they compare with this one's. 0.42.1 (analysis-0.40.1 codebase, 6.2
+        cache): fresh by its shortest lifetime: a 1-hour entry holds the tools and the system prompt only, the
+        conversation after them lives 5 minutes."""
         if not ttls:
             return 0
         with self.db.connection() as conn:
@@ -1136,7 +1193,7 @@ class MeteredModel:
             ).fetchone()
         if row is None or row[1] is None:
             return 0
-        fresh = max(CACHE_FRESH_SECONDS.get(ttl, 0) for ttl in ttls)
+        fresh = min(CACHE_FRESH_SECONDS.get(ttl, 0) for ttl in ttls)
         if (self.clock.now() - from_iso(row[1])).total_seconds() > fresh:
             return 0
         return int(row[0] or 0)
@@ -1245,7 +1302,7 @@ class MeteredModel:
             except Exception:  # noqa: BLE001 - e.g. the counting endpoint is rate limited
                 log.warning("Counting the prompt's tokens failed; using a generous rough count", exc_info=True)
                 input_tokens = rough_token_count(request)
-            plan = plan_request(request, input_tokens)
+            plan = plan_request(request, input_tokens, self._prefix_tokens(request))
         except Unpriceable as exc:
             problem = str(exc)
         except Exception as exc:  # noqa: BLE001 - a request that can't be sized is refused

@@ -771,6 +771,24 @@ class Owner:
 
         return _reply(run)
 
+    def rework_step(self, node_id: int, who: str | None) -> Reply:
+        """0.42.1 (analysis-0.40.1 codebase, 6.2 "A rework Ember can decline"): have a rework Ember declined
+        (plan_step decline) made anyway: a step proposing it again, pinned."""
+
+        def run() -> Reply:
+            with self.db.transaction() as conn:
+                try:
+                    line, step = plan.owner_rework(conn, self.scope, node_id, _signed(who), self._now())
+                except plan.PlanError as exc:
+                    raise OwnerError(exc.field, str(exc), exc.status) from exc
+            said = (
+                f"{who or 'The owner'} had the rework Ember declined (plan step #{node_id}) made anyway: step #{step}"
+            )
+            events.record(self.db, "info", "owner", said)
+            return Reply(200, {"id": node_id, "line": line, "step": step, "pinned": True})
+
+        return _reply(run)
+
     def end_product(self, node_id: int, body: Any, who: str | None, done: bool) -> Reply:
         """0.35.0: close a product of the plan (done: its line succeeded) or drop it (abandoned), with its steps and
         its unlocks: only the owner does (Ember holds a product at most)."""

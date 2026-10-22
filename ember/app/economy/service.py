@@ -37,6 +37,7 @@ from .ledger import (
 )
 from .life import KILLED_KEY, MONEY_PAUSE_KEY, PAUSED_KEY, RUNWAY_CAP_DAYS, Life, LifeStatus, mode_of
 from .metering import (
+    USAGE_TAKEN_BACK,
     MeteredModel,
     MeterHealth,
     ProcessLock,
@@ -48,6 +49,7 @@ from .metering import (
     recover_interrupted,
     settle_standard_usage,
     standard_usage,
+    take_back_usage,
     usage_offers,
     usd_cap_to_micros,
     workshop_reservation,
@@ -211,6 +213,26 @@ class Economy:
             return Reply(404, {"error": error, "field": "value"})
         status = self.life.evaluate_and_persist()  # a refund of charges before a critical state may end it (E1)
         return Reply(200, {"accepted": _offer(plan, True), "economy": self._summary(status)})
+
+    def take_back_usage(self, body: Any, entered_by: str | None = None) -> Reply:
+        """0.42.2 (analysis-0.40.1 audit): the owner takes back a usage field's value they treat as standard-priced
+        (accept_usage), {"field", "value"}: answers with it are charged at their worst case again from now on, and
+        nothing settled changes (metering.take_back_usage). For a value not held (again, say) nothing changes, and the
+        reply says so."""
+        sent = body if isinstance(body, dict) else {}
+        who = printable(entered_by, 60) if entered_by else "The owner"
+        try:
+            taken = take_back_usage(self.db, self.clock, sent.get("field"), sent.get("value"), who)
+        except EntryError as exc:
+            return Reply(422, {"error": str(exc), "field": exc.field})
+        usage = f'usage.{sent["field"]} "{sent["value"]}"'
+        note = (
+            f"Took back {usage} as the standard price: {USAGE_TAKEN_BACK}."
+            if taken
+            else f"Nothing to take back: {usage} isn't treated as the standard price."
+        )
+        reply = {"field": sent["field"], "value": sent["value"], "taken_back": taken, "note": note}
+        return Reply(200, {**reply, "standard_usage": standard_usage(self.db)})
 
     def correct(self, entry_id: int, body: Any, entered_by: str | None = None) -> Reply:
         try:
@@ -545,6 +567,8 @@ class Economy:
             "revive": revive,
             "warnings": self.warnings(),
             "uncertain_bills": self.uncertain_bills(),  # 0.42.0 (6.2 bills): the owner's offers on them
+            # 0.42.2 (analysis-0.40.1 audit): the values the owner treats as standard-priced, each with its Take back
+            "standard_usage": standard_usage(self.db),
             "held_warning": _held(self.held_warning(status)),  # 0.42.0: the warning above, for its Keep as charged
             # 0.12.0: the estimates scaled up after a call cost more than estimated (per purpose and model)
             "estimate_factors": [

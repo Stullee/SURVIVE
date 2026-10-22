@@ -45,7 +45,7 @@ RESEARCH_KEPT = 5  # a session's newest research calls stay whole: the plan's RE
 # A migration number another branch holds and that isn't merged yet: until its file is here, the numbers may skip it.
 # A database this build migrated applies it once it comes (its migration is independent of the later ones). 0070 is
 # Google Search Console's (branch claude/zen-cannon-v75uxs), 0071 the 0.16.1 analysis's fixes. Remove a number once its
-# migration is merged (tests/test_db.py checks that).
+# migration is merged (tests/web/test_db.py checks that).
 RESERVED = frozenset({70})
 
 
