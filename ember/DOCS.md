@@ -1805,7 +1805,8 @@ no longer shown); a study that failed three times stops until you press
   on, a Pinterest board or pin made or deleted, a Bluesky post made or deleted,
   a Printify product created or deleted), the newest first. Each one shows:
   - what it acted on, and what it changed (before → after);
-  - how it ended;
+  - how it ended (0.42.2: **Asked to wait** when its service asked Ember's
+    code to come back later, and it is tried again: see Asked to wait above);
   - on whose decision: **You approved it**, **Your unlock**, **Your Undo**,
     or **Ember's code on its own**.
 
@@ -1842,7 +1843,12 @@ no longer shown); a study that failed three times stops until you press
   you unlocked. The newest digest is at the top of this card and in the System
   log; the sensor has its counts (`digest_day`, `digest_actions`, ...). Days
   without a round (a pause) get their digest afterwards, up to 14 days back
-  (0.15.0).
+  (0.15.0). Since 0.42.2 a try that Etsy, Pinterest or Bluesky asked Ember's
+  code to make later (see Asked to wait above) is no failed action: the
+  digest counts the requests that waited apart ("1 request(s) waited when
+  their service asked to come back later (not failures)"), a listing that
+  waited twice and then went out is 1 action, and one that fails at its last
+  try fails once.
 
   **Take back every unlock**, at the top of this card while any unlock
   stands: one click sets every rule of every milestone back to **Ask me**.
@@ -3531,7 +3537,8 @@ counts the unlocks that stand (0.13.0). Of the newest daily digest, `digest_day`
 is the day it covers (an automation can notify you when it changes), and
 `digest_actions`, `digest_failed` and `digest_taken_back` count the actions
 Ember's code carried out that day, those that failed, partly failed or ended
-unclear, and the unlocks taken back; its text is on the dashboard only. The
+unclear (0.42.2: a wait for the service isn't one), and the unlocks taken
+back; its text is on the dashboard only. The
 JSON never contains any text the agent wrote, nor anyone's address.
 In dry run the numbers are the dry run's. If the database can't be read,
 `state` is `unknown` and the numbers are empty.

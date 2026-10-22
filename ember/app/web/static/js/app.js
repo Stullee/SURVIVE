@@ -2735,6 +2735,7 @@
     partial: { icon: "!", label: "Partly done", tone: "warning" },
     failed: { icon: "✕", label: "Failed", tone: "critical" },
     unclear: { icon: "!", label: "Unclear", tone: "critical" },
+    waited: { icon: "◷", label: "Asked to wait", tone: "warning" },  // 0.42.2: its service asked to come back later
   };
 
   function renderAudit(audit, killed) {
