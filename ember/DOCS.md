@@ -36,7 +36,7 @@ code from Etsy's own numbers): the agent never reports its own.
 | Starting balance | 20 USD | Your first grant, recorded once when the agent is born. |
 | Daily spending cap | 1.50 USD | Hard limit per day. Calls that could exceed it are refused. |
 | Spending cap per wake cycle | 0.50 USD | Hard limit per cycle. Must not exceed the daily cap (if it does, Ember uses the daily cap). A working cycle (its plan, a work step and the reflection) can cost up to about 0.25 USD with the default models; the dashboard warns you below 1.5 times that, when most cycles would end after a step or two. |
-| Spending stance | invest | What happens as the runway shrinks: **invest** keeps the agent exploring at your caps until its last will (under 15 days of runway the System log warns you once), **steady** goes no lower than focus, **conserve** is focus under 30 days and maintenance under 15. See [burn modes](#money). |
+| Spending stance | invest | What happens as the runway shrinks: **invest** keeps the agent exploring at your caps until its last will (under 15 days of runway the System log warns you once; since 0.42.6 a venture's first sale may take the whole runway, not half), **steady** goes no lower than focus, **conserve** is focus under 30 days and maintenance under 15. See [burn modes](#money). |
 | Cash for a venture's first test (EUR) | 20 | A business case that needs more cash than this to start is knocked out: Ember's code won't propose it until you lift that knock-out on its card (see [Ventures](#ventures)). |
 | Daily study budget for the library | 0.50 USD | What the agent may spend a day studying the documents you add on the Library tab. It counts toward the daily cap, not the cycle cap (except in the maintenance [burn mode](#money)). 0: nothing is studied, but the documents can still be searched and read. See [Library](#library). |
 | Default sleep | 240 min | Time between wake cycles when the agent doesn't choose. |
@@ -263,6 +263,14 @@ it runs one **wake cycle**:
    any step (see [Plan](#plan)). A missed milestone decides nothing.
    A message of the agent's that promises later work in words
    only ("next cycle I'll ...") comes back to it once, to record the promise.
+   Since 0.42.6 each sentence counts on its own: a sentence reporting on an
+   open promise goes through, another one's promise doesn't (live, "Next
+   ordinary cycle will apply the 3 fixes" went out unrecorded because a later
+   sentence named promise #67, and no cycle made the fixes). A promise holding
+   every word of an open one (3 words at least) repeats it, and one whose words
+   name another line's listing or product type (KDP, Printify) is that line's,
+   whatever line it was made on: the Kassenbuch's proposal was promised twice,
+   the second time on the cover-letter line, each promise with its own step.
    Any cycle may keep another line's record up to date (a note, its hypothesis,
    waiting; parking an idea with what it learned; closing an obligation with
    its evidence); work on another line (a request, a bet, reopening it) waits
@@ -422,7 +430,14 @@ open isn't held. Since 0.39.6 a **change** of a live or launched line
 is a step of its own, due that day ("Review 10-16: ..."), which Ember carries out
 and says done; the next review's change takes the place of one still open. A
 change waited for its line's cycle, which took the heaviest step instead: three
-reviews decided on a small Etsy Ads test, and no request for it was made. Ember's code adds the review's lesson
+reviews decided on a small Etsy Ads test, and no request for it was made. Since 0.42.6
+not for a line waiting for your keep-or-drop: six cycles ($1.34) closed "Kept
+passive at zero cost. The owner decides at renewal" on three such lines, each
+step weighing more than the KDP book's, and four of them cut Ember's sleep. The
+review also reads your messages of the period (the newest 3, as you wrote them:
+what you asked stands) and your KDP books with their Amazon link, or that they
+have none yet: its focus had planned a book you put off and pins "linking to
+Amazon" for two books without a link. Ember's code adds the review's lesson
 to the agent's lessons itself (since 0.18.0). The next review shows whether it did. You can
 read every review, with the numbers it judged, under **Mind → Daily reviews**.
 
@@ -978,7 +993,10 @@ against six knock-outs:
 - more cash to start than **Cash for a venture's first test**;
 - a first sale later than half the net runway (in days; the first sale counts
   as at least 14 days, so below 28 days of net runway every case is slow until
-  you lift it);
+  you lift it). Since 0.42.6, with the spending stance **invest** (the
+  default), later than the whole net runway: invest explores whatever the
+  runway, and with 24 days of it nine venture cycles ($2.48) found every case
+  slow and parked it, so none reached you;
 - a sale that loses money after the fees;
 - no independent page behind its demand: no claim of searches, sales, orders,
   reviews or buyers from a page that isn't a vendor's or an affiliate's (0.15.0:
@@ -1422,7 +1440,12 @@ is: the promise to propose the Kassenbuch by 10-25, which KDP's weekly limit
 held until then, could only be tried and refused, a cycle a day. Since 0.40.3
 she can't make a step you pinned wait (as she can't hold or skip it), nor a step
 wait on one that waits on it (only a step's closing lifts such a wait), and her
-two waits a day count from your midnight, not from midnight UTC.
+two waits a day count from your midnight, not from midnight UTC. Since 0.42.6
+her answer names the step it changed with its title (a wait meant for a promise
+waited the cycle's own step, a venture's research, and "Step #251 waits on
+2026-10-23" didn't say so), a third wait in a day says the step can wait from
+tomorrow (a cycle read it as "already waiting"), and a promise to propose a KDP
+book waits while KDP's week holds its format, as the book's own step does.
 What you, a promise or Ember's code put in the plan stays. She can **hold** a
 product to work on others, with her reason, and resume it. She can't close,
 drop or delete a project or product: only you do. Each change is kept with its
@@ -1901,6 +1924,11 @@ no longer shown); a study that failed three times stops until you press
   with the message in the form, to shorten to the rule. A message leaves the agent's plans once
   it is answered (live, "Bluesky posts in English only" was acknowledged in the
   morning and a German post proposed that evening); a rule stays in every plan.
+  Since 0.42.6 an answered message stays 3 days after you wrote it (the newest
+  two), marked answered and that any work it asks for is still Ember's, after
+  everything else and only in the room left: your three fixes to the Kassenbuch
+  left every plan once Ember had answered "the next cycle applies them", and no
+  cycle made them.
 - **Inbox**: the agent's messages to you, and yours to it. Your message wakes
   it to read it (see the option **Wake Ember when you write**): 5 minutes after
   your last message or decision (at most 15 after the first, at least 30
@@ -1921,7 +1949,8 @@ no longer shown); a study that failed three times stops until you press
   in anywhere (the page warns you when a message looks like a login). **Remove
   text** blanks one of your own messages for good, for example a password
   sent by mistake; a note that something was removed stays. Each of your
-  messages stays in the agent's plans until one of its messages answers it,
+  messages stays in the agent's plans until one of its messages answers it (and
+  since 0.42.6, marked answered, up to 3 days after you wrote it),
   so a cycle that ends early can't lose your question; under your message the
   Inbox says whether it was answered yet. The Inbox shows the newest 30
   messages and every one of yours still waiting for an answer; **Show older

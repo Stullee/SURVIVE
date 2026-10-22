@@ -368,3 +368,49 @@ def test_a_promise_still_needs_its_day_and_a_text_too_long_says_how_much_to_cut(
     # 0.42.0 (test_tool_limits.py): a promise's commits, a note OBLIGATIONS shows cut anyway, is cut, not refused
     cut = call(ctx, "message_owner", {"text": "Soon.", "commits": "x" * 101, "due": agent.clock.today().isoformat()})
     assert cut.ok and "commits was cut to 100 of its 101 characters" in cut.text
+
+
+# --- From 0.42.6 (analysis-0.42.3) ---
+
+
+def test_a_report_on_a_promise_lets_its_own_sentence_through_not_another_s(data_dir: Path) -> None:
+    """Live, #206 began "Next ordinary cycle on project #14 will: (1) apply the 3 exact text/table fixes" and went out
+    without commits, as a later sentence named promise #67: no obligation kept the fixes, and no cycle made them."""
+    agent, _ = lined(data_dir)
+    kept = promise(agent, "Propose the checklist book")  # the owner heard nothing of it since
+    ctx = working(agent)
+    words = f"Next ordinary cycle on project #3 applies your 3 fixes. Promise #{kept} is on track."
+    back = call(ctx, "message_owner", {"text": words})
+    assert not back.ok and '("Next ordinary cycle")' in back.text, back.text
+    reports = call(ctx, "message_owner", {"text": f"Promise #{kept}: the book comes next cycle."})
+    assert reports.ok, reports.text  # its own sentence reports on the promise
+
+
+def test_a_promise_holding_every_word_of_an_open_one_repeats_it(data_dir: Path) -> None:
+    """Live, #68 "Propose Kassenbuch 2027 KDP listing once weekly slot resets" shared 5 of 9 words with #67's "Propose
+    Kassenbuch 2027 KDP listing": two promises, two steps, on two lines, for one book."""
+    agent, _ = lined(data_dir, titles=())
+    first = promise(agent, "Propose Kassenbuch 2027 KDP listing")
+    with agent.db.connection() as conn:
+        again = obligations.repeated_promise(
+            conn, agent.scope(), "Propose Kassenbuch 2027 KDP listing once weekly slot resets", day(agent, 3)
+        )
+        assert again is not None and again["id"] == first
+        assert obligations.repeated_promise(conn, agent.scope(), "Propose the listing", day(agent, 3)) is None
+
+
+def test_a_promise_whose_words_name_another_line_is_that_line_s(data_dir: Path) -> None:
+    """Live, "Propose Kassenbuch 2027 KDP listing" was promised on line #4 (cover letters): the KDP book's step took
+    line #4's cycles and its momentum."""
+    agent, _ = lined(data_dir)
+    book = project(agent, *BOOK)
+    keep(agent)
+    said = {
+        "text": "The Kassenbuch is next.",
+        "commits": "Propose the Kassenbuch 2027 KDP listing",
+        "due": day(agent, 2),
+    }
+    made = call(working(agent), "message_owner", {**said, "project_id": 1})
+    assert made.ok and f"on line #{book}: close it" in made.text, made.text
+    assert f"Its words name line #{book}, so it is that line's promise (not #1)." in made.text
+    assert rows(agent, "SELECT project_id FROM obligations WHERE kind = 'promise'") == [{"project_id": book}]

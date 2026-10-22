@@ -931,7 +931,10 @@ def _review_changes(conn: sqlite3.Connection, scope: AgentScope, now: str, today
     of one still open. Until now a change "waited for its line's cycle", and that cycle took the tree's heaviest step:
     live, the reviews of 10-13, 10-14 and 10-15 each decided on a small Etsy Ads test the owner would turn on, and no
     request for it was made; the cycles made new covers instead. Only for a line whose maintain stage is open (live,
-    or launched): before that, its stage's own steps are the change."""
+    or launched): before that, its stage's own steps are the change. 0.42.6 (analysis-0.42.3, 3.1): nor for a line
+    waiting for the owner's keep-or-drop (an open decide/owner step): live on 10-21 and 10-22 six cycles ($1.34) closed
+    "Review: ... Kept passive at zero cost. The owner decides at renewal" on lines #3, #4 and #6, each weighing 4.0
+    (due today) above the KDP book's steps, and four of them cut Ember's sleep to 30 minutes."""
     where, params = scope.where()
     row = conn.execute(
         f"SELECT day, verdicts FROM reviews WHERE {where} AND day = ? AND status = 'ok' ORDER BY id DESC LIMIT 1",
@@ -954,6 +957,8 @@ def _review_changes(conn: sqlite3.Connection, scope: AgentScope, now: str, today
         launched = bool(product) and (product[0]["live_since"] or (current and current["stage"] == "launch"))
         if project is None or project["status"] not in OPEN_STATUSES or stage is None or not launched or not why:
             continue
+        if owner_decision(conn, scope, line, now) == "deciding":
+            continue  # 0.42.6: the line waits for the owner's keep-or-drop: the change stays in the review's words
         title = _cut(f"Review {str(row['day'])[5:]}: {why}", 160)
         mine = "project_id = ? AND level = 'step' AND template = ?"
         if nodes(conn, scope, f"{mine} AND title = ?", (line, REVIEW_CHANGE, title)):

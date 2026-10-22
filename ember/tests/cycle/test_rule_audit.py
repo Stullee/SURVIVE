@@ -94,7 +94,7 @@ AUDIT: dict[str, list[tuple[str, str, str]]] = {
         ),
         ("- Your owner's caps are the only spending limits", GUIDANCE, "0.18.0: the review invented caps"),
         ("- Check your last review's verdicts", GUIDANCE, ""),
-        ("- Read your owner's decisions and comments", GUIDANCE, ""),
+        ("- Read your owner's messages, decisions and comments", GUIDANCE, "0.42.6: their messages too"),
         ("- Name one lesson worth keeping", GUIDANCE, ""),
         ("- Write a retrospective of each item SETTLED lists", GUIDANCE, "0.18.0: Ember's code keeps them as cases"),
         ("- Look at your venture tree", GUIDANCE, ""),

@@ -24,6 +24,7 @@ from typing import Any
 
 from .. import events, privacy
 from ..db import Database
+from ..economy import burn
 from ..economy.clock import Clock, to_iso
 from ..economy.life import KILLED_KEY
 from ..economy.service import Economy, Reply
@@ -639,7 +640,9 @@ class Owner:
             if not isinstance(confirm, bool):
                 raise OwnerError("confirm", "confirm must be true or false")
             allowed, stage = VENTURE_ACTIONS[action]
-            net_days = self.economy.life.evaluate().runway.net_days if action == "back" else None
+            status = self.economy.life.evaluate() if action == "back" else None
+            net_days = status.runway.net_days if status is not None else None
+            whole = status is not None and status.stance == burn.INVEST  # 0.42.6: the knock-outs' slow rule
             with self.db.transaction() as conn:
                 row = ventures.get(conn, self.scope, venture_id)
                 if row is None:
@@ -654,7 +657,7 @@ class Owner:
                 why = ""
                 if action == "back" and not confirm:
                     cash = self.economy.settings.venture_cash_eur
-                    why = stages.backing_problem(conn, row, cash_eur=cash, net_days=net_days)
+                    why = stages.backing_problem(conn, row, cash_eur=cash, net_days=net_days, whole_runway=whole)
                 if why and row["stage"] != "proposed":
                     raise OwnerError(
                         "confirm",

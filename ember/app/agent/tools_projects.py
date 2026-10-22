@@ -519,10 +519,14 @@ def _venture_case(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
         else f" (at an assumed USD {econ.DEFAULT_USD_PER_EUR:.2f} per EUR: your owner set no exchange rate)"
     )
     # 0.24.0: the knock-outs these numbers meet, at once (live, a case's research went on for two more calls, and its
-    # proposal was refused for a first sale after half the runway, which the case had shown from the start)
+    # proposal was refused for a first sale too late for the runway, which the case had shown from the start)
     row = ventures.get(conn, ctx.scope, venture_id)
     knocked = (
-        knockouts.active(knockouts.check(conn, row, cash_eur=ctx.venture_cash_eur, net_days=ctx.net_runway_days))
+        knockouts.active(
+            knockouts.check(
+                conn, row, cash_eur=ctx.venture_cash_eur, net_days=ctx.net_runway_days, whole_runway=ctx.whole_runway
+            )
+        )
         if row is not None and row["stage"] in ventures.EXPLORING
         else []
     )
@@ -689,7 +693,9 @@ def _new_stage(
         values = {**dict(row), **changes}
         gaps = ventures.proposal_gaps(values, "researching" if current == "idea" else current)
         knocked = knockouts.active(
-            knockouts.check(conn, values, cash_eur=ctx.venture_cash_eur, net_days=ctx.net_runway_days)
+            knockouts.check(
+                conn, values, cash_eur=ctx.venture_cash_eur, net_days=ctx.net_runway_days, whole_runway=ctx.whole_runway
+            )
         )
         out = "; ".join(f"{k.label} ({k.why})" for k in knocked)
         if gaps:  # 0.32.0: with the knock-outs that stand too (live, the agent met one only once its gaps were filled)

@@ -735,6 +735,22 @@ def open_messages(conn: sqlite3.Connection, scope: AgentScope, limit: int = 8) -
     ).fetchall()
 
 
+ANSWERED_DAYS = 3  # 0.42.6: days an answered message of the owner's stays in their news (``recent_words``)
+
+
+def recent_words(conn: sqlite3.Connection, scope: AgentScope, since: str, limit: int = 2) -> list[sqlite3.Row]:
+    """0.42.6 (analysis-0.42.3, 3.3): the owner's messages the agent answered, written since ``since``, the newest
+    first: what they ask stays the agent's to carry out after its answer. Live, message #205 (three fixes to the
+    Kassenbuch) left every plan once #206 had answered it ("next ordinary cycle will apply the 3 fixes"), and no cycle
+    made them."""
+    where, params = scope.where()
+    return conn.execute(
+        f"SELECT * FROM messages WHERE {where} AND sender = 'owner' AND answered_by IS NOT NULL"
+        " AND removed_at IS NULL AND created_at >= ? ORDER BY id DESC LIMIT ?",
+        (*params, since, limit),
+    ).fetchall()
+
+
 def answerable(conn: sqlite3.Connection, scope: AgentScope, ids: list[int]) -> bool:
     """0.12.0: whether any of ``ids`` is an open message of the owner's the agent was shown (one ``mark_answered``
     would mark)."""

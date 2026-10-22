@@ -72,13 +72,17 @@ def _park_date(v: Mapping[str, Any]) -> date | None:
     return ventures.owner_day(began) + timedelta(days=ventures.RESEARCH_DAYS) if began else None
 
 
-def _need(conn: sqlite3.Connection, v: Mapping[str, Any], *, cash_eur: float, net_days: float | None) -> str:
+def _need(
+    conn: sqlite3.Connection, v: Mapping[str, Any], *, cash_eur: float, net_days: float | None, whole_runway: bool
+) -> str:
     """What a venture being researched needs next, as Ember's code sees it."""
     gaps = ventures.proposal_gaps(v, "researching")
     if gaps:
         more = f" (and {len(gaps) - 1} more)" if len(gaps) > 1 else ""
         return f"needs {gaps[0]}{more}"
-    standing = knockouts.active(knockouts.check(conn, v, cash_eur=cash_eur, net_days=net_days))
+    standing = knockouts.active(
+        knockouts.check(conn, v, cash_eur=cash_eur, net_days=net_days, whole_runway=whole_runway)
+    )
     if standing:
         return f"knocked out ({', '.join(k.label for k in standing)}): fix its case or park it"
     return "ready to propose (stage proposed), or park it with the numbers"
@@ -91,6 +95,7 @@ def item(
     today: date,
     cash_eur: float = 0.0,
     net_days: float | None = None,
+    whole_runway: bool = False,
     room: bool = True,
 ) -> Item | None:
     """0.37.0: a venture's next decision, as READY showed it until 0.36.0 (None: it has none, or an idea while
@@ -109,7 +114,7 @@ def item(
         urgent = short or (park is not None and (park - today).days <= URGENT_DAYS)
         deadline = [f"parked by Ember's code on {park.isoformat()}"] if park else []
         budget = ventures.budget_text(v)
-        need = _need(conn, v, cash_eur=cash_eur, net_days=net_days)
+        need = _need(conn, v, cash_eur=cash_eur, net_days=net_days, whole_runway=whole_runway)
         text = " · ".join([title, need, *deadline, _ev_text(case_row, judged), *([budget] if budget else [])])
         if wish:
             return Item("appraise", vid, f"your owner's wish: {text}", "wish")

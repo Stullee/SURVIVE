@@ -856,6 +856,7 @@ class CycleRunner:
                     questions=asked,
                     cash_eur=self.settings.venture_cash_eur,
                     net_days=status.runway.net_days,
+                    whole_runway=self.settings.spending_stance == burn.INVEST,  # 0.42.6
                     forecasts=predictions.calibration(conn, self.scope) if venture else "",
                     today=self.clock.today(),
                 )
@@ -1021,6 +1022,7 @@ class CycleRunner:
         ctx.brainstorm = self._brainstorm_fn(ctx) if ctx.venture and mode.brainstorms else None  # 0.12.0: explore
         snap = self._snapshot(self.kind, cycle_id, keep=False)
         ctx.net_runway_days = self.net_runway_days  # 0.13.0: the knock-outs' slow rule
+        ctx.whole_runway = self.settings.spending_stance == burn.INVEST  # 0.42.6: and its limit
         kind = "venture " if ctx.venture else "marketing " if ctx.marketing else ""
         self._progress(cycle_id, phase="plan", current_action=f"Planning this {kind}cycle")
         with self.db.connection() as conn:
@@ -1380,7 +1382,13 @@ class CycleRunner:
         judged = critic.text(critic.latest(conn, row["id"]), case_row)  # 0.13.0: the critic's review of it
         knocked = (  # 0.13.0: while it isn't backed
             knockouts.text(
-                knockouts.check(conn, row, cash_eur=self.settings.venture_cash_eur, net_days=self.net_runway_days)
+                knockouts.check(
+                    conn,
+                    row,
+                    cash_eur=self.settings.venture_cash_eur,
+                    net_days=self.net_runway_days,
+                    whole_runway=self.settings.spending_stance == burn.INVEST,
+                )
             )
             if row["stage"] in ventures.EXPLORING
             else ""

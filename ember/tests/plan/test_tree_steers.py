@@ -284,6 +284,7 @@ def test_a_step_waits_only_on_a_block_the_code_checks_and_is_taken_up_again_once
     assert not far.ok and f"at most {plan.WAIT_DAYS} days ahead" in far.text
     waits = plan_step(agent, tracker, action="wait", step_id=demand, on="owner", ref=asked)
     assert waits.ok and waits.text.endswith(f"(1 of {plan.WAITS_A_DAY} waits today).")
+    assert waits.text.startswith(f'Step #{demand} ("Write the demand note: searches, competitors, prices") waits on ')
     found = {c.step.id: c for c in steered(agent).found}
     assert found[demand].waiting == "owner" and found[demand].step.blocked
     day = (agent.clock.today() + timedelta(days=3)).isoformat()
@@ -291,6 +292,7 @@ def test_a_step_waits_only_on_a_block_the_code_checks_and_is_taken_up_again_once
     assert plan_step(agent, tracker, action="wait", step_id=files, on="date", until=day).ok
     third = plan_step(agent, tracker, action="wait", step_id=files, on="step", ref=demand)
     assert not third.ok and f"{plan.WAITS_A_DAY} steps were said to wait today already" in third.text
+    assert "this one can wait from tomorrow; do what you can of it now" in third.text  # 0.42.6: not "already waiting"
     with agent.db.transaction() as conn:
         conn.execute("UPDATE approvals SET status = 'rejected', decided_at = ? WHERE id = ?", (now(agent), asked))
     said = keep(agent)

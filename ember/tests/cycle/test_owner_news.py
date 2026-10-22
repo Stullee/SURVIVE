@@ -12,10 +12,11 @@ import pytest
 
 from app import paths
 from app.agent import context, loop, news, store, views
+from app.agent.fake_llm import FakeTransport, request_kind
 from app.agent.news import News
 from app.config import Settings
 from app.economy.life import LifeStatus
-from tests.agent_helpers import cycle_with_approval, make_agent, owner, plan, rows, text, tools
+from tests.agent_helpers import cycle_with_approval, make_agent, owner, plan, rows, run, text, tools
 
 QUESTION = "will you create them by image generation?"
 JOURNAL = tools(("write_journal", {"summary": "Answered my owner", "entry": "Said what I can do."}))
@@ -128,11 +129,11 @@ def test_the_owners_question_reaches_the_brief_of_every_step(data_dir: Path) -> 
     assert steps[-1]["messages"][-1]["content"][-1]["text"].startswith("REFLECT PHASE")
     assert rows(agent, "SELECT text FROM messages WHERE sender = 'agent'")[0]["text"].startswith("No, I can't")
 
-    # Once answered, the message is not shown again.
+    # Once answered, the message is shown as answered (0.42.6: for store.ANSWERED_DAYS days, as the last test shows).
     assert rows(agent, "SELECT answered_by FROM messages WHERE sender = 'owner'")[0]["answered_by"] == 2
     agent.run_cycle("schedule")
-    assert all("== FROM YOUR OWNER ==" not in first_text(r) for r in transport.sent[4:])
-    assert QUESTION not in json.dumps(transport.sent[4:], ensure_ascii=False)
+    answered = line.replace("):", ", answered in your #2; any work it asks for stays yours until it is done):")
+    assert all(section(first_text(r), "FROM YOUR OWNER") == answered for r in transport.sent[5:])
 
 
 def test_an_approval_with_changes_reaches_the_brief(data_dir: Path) -> None:
@@ -396,9 +397,13 @@ def test_a_long_message_then_a_long_payload_are_shown_and_marked_at_every_planne
     planned, work, _, _ = transport.sent[-4:]
     since = owner_lines(section(first_text(planned), "SINCE YOUR LAST WAKE") or "")
     owners = owner_lines(section(first_text(work), "FROM YOUR OWNER") or "")
-    for decided in (since[-1], *owners):
-        assert decided.startswith(f'Request #{approval_id} (publish) "Post the guide": approved with changes.')
-        assert decided.endswith("Your owner will carry it out and report back.")
+    decided = [line for line in (*since, *owners) if line.startswith(f"Request #{approval_id} (publish) ")]
+    assert len(decided) == 2
+    for line in decided:
+        assert line.startswith(f'Request #{approval_id} (publish) "Post the guide": approved with changes.')
+        assert line.endswith("Your owner will carry it out and report back.")
+    # 0.42.6: the answered message comes last, in the room the news leaves (the brief's: the planner's may have none)
+    assert owners[-1].startswith("Message #2 from your owner (") and ", answered in your #" in owners[-1]
     assert seen_cycles(agent) == [3, 2]
 
 
@@ -555,15 +560,19 @@ def test_an_unanswered_message_stays_until_an_answer_names_it(data_dir: Path) ->
     assert section(first_text(work), "FROM YOUR OWNER") == line
     result = rows(agent, "SELECT result FROM tool_calls WHERE tool = 'message_owner'")[0]["result"]
     assert result == (
-        "Message #2 is in your owner's inbox. It answers #1: they leave FROM YOUR OWNER. Not an open message from your "
+        "Message #2 is in your owner's inbox. It answers #1: FROM YOUR OWNER shows them as answered for 3 days. Not an"
+        " open message from your "
         "owner that you were shown, so still as it was: #99."
     )
     assert rows(agent, "SELECT id, answered_by FROM messages ORDER BY id") == [
         {"id": 1, "answered_by": 2},
         {"id": 2, "answered_by": None},
     ]
-    agent.run_cycle("schedule")  # answered: gone
-    assert all("== FROM YOUR OWNER ==" not in first_text(r) for r in transport.sent[7:])
+    agent.run_cycle("schedule")  # answered: shown as such (0.42.6), not as waiting for an answer
+    answered = message_line(agent, QUESTION).replace(
+        "):", ", answered in your #2; any work it asks for stays yours until it is done):"
+    )
+    assert all(section(first_text(r), "FROM YOUR OWNER") == answered for r in transport.sent[8:])
 
     inbox = {m["id"]: m for m in views.dashboard(agent)["inbox"]}
     assert (inbox[1]["answered_by"], inbox[2]["answered_by"]) == (2, None)
@@ -641,3 +650,29 @@ def test_the_dry_runs_fake_answers_and_names_the_message(data_dir: Path) -> None
     [question] = rows(agent, "SELECT answered_by FROM messages WHERE sender = 'owner'")
     reply = rows(agent, "SELECT id FROM messages WHERE sender = 'agent' ORDER BY id")[0]["id"]
     assert question["answered_by"] == reply
+
+
+# --- From 0.42.6 (analysis-0.42.3, 3.3) ---
+
+
+def test_an_answered_message_stays_in_the_owners_news_for_some_days(data_dir: Path) -> None:
+    """Live, message #205 (three fixes to the Kassenbuch) left every plan once #206 had answered it ("next ordinary
+    cycle will apply the 3 fixes"), and no cycle made them."""
+    fake = FakeTransport()
+    agent, _ = run(data_dir, fake)
+    asked = "Fix the three table errors in the Kassenbuch."
+    assert owner(agent).send_message({"text": asked}, "Stefan").status == 201
+    [m] = rows(agent, "SELECT id FROM messages WHERE sender = 'owner'")
+    with agent.db.transaction() as conn:
+        conn.execute("UPDATE messages SET seen_cycle_id = 1 WHERE id = ?", (m["id"],))
+        answer = store.insert_message(conn, agent.scope(), 1, "The next cycle applies them.", "2026-09-01T12:00:00Z")
+        assert store.mark_answered(conn, agent.scope(), [m["id"]], answer) == [m["id"]]
+    sent = len(fake.sent)
+    agent.run_cycle("schedule")
+    said = f", answered in your #{answer}; any work it asks for stays yours until it is done): {json.dumps(asked)}"
+    planned = [r for r in list(fake.sent)[sent:] if request_kind(r) == "plan"]
+    assert planned and said in (section(first_text(planned[0]), "SINCE YOUR LAST WAKE") or "")
+    agent.clock.advance(days=store.ANSWERED_DAYS + 1)
+    sent = len(fake.sent)
+    agent.run_cycle("schedule")
+    assert all(said not in first_text(r) for r in list(fake.sent)[sent:])
