@@ -535,6 +535,18 @@ page sat idle is retried quietly instead of reading "Ember refused the request".
 CI measures coverage with a floor, pins its actions, audits the dependencies
 (Pillow 13 fixes eight advisories) and runs weekly.
 
+0.42.1: the analysis's model-call and plan items, and the tests by feature. Cycles
+that come within the hour keep Ember's tools and system prompt in Anthropic's
+prompt cache for an hour (about $0.03 less per cycle on Sonnet 5; the diagnostics
+cycle line shows cache=1h), and a refusal by the planner's model no longer costs
+the cycle: the worker model plans it once, under the same caps. A work step
+refused before any output ends the cycle instead of paying for a nudge. Your hold
+on a product line now covers its files, and the requests and emails that name
+them. When your rejection of a request means "not this", Ember can decline to
+rework it, with a reason you see, and **Rework it anyway** on the Plan tab brings
+it back. Ember leaves a listing in your paid test alone until the test ends. The
+tests are grouped in folders by feature.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
@@ -580,7 +592,7 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   in `ember/app/security.py`.
 - **Least privilege.** `homeassistant_api: false`, `hassio_api: false`, no host
   network, no mapped folders besides the app's own `/data`, no published ports.
-  `ember/tests/test_manifest.py` fails if any of this is loosened. Since 0.42.0
+  `ember/tests/web/test_manifest.py` fails if any of this is loosened. Since 0.42.0
   the Python process runs as the unprivileged user `ember` (UID and GID 1000),
   not root: the s6 run script, as root, prepares `/data` and then starts Python
   with `s6-setuidgid`. At each start it gives every file in `/data` that isn't
@@ -588,7 +600,7 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   the workspace, as earlier versions wrote them as root), changing a link
   itself and never what it points to. The app's code (`/opt/ember`, the Python
   packages) is root's and read-only to it, PID 1's environment is unreadable to
-  it, and it has no capabilities. Enforced in `ember/tests/test_entrypoint.py`
+  it, and it has no capabilities. Enforced in `ember/tests/web/test_entrypoint.py`
   and by CI's image smoke test.
 - **Options can't be changed from inside.** The Supervisor hands every app a
   token that can change the app's own options or uninstall it, even with
@@ -729,6 +741,22 @@ ruff check app tests && ruff format --check app tests
 GitHub Actions runs the same checks and builds the image for both architectures
 (`.github/workflows/ci.yml`).
 
+The tests are grouped by feature, one package each under `ember/tests/`: `cycle/`
+(the wake cycle, its context, prompts, wakes and model calls), `plan/` (the plan
+tree, its steps, waits and promises, the roadmap), `ventures/`, `learning/` (the
+daily review, the weekly look, lessons and bets), `money/` (the ledger, the
+budget guard, life states), `owner/` (requests, unlocks, NEVER, the audit, parks),
+`tools/` (the sandbox, the workspace, the workshop, tool limits), `mail/`,
+`channels/` (Etsy, Pinterest, Bluesky, Printify, the blog and the website, the
+publishing queue), `products/` (the files Ember makes, KDP) and `web/` (the web
+layer, the database, the report, the manifest). `conftest.py` and the shared
+helpers (`*_helpers.py`) stay at the top, so their fixtures apply everywhere;
+`python -m pytest tests/plan` runs one package. A fix's tests go into the module of
+the feature it fixes, each test's docstring telling its release's story, not
+into a module named for the release. A test of a migration computes the
+migrations it expects from `app/migrations/` (`discover_migrations()`), so a new
+migration changes no older test.
+
 ### Secret scanning
 
 This repository is public, and everything ever committed stays in its history.
@@ -802,7 +830,8 @@ ember/                       the app
     agent/                   the wake cycle, tools, context, fake model (constitution.md: the fixed prompt core)
     integrations/            Ember's mailbox (IMAP/SMTP), the executor of approved emails, Reddit links,
                              Etsy, Pinterest, Bluesky, Printify, the blog's SFTP uploads
-  tests/
+  tests/                     by feature: cycle/, plan/, ventures/, learning/, money/, owner/, tools/,
+                             mail/, channels/, products/, web/; conftest.py and the shared helpers on top
 ```
 
 ## Differences from the original spec

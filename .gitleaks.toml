@@ -24,7 +24,7 @@ regexTarget = "match"
 regexes = [
   '''^aaaaaa-0bbbbb-ccccCc$''',
   '''^aaaaaa-0bbbbb-ccccCd$''',
-  '''^aaaaaa-0bbbbb-cccccc$''',  # 0.39.1: tests/test_fixes_0391.py's removed word, cut at whole words in STATUS
+  '''^aaaaaa-0bbbbb-cccccc$''',  # 0.39.1: tests/cycle/test_planner_context.py's removed word, cut at whole words in STATUS
   '''^abcdef-123abc-XyZabc$''',
 ]
 

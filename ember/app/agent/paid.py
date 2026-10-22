@@ -129,6 +129,20 @@ def keep(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> list[str]
     return said
 
 
+def running(conn: sqlite3.Connection, scope: AgentScope, today: date) -> dict[int, sqlite3.Row]:
+    """0.42.1 (analysis-0.40.1 codebase, 6.2 "A paid test in the plan"): each of Ember's listings in a paid test that
+    runs on ``today`` (to its last day, ends_on), with that test (the one that ends last): no change of it goes through
+    (preconditions.PAID), and its line's keep-or-drop dates wait for the end (plan._decide_by)."""
+    where, params = scope.where()
+    found: dict[int, sqlite3.Row] = {}
+    for test in conn.execute(
+        f"SELECT * FROM paid_tests WHERE {where} AND status = 'running' AND ends_on >= ? ORDER BY ends_on, id",
+        (*params, today.isoformat()),
+    ).fetchall():
+        found.update(dict.fromkeys((int(n) for n in json.loads(test["listings"])), test))
+    return found
+
+
 def _gained(test: sqlite3.Row, now: dict[str, dict[str, int]]) -> str:
     """'+14 views (10 to 24) and 0 favorites (0 to 0) on its 3 listings'."""
     start = json.loads(test["baseline"])

@@ -10202,12 +10202,14 @@
     floor: "its channel brings next to nothing (at its floor): it waits unless you pin it",
     // 0.42.0: another rule Ember's tool refuses by (KDP's week, a first listing's demand note), in the tool's words
     blocked: "Ember's tool would refuse it now",
+    // 0.42.1: a change of a listing in your paid test (the critic's fix too), until the test ends
+    paid: "your paid test runs on its listings: it waits until the test ends",
   };
 
-  // A step's wait in words, with the tool's own words when its tool would refuse it (0.42.0)
+  // A step's wait in words, with the tool's own words when its tool would refuse it (0.42.0; 0.42.1: a paid test's, its end)
   function planWait(st) {
     var said = PLAN_WAIT[st.waiting] || st.waiting;
-    return st.waiting === "blocked" && st.refused ? said + ": " + st.refused : said;
+    return (st.waiting === "blocked" || st.waiting === "paid") && st.refused ? said + ": " + st.refused : said;
   }
   var PLAN_DECIDED = {
     pin: "you pinned it", promise: "a promise to you or your decision (first, until 0.36.0)",
@@ -10763,6 +10765,7 @@
       st.stale ? h("span", { class: "pl-stale", text: "ready " + Math.floor(st.age_days) + " days" }) : null,
       planPinButton(st),
       planUnwaitButton(st),
+      planReworkButton(st),
       planDecideButtons(st, q));
     if (st.why) row.appendChild(h("p", { class: "pl-why muted", text: st.why }));
     else if (st.status !== "open" && st.result) row.appendChild(h("p", { class: "pl-why muted", text: st.result }));
@@ -10803,6 +10806,25 @@
       request("POST", "api/plan/steps/" + encodeURIComponent(String(st.id)) + "/unwait", {}).then(function (res) {
         if (!res.ok) throw httpError(res);
         setStatusText("pl-status", "Wait lifted: the step is weighed again. Pin it to keep " + agentName() + " from putting it off.", "ok");
+        loadPlan();
+      }).catch(function (err) {
+        button.disabled = false;
+        setStatusText("pl-status", "Couldn't save it: " + errorText(err), "error");
+      });
+    });
+    return button;
+  }
+
+  // 0.42.1: a rework of a request you rejected that Ember declined (plan_step decline, its reason below the step):
+  // yours to have made anyway.
+  function planReworkButton(st) {
+    if (!st.reworkable) return null;
+    var button = h("button", { type: "button", class: "btn btn-small", text: "Rework it anyway" });
+    button.addEventListener("click", function () {
+      button.disabled = true;
+      request("POST", "api/plan/steps/" + encodeURIComponent(String(st.id)) + "/rework", {}).then(function (res) {
+        if (!res.ok) throw httpError(res);
+        setStatusText("pl-status", "A step proposing it again is pinned: the next cycle takes it first.", "ok");
         loadPlan();
       }).catch(function (err) {
         button.disabled = false;

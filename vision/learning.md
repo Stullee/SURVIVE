@@ -186,7 +186,7 @@ What changed from the design while building it:
 - The weekly look and the quality critic count as a review and a critique in the books (the purposes `review` and
   `critic`): no new money rules.
 - The constitution's new HOW TO THINK is short: the work step's fixed prompt may not grow past 0.11.1's 45,866 bytes
-  (`tests/test_rule_audit.py`), and it had 3 bytes to spare. The bet's field on project_update needed 128 bytes more,
+  (`tests/cycle/test_rule_audit.py`), and it had 3 bytes to spare. The bet's field on project_update needed 128 bytes more,
   so the bound is now 46,800 (2% more), on the owner's word that more spending on learning is welcome.
 
 ## The transition to 0.18.0

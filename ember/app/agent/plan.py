@@ -50,6 +50,7 @@ from . import (
     desk,
     metrics,
     obligations,
+    paid,
     policy,
     preconditions,
     reach,
@@ -772,6 +773,16 @@ def line_held(conn: sqlite3.Connection, scope: AgentScope, line: int) -> str | N
     return str(found[0]["hold_reason"])
 
 
+def review_held(conn: sqlite3.Connection, scope: AgentScope, line: int) -> str | None:
+    """0.42.1 (analysis-0.40.1 codebase, 6.2 "Your hold, on files too"): the hold a review's stop put on product line
+    ``line`` (``_review_holds``): why, while it lasts. The tools keep it as they keep the owner's (tools._held) until
+    the owner keeps or drops the line, or plan_step resume lifts it; a hold Ember put on a line herself they don't."""
+    found = nodes(conn, scope, "level = 'product' AND status = 'open' AND project_id = ?", (line,))
+    if not found or found[0]["hold_by"] != "agent" or not str(found[0]["hold_reason"] or "").startswith(REVIEW_HOLD):
+        return None
+    return str(found[0]["hold_reason"])
+
+
 def venture_decision(conn: sqlite3.Connection, v: Mapping[str, Any]) -> str | None:
     """A venture's next decision by its stage: triage an idea, appraise one being researched, answer the critic on a
     proposed one it judged test or park, else the owner's decision on its case; None once it is backed, live, parked
@@ -1458,6 +1469,8 @@ def _again(facts: Facts, product: Mapping[str, Any], now: str) -> list[str]:
             " ORDER BY a.id DESC LIMIT 1",
             (*params, line, executor),
         ).fetchone()
+        if ended is not None and _declined(conn, scope, line, executor, int(ended["id"])):
+            continue  # 0.42.1: Ember won't propose it again (decline_step), until a newer one of its kind is decided
         title = _proposes(product, executor)
         if ended is not None:
             title = f"{title} again: request #{ended['id']} {ended['status']}"
@@ -1546,17 +1559,54 @@ def _rework(facts: Facts, step: Mapping[str, Any], line: int) -> bool:
     """0.39.8 (analysis-0.39.6, 3.2): whether a step proposing a request again (_again) follows the owner's rejection of
     the last one: they asked for a change and wait for it (live, "finally looking good. last small change is to extend
     the lines for the notes"). 0.40.1 (analysis-0.40.0, 3.3): until the request is proposed again (the owner's hold or
-    drop of the line ends its steps), not for 3 days. An expired, withdrawn or failed request isn't."""
+    drop of the line ends its steps), not for 3 days. An expired, withdrawn or failed request isn't. 0.42.1: which one
+    (``_rejected``); Ember may decline it (``decline_step``)."""
+    return _rejected(facts.conn, facts.scope, step, line) is not None
+
+
+def _rejected(conn: sqlite3.Connection, scope: AgentScope, step: Mapping[str, Any], line: int | None) -> int | None:
+    """0.42.1: the request a step proposing it again reworks (``_rework``): the newest of its kind on the line, when the
+    owner rejected it; None for none."""
     template = str(step["template"] or "")
-    if not template.startswith("propose/") or step["kind"] != "ship":
-        return False
-    where, params = facts.scope.where("a")
-    last = facts.conn.execute(
-        "SELECT a.status, a.decided_at FROM approvals a LEFT JOIN cycles y ON y.id = a.cycle_id"
+    if not template.startswith("propose/") or step["kind"] != "ship" or line is None:
+        return None
+    where, params = scope.where("a")
+    last = conn.execute(
+        "SELECT a.id, a.status, a.decided_at FROM approvals a LEFT JOIN cycles y ON y.id = a.cycle_id"
         f" WHERE {where} AND COALESCE(a.project_id, y.project_id) = ? AND a.executor = ? ORDER BY a.id DESC LIMIT 1",
         (*params, line, template.removeprefix("propose/")),
     ).fetchone()
-    return last is not None and last["status"] == "rejected" and bool(last["decided_at"])
+    return int(last["id"]) if last is not None and last["status"] == "rejected" and last["decided_at"] else None
+
+
+DECLINED = re.compile(r"declined request #(\d{1,18}): ")  # 0.42.1: how a step Ember declined closed (decline_step)
+
+
+def _declined(conn: sqlite3.Connection, scope: AgentScope, line: int, executor: str, request_id: int) -> bool:
+    """0.42.1: whether Ember declined to propose request ``request_id`` again (``decline_step``: its step's result
+    says which; a closed node is final, its check fixed)."""
+    steps = nodes(
+        conn,
+        scope,
+        "project_id = ? AND level = 'step' AND status = 'dropped' AND closed_by = 'agent' AND template = ?",
+        (line, f"propose/{executor}"),
+    )
+    return any((found := DECLINED.match(str(s["result"] or ""))) and int(found[1]) == request_id for s in steps)
+
+
+def _reworkable(conn: sqlite3.Connection, scope: AgentScope, row: Mapping[str, Any]) -> int | None:
+    """0.42.1: the request a rework Ember declined (``decline_step``) was for, while the owner can have it made anyway
+    (``owner_rework``): it is still the newest of its kind, the step's stage is open and no step proposes it; else
+    None."""
+    found = DECLINED.match(str(row["result"] or "")) if row["status"] == "dropped" else None
+    stage = node(conn, scope, row["parent_id"]) if found and row["parent_id"] else None
+    if found is None or stage is None or stage["status"] != "open":
+        return None
+    line = int(row["project_id"])
+    proposing = "project_id = ? AND level = 'step' AND status = 'open' AND template = ?"
+    if _rejected(conn, scope, row, line) != int(found[1]) or nodes(conn, scope, proposing, (line, row["template"])):
+        return None
+    return int(found[1])
 
 
 def _asks(kind: str | None, spec: Mapping[str, Any]) -> tuple[str, ...]:
@@ -1765,10 +1815,16 @@ def _decide_by(facts: Facts, product: Mapping[str, Any], now: str, today: date) 
     its first listing was seen live; a listing test begun before 0.35.0 keeps its start and what its bars found).
     Their verdicts are kept on the product (decide_by), and a views bar missed makes its marketing urgent
     (pushed_until). What the owner decides comes as a step of theirs; a first order brings Ember a step to scale it.
-    None is read while the owner's park or kill of its venture stops the line (they decided on it already)."""
+    None is read while the owner's park or kill of its venture stops the line (they decided on it already). 0.42.1
+    (analysis-0.40.1 codebase, 6.2 "A paid test in the plan"): nor while the owner's paid test runs on one of its
+    listings (paid.running): its dates are read once the test ends, which STATUS has Ember judge then (live, the
+    coach bundle's fell three days into its ads test)."""
     conn, scope = facts.conn, facts.scope
     line = int(product["project_id"])
     if ventures.project_stopped(conn, scope, line) is not None:
+        return []
+    funnel = facts.funnel(line)
+    if funnel is not None and set(funnel.listings) & set(paid.running(conn, scope, today)):
         return []
     found: dict[str, str] = json.loads(product["decide_by"]) if product["decide_by"] else {}
     start = product["live_since"]
@@ -1779,7 +1835,6 @@ def _decide_by(facts: Facts, product: Mapping[str, Any], now: str, today: date) 
                 return []
             start = today.isoformat()
     day = (today - date.fromisoformat(start)).days
-    funnel = facts.funnel(line)
     views, favorites, orders = (funnel.views, funnel.favorites, funnel.orders) if funnel else (0, 0, 0)
     traffic = funnel.traffic if funnel else 0
     pushed = product["pushed_until"]
@@ -2836,6 +2891,7 @@ CALLED = {
     "email": "propose_email",
 }
 PUBLISHES = {channel: CALLED[executor] for channel, executor in CHANNEL_EXECUTORS.items()}
+EDITS = (CALLED["etsy_edit"], CALLED["printify_edit"])  # 0.42.1: a change of one of the line's listings (``_calls``)
 _CHECKED_BOOK = re.compile(r"KDP would take this (ebook|paperback) ")  # a propose_kdp_book check's result
 # the waits the tools' preconditions set: each carries the tool's words (Candidate.refused)
 REFUSED = frozenset(rule.wait for rules in preconditions.TOOLS.values() for rule in rules)
@@ -2950,7 +3006,8 @@ def _calls(facts: Facts, row: Mapping[str, Any], found: OwnerLimits) -> list[tup
     of the owner's waits for the answer that can carry it, or ``_let_through``); for a promise of pins, a post or a
     blog post its channel's tool; else the tool of each request its check counts (CALLED; none for a step that is the
     owner's, makes files or writes a note): a pin or a post of any of its line's live listings, a book of its line's
-    format (``_book_format``), a listing of its line."""
+    format (``_book_format``), a listing of its line; 0.42.1, a change of any of its line's live listings (the
+    critic's fix too: preconditions.PAID leaves one in the owner's paid test as it is)."""
     if row["kind"] == templates.OWNER_KIND:
         return []
     if _reports(row):
@@ -2969,6 +3026,10 @@ def _calls(facts: Facts, row: Mapping[str, Any], found: OwnerLimits) -> list[tup
             calls += [(tool, {"channel": channel, "links": these}) for these in links]
         elif tool == "propose_kdp_book":
             calls.append((tool, {"line": line, "form": _book_format(facts, line) if line is not None else None}))
+        elif tool in EDITS:
+            funnel = facts.funnel(line) if line is not None else None
+            listings = funnel.listings if funnel is not None and funnel.listings else [None]
+            calls += [(tool, {"line": line, "listing": n}) for n in listings]
         else:
             calls.append((tool, {"line": line}))
     return calls
@@ -3300,7 +3361,10 @@ WAITS = {
     "unread": f"your owner to read your messages (your last {store.MAX_UNREAD_MESSAGES} are unread: none goes through)",
     # 0.42.0 (analysis-0.40.1 codebase, 6.2.1): another rule its tool refuses by (preconditions.py), in its words
     "blocked": "what its tool would refuse now",
+    # 0.42.1 (6.2 "A paid test in the plan"): a change of a listing in the owner's paid test (preconditions.PAID)
+    "paid": "the end of your owner's paid test of its listings",
 }
+WORDED = ("blocked", "paid")  # 0.42.1: the waits YOUR STEP says with the tool's words (Candidate.refused)
 QUESTIONS = "This week's questions (keep them in mind; not steps to take):"
 NEW_PRODUCT = "Start a new product (project_create): Ember's code lays it out with its stages and steps."
 TRIED = (  # 0.37.6: no step ready, as the brake holds steps a cycle took today without anything moving
@@ -3376,6 +3440,12 @@ def step_text(
                 else f"{check_words(row['check_kind'], _spec(row))} (Ember's code checks it)"
             )
             lines.append(f"Done when: {done}.")
+        rejected = _rejected(conn, scope, row, step.product) if row is not None else None
+        if rejected is not None:  # 0.42.1 (analysis-0.40.1 codebase, 6.2 "A rework Ember can decline")
+            lines.append(
+                f"Your owner rejected request #{rejected}: propose it again as they asked. If their rejection means"
+                " not this, close the step with plan_step decline, why in a sentence (your owner sees it)."
+            )
         if row is not None and row["check_kind"] == "critic" and step.product is not None:
             from . import quality  # here, not at the top: quality imports prompts, which imports tools, then this
 
@@ -3399,8 +3469,8 @@ def step_text(
         waiting: dict[str, int] = {}
         for c in steered.found:
             if c.waiting is not None and c.stage != "venture":  # YOUR PLAN's Ventures line says what they wait on
-                # 0.42.0: a tool's other refusal in its words (one group each)
-                why = f"{WAITS['blocked']} ({c.refused})" if c.waiting == "blocked" and c.refused else c.waiting
+                # 0.42.0: a tool's other refusal in its words (one group each); 0.42.1: a paid test's too
+                why = f"{WAITS[c.waiting]} ({c.refused})" if c.waiting in WORDED and c.refused else c.waiting
                 waiting[why] = waiting.get(why, 0) + 1
         said = ", ".join(f"{n} on {WAITS.get(why, why)}" for why, n in sorted(waiting.items(), key=lambda w: -w[1]))
         lines.append(f"No step of your plan is ready{f' ({said})' if said else ''}.")
@@ -3727,13 +3797,14 @@ def _word(
 
 # --- Ember's changes (0.35.0) ---
 
-ACTIONS = ("add", "split", "replace", "done", "wait", "hold", "resume", "skip")  # 0.39.8: skip
+ACTIONS = ("add", "split", "replace", "done", "wait", "hold", "resume", "skip", "decline")  # 0.39.8: skip; 0.42.1
 STEP_KINDS = ("create", "ship", "fix", "market", "chore", "report")  # the kinds of step Ember adds
 WAIT_ON = ("owner", "upgrade", "step", "date")
 MAX_NEW_STEPS = 4  # steps one change adds
 TITLE_CHARS = 120
 WAITS_A_DAY = 2  # steps Ember may say wait, a day (the owner sees each one)
 WAIT_DAYS = 14  # a wait on a day, at most this far ahead
+DECLINE_WORDS = 6  # 0.42.1: a decline tells the owner why in at least as many words (``decline_step``)
 FIXED_SOURCES = ("owner", "promise", "code")  # what the owner, a promise or Ember's code put there stays
 
 
@@ -3981,6 +4052,46 @@ def skip_step(
     return f"Step #{row['id']} is skipped for this period{ends}: its channel's next step for this line comes after it."
 
 
+def decline_step(
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    line: int,
+    step_id: int | None,
+    why: str,
+    cycle_id: int | None,
+    now: str,
+) -> str:
+    """0.42.1 (analysis-0.40.1 codebase, 6.2 "A rework Ember can decline"): a step proposing again a request the owner
+    rejected (``_rework``: urgent until it is proposed again, 0.40.1) that Ember won't propose again, as their
+    rejection means "not this": it closes dropped with why, which the owner sees (the step and its reason on their
+    Plan tab, Changes today, the System log), and no step proposes that request again (``_again``) until a newer one
+    of its kind is decided; the owner can have it reworked anyway (``owner_rework``). Until now Ember could only make
+    it wait (WAIT_DAYS at most, one of her WAITS_A_DAY) or hold the whole line. Outside the waits of the day."""
+    row = _line_step(conn, scope, step_id, line)
+    rejected = _rejected(conn, scope, row, line)
+    if rejected is None:
+        raise PlanError(
+            "step_id",
+            f"decline is for a step proposing again a request your owner rejected; step #{row['id']} isn't one (wait, "
+            "replace or say done instead)",
+        )
+    if row["pinned"]:
+        raise PlanError("step_id", f"your owner pinned step #{row['id']}: they want it reworked")
+    if len(why.split()) < DECLINE_WORDS:
+        raise PlanError(
+            "why",
+            f"a decline tells your owner why their rejection means not to propose request #{rejected} again: say it "
+            f"in a sentence of {DECLINE_WORDS} words or more",
+        )
+    _close(conn, row["id"], now, "dropped", f"declined request #{rejected}: {why}", by="agent")
+    said = f"declined: won't propose request #{rejected} again: {why}"  # a drop, as a skip is (plan_changes' actions)
+    change(conn, scope, row["id"], cycle_id, "agent", "drop", said, now)
+    return (
+        f"Step #{row['id']} is closed: you won't propose request #{rejected} again. Your owner sees why on their Plan"
+        " tab and can have it reworked anyway; a later request of its kind they reject gets a step again."
+    )
+
+
 def wait_step(
     conn: sqlite3.Connection,
     scope: AgentScope,
@@ -4210,6 +4321,40 @@ def owner_unwait(conn: sqlite3.Connection, scope: AgentScope, node_id: int, who:
     return int(row["project_id"]) if row["project_id"] is not None else None
 
 
+def owner_rework(
+    conn: sqlite3.Connection, scope: AgentScope, node_id: int, who: str | None, now: str
+) -> tuple[int, int]:
+    """0.42.1 (analysis-0.40.1 codebase, 6.2 "A rework Ember can decline"): the owner has a rework Ember declined
+    (``decline_step``) made anyway, while its request is still the newest of its kind (``_reworkable``): a step
+    proposing it again takes the declined one's place, pinned (the next cycle takes it first, and Ember can't decline
+    it). A closed step is final, so it is a new one. Returns its line and the new step."""
+    row = node(conn, scope, node_id)
+    if row is None or row["level"] != "step":
+        raise PlanError("id", "no such step", 404)
+    if _reworkable(conn, scope, row) is None:
+        raise PlanError("id", "Ember declined no rework here that is still to make", 409)
+    step = _insert(
+        conn,
+        scope,
+        now,
+        parent_id=row["parent_id"],
+        level="step",
+        project_id=row["project_id"],
+        template=row["template"],
+        stage=row["stage"],
+        kind=row["kind"],
+        title=row["title"],
+        check_kind=row["check_kind"],
+        check_spec=json.dumps({**_spec(row), "since": now}),
+        seq=row["seq"],
+        source="owner",
+        pinned=1,
+    )
+    why = f"{(who or 'your owner')[:60]} has the rework you declined (step #{row['id']}) made anyway"
+    change(conn, scope, step, None, "owner", "add", why, now)
+    return int(row["project_id"]), step
+
+
 def said_wait(row: Mapping[str, Any]) -> bool:
     """0.40.3 (PL5): whether a step waits on a block Ember said (plan_step wait: its number or its day; a template's
     wait on an upgrade nobody asked for has neither), which the owner may lift (``owner_unwait``)."""
@@ -4379,7 +4524,13 @@ def owner_keep(conn: sqlite3.Connection, scope: AgentScope, node_id: int, why: s
     return line
 
 
-CLOSED_WORDS = {"close": "closed", "drop": "dropped", "resume": "resumed", "unwait": "lifted the wait of"}  # 0.40.3
+CLOSED_WORDS = {  # 0.40.3
+    "close": "closed",
+    "drop": "dropped",
+    "resume": "resumed",
+    "unwait": "lifted the wait of",
+    "add": "added",  # 0.42.1: a rework you declined, made anyway (owner_rework)
+}
 
 
 def owner_words(conn: sqlite3.Connection, scope: AgentScope, since: str | None) -> list[str]:
@@ -4599,6 +4750,8 @@ def _product_view(
                     "template": step["template"],  # 0.35.0: decide/owner is the owner's keep-or-drop
                     "pinned": bool(step["pinned"]),
                     "unwait": step["status"] == "open" and said_wait(step),  # 0.40.3: the owner may lift it
+                    # 0.42.1: a rework Ember declined (decline_step), which the owner may have made anyway
+                    "reworkable": _reworkable(conn, scope, step) is not None,
                     "check": templates.CHECKS.get(step["check_kind"] or "", ""),
                     "result": step["result"],
                     "weight": round(weight.total, 2) if weight else None,

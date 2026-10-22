@@ -13,8 +13,9 @@ What the rest of Ember can rely on:
   ``max_tokens``, one search per research call. 0.15.0: a research or workshop answer reports its samplings in
   ``usage.iterations`` (their tokens add up to the usage), and a test's :class:`Overrun` turn makes a call cost more
   than its worst case, as a live workshop run did (the loop re-read far more than its allowances).
-* Prompt caching is simulated (prefix hashes, 5-minute TTL on an injectable clock, per-model minimums),
-  so cache writes and reads show up as they would for the real conversation.
+* Prompt caching is simulated (prefix hashes, 5-minute and 1-hour TTLs on an injectable clock, per-model minimums),
+  so cache writes and reads show up as they would for the real conversation, and (0.42.1) across cycles; a marker's
+  shape and the order of the lifetimes (1 hour before 5 minutes) are checked as the API checks them.
 * A request the real API would reject gets ``Rejected(400, reason)`` (see :func:`validate_request`), so a
   bug in the agent loop fails in tests rather than in phase 5.
 * Deterministic: an answer is a function of (seed, scenario, request), the random nonces of untrusted text's
@@ -481,6 +482,9 @@ def validate_request(request: Mapping[str, Any], canonical: str | None = None) -
     markers = canonical.count(_MARKER) if canonical is not None else count_markers(request)
     if markers > MAX_CACHE_BREAKPOINTS:
         return f"A maximum of {MAX_CACHE_BREAKPOINTS} blocks with cache_control may be provided. Found {markers}."
+    problem = _cache_problem(request)
+    if problem:
+        return problem
     system = request.get("system")
     if isinstance(system, list):
         for index, block in enumerate(system):
@@ -647,6 +651,37 @@ def count_markers(request: Mapping[str, Any]) -> int:
     Counted in the canonical JSON: inside a string every quote is escaped, so text can't fake the key.
     """
     return canonical_json(request).count(_MARKER)
+
+
+def _cache_problem(request: Mapping[str, Any]) -> str | None:
+    """0.42.1 (analysis-0.40.1 codebase, 6.2 cache): what the API refuses of the cache markers: one that isn't
+    ``{"type": "ephemeral"}`` with an optional ttl of "5m" or "1h", and a 1-hour entry after a 5-minute one (in render
+    order: tools, system, messages, then the top-level marker, which caches the last block)."""
+    ttls: list[str] = []
+    for marker in [
+        *_markers(request.get("tools")),
+        *_markers(request.get("system")),
+        *_markers(request.get("messages")),
+        *([request["cache_control"]] if "cache_control" in request else []),
+    ]:
+        if not isinstance(marker, Mapping) or marker.get("type") != "ephemeral":
+            return "cache_control.type: Input should be 'ephemeral'"
+        if set(marker) - {"type", "ttl"} or marker.get("ttl", "5m") not in CACHE_TTL_SECONDS:
+            return "cache_control.ttl: Input should be '5m' or '1h'"
+        ttls.append(marker.get("ttl", "5m"))
+    if "5m" in ttls and "1h" in ttls[ttls.index("5m") :]:
+        return "cache_control: a ttl='1h' cache_control block must not come after a ttl='5m' cache_control block"
+    return None
+
+
+def _markers(node: Any) -> list[Any]:
+    """Every cache_control value in ``node``, in order."""
+    if isinstance(node, Mapping):
+        found = [node["cache_control"]] if "cache_control" in node else []
+        return found + [m for key, value in node.items() if key != "cache_control" for m in _markers(value)]
+    if isinstance(node, list):
+        return [m for value in node for m in _markers(value)]
+    return []
 
 
 def _marker_ttl(node: Any) -> str | None:

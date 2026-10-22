@@ -167,6 +167,13 @@ spending about the same, let Ember wake less often: raise **Shortest sleep** to
 cycle cap to 0.60 or more: the dashboard warns you if the cycle cap is too low
 for one planning call, for one working cycle, or for 1.5 working cycles.
 
+Opus 5.5's safety classifiers sometimes refuse a request that is fine. Since
+0.42.1, when the planner refuses to plan and the worker is another model, the
+worker plans that cycle instead, once, under the same caps: the System log warns,
+and the cycle's note says *planned by claude-sonnet-5 after claude-opus-5-5
+refused*. If the worker refuses too, or the caps leave no room for its plan, the
+cycle stops as before. A work step's refusal still ends its cycle.
+
 The **Workshop model** can be `claude-opus-5-5` too, for harder code. A run's
 first call may then cost up to about $0.68, so raise **Workshop cap per run** to
 1.00 (the dashboard says so when the cap is too low for one run).
@@ -1284,6 +1291,11 @@ no cycle for a day. Since 0.40.1 it stays urgent until Ember proposes it again
 (or you hold or drop the product), not for 3 days after your decision: five
 cycles in those days ran out of room before they proposed the book, and from the
 fourth day it got one try a day, weighing as much as a step of the daily review.
+Since 0.42.1, when your rejection means "not this", Ember may **decline** the
+rework (`plan_step` decline, with why in a sentence): the step closes with her
+reason on your Plan tab, and nothing proposes that request again; **Rework it
+anyway** on that step brings it back, pinned. A later request you reject gets a
+step again.
 Since 0.40.3, when the line has no listing yet and its newest demand note is
 older than 14 days (Ember's tool refuses a first listing then), a step for a new
 note comes before the proposal, which waits behind it.
@@ -1475,7 +1487,11 @@ then they took cycles on the product you held (a rejection on its day, a promise
 each day as its day neared). No cycle is aimed at it, and Ember's tools refuse
 its work (a request, a listing, a pin or a post; she can still note its record),
 since 0.39.7 in a venture cycle too: one filed a request about a product you
-held. **Hold it** names what waits with it. Ember's own hold leaves what she
+held. Since 0.42.1 they refuse its files too: a draft, a workshop run or a
+document made from a file of the product, a change of its files, and a request
+or an email naming its listing (reading them stays possible); the same holds
+while a review's stop holds the line, until you keep it or Ember lifts the hold.
+**Hold it** names what waits with it. Ember's own hold leaves what she
 owes you going on. **Hold new things** on the Ventures box is "nothing new":
 no venture cycle and no new product until you **Resume**. Ember's code refuses
 a new product whatever venture it names, and (since 0.39.3) a new venture:
@@ -2389,9 +2405,12 @@ listings (Etsy Ads on three listings, say), Ember's code keeps it as a test:
 the listings, their views on the day you decided it and the day it ends (the
 request's "for 7 days", else 7 days later). STATUS shows it while it runs, so
 the agent leaves those listings alone and doesn't judge them by a keep-or-drop
-date within it, and for 3 days after it ended, with what the listings gained,
-so the agent asks you for the ads' numbers (what it cost, how often they were
-shown and clicked) and says whether it goes on. Record what the ads cost as an
+date within it (since 0.42.1 a change of those listings, the critic's fix
+too, waits until it ends, as Ember's tool refuses it, and the product's
+keep-or-drop dates are read after its end), and for 3 days after it ended,
+with what the listings gained, so the agent asks you for the ads' numbers
+(what it cost, how often they were shown and clicked) and says whether it goes
+on. Record what the ads cost as an
 expense when Etsy bills it. Live, you turned Etsy Ads on at 01:03 on 10-16 and
 nothing in Ember's plan knew.
 
@@ -3038,7 +3057,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.42.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.42.1 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3420,6 +3439,21 @@ is refunded twice. The System log says what was settled.
 As an outside safety net, give Ember its own
 [Anthropic workspace](https://console.anthropic.com/settings/workspaces) and
 API key and set a monthly spend limit there.
+
+**The prompt cache across cycles** (0.42.1). Every work step reads the tools
+and the system prompt (about 10,000 tokens) from Anthropic's prompt cache, which
+keeps them 5 minutes, so each cycle's first step wrote them again (about $0.03
+with claude-sonnet-5). When the median of the last three gaps between cycle
+starts is 50 minutes or less, a cycle asks the cache to keep them an hour, and
+its plan's system prompt too, so the next cycle reads them at the cache-read
+price. Writing for an hour costs twice the input price (for 5 minutes, 1.25
+times), so with sleeps of hours it stays at 5 minutes. In a dry run of
+half-hourly cycles on claude-sonnet-5, the cycle that wrote for an hour cost
+about $0.02 more and each one after it about $0.03 less. The money guard prices
+an hour's write at the price table's **Cache write 1 h**, for at most the tokens
+of the tools and the system prompt, and a plan that wouldn't fit the caps so is
+sent without it. The diagnostics report's cycle line says `cache=1h` or
+`cache=5m`.
 
 **Dry run** uses the fake model. Its simulated costs are shown as a separate
 test balance that starts from your real balance; nothing real is spent. In dry
