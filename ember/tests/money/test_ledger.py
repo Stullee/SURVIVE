@@ -189,6 +189,40 @@ def test_corrections(data_dir: Path) -> None:
     assert economy.books.balance(Scope("dry_run")) == 21_000_000
 
 
+@pytest.mark.parametrize(
+    ("kind", "body", "field", "message"),
+    [
+        ("bonus", {"amount": "5"}, "kind", "unknown kind of entry"),  # the route answers 404 before it gets here
+        ("grant", {"amount": "5", "note": 5}, "note", "the note must be text"),
+        ("revenue", {"amount": "5", "source": ["Etsy"]}, "source", "the source must be text"),
+    ],
+)
+def test_an_entry_the_books_cant_read_is_refused_and_nothing_is_written(
+    data_dir: Path, kind: str, body: dict, field: str, message: str
+) -> None:
+    # 0.42.3 (analysis-0.40.1 audit)
+    economy = make_economy(data_dir)
+    before = economy.books.entries(Scope("dry_run"), 100)
+    reply = economy.record(kind, {**body, "idempotency_key": key()})
+    assert (reply.status, reply.body) == (422, {"error": message, "field": field})
+    assert economy.books.entries(Scope("dry_run"), 100) == before
+
+
+def test_a_correction_the_books_cant_read_is_refused_and_nothing_is_written(data_dir: Path) -> None:
+    # 0.42.3 (analysis-0.40.1 audit): a correction is in dollars, so a currency is a field it doesn't know
+    economy = make_economy(data_dir)
+    grant = owner(economy, "grant", "10")["entry"]
+    before = economy.books.entries(Scope("dry_run"), 100)
+    euros = {"amount": "4", "note": "typo", "currency": "EUR", "fx_rate": "1.08", "idempotency_key": key()}
+    for body, field, message in (
+        (["4", "typo"], "body", "send a JSON object"),
+        (euros, "currency", "unknown field 'currency'"),
+    ):
+        reply = economy.correct(grant["id"], body)
+        assert (reply.status, reply.body) == (422, {"error": message, "field": field})
+    assert economy.books.entries(Scope("dry_run"), 100) == before
+
+
 def test_unusually_large_amounts_need_confirmation(data_dir: Path) -> None:
     economy = make_economy(data_dir)
     reply = economy.record("grant", {"amount": "150", "idempotency_key": key()})

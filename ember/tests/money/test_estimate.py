@@ -7,7 +7,13 @@ from decimal import Decimal
 import pytest
 
 from app.config import DEFAULT_PRICE_TABLE
-from app.economy.estimate import SEARCH_RESULT_ALLOWANCE_TOKENS, Unpriceable, plan_request, worst_case_micros
+from app.economy.estimate import (
+    SEARCH_RESULT_ALLOWANCE_TOKENS,
+    Unpriceable,
+    expected_micros,
+    plan_request,
+    worst_case_micros,
+)
 
 PRICE = DEFAULT_PRICE_TABLE[0]  # claude-sonnet-5: 2 / 10, cache write 2.5 / 4, read 0.2
 
@@ -143,3 +149,11 @@ def test_client_tools_cost_nothing_extra() -> None:
     tool = {"name": "workspace_read", "description": "read", "input_schema": {"type": "object"}}
     plan = plan_request(base(tools=[tool]), 100)
     assert worst_case_micros(plan, PRICE, 10) == 100 * 2 + 1_000 * 10
+
+
+def test_a_request_with_server_tools_has_no_expected_cost_of_its_own() -> None:
+    # 0.42.3 (analysis-0.40.1 audit): the guard expects such a call to cost what such calls cost lately (its worst case
+    # without a history), never the price of its prompt: a loop's cost isn't in its request
+    plan = plan_request(base(tools=[search(1)]), 1_000)
+    with pytest.raises(ValueError, match="^a request with server tools has no expected cost of its own$"):
+        expected_micros(plan, PRICE, 0)
