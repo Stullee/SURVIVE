@@ -2999,14 +2999,14 @@ Ember's code also keeps a text off the page whatever you say if it holds an @
 (in any form, also spelled out or as a fullwidth sign), a web address, an IBAN,
 a phone number or a number of 5 digits or more, read after folding look-alike
 and invisible characters, or anything the shareable diagnostics report masks
-(an address, a code, a link's token, an email's sender, a word you removed) or a
-secret the logs hide. It can't tell a person's name from other words: that is
-what your approval is for. Etsy's listings are shown only for 6 hours after
-Ember's code read them, as Etsy's API terms allow; the page footer carries
-Etsy's trademark notice. Every file is checked again before it goes up (no
-script, nothing from elsewhere), and only these six files are ever written. The
-agent's titles stay in the language it wrote them in; the English page marks the
-blog's posts as German.
+(an email or street address, a code, a link's token, an email's sender, a word
+you removed) or a secret the logs hide. It can't tell a person's name from
+other words: that is what your approval is for. Etsy's listings are shown only
+for 6 hours after Ember's code read them, as Etsy's API terms allow; the page
+footer carries Etsy's trademark notice. Every file is checked again before it
+goes up (no script, nothing from elsewhere), and only these six files are ever
+written. The agent's titles stay in the language it wrote them in; the English
+page marks the blog's posts as German.
 
 The page has your site's head, header and footer and refreshes itself every 5
 minutes in an open tab. The page and the banner say when they were made (date
@@ -3263,8 +3263,15 @@ Assistant name and user ID (`[the owner]`, `[the owner's user ID]`). Since 0.40.
 (`[phone number]`) and IBANs (`[IBAN]`), and your personal options wherever they are written (your name, address,
 email, phone, VAT ID, the KDP author, the SFTP user and folder: `[the author's name]`, `[the SFTP user]` …; a value
 of one ordinary word, such as an author named "Ember", only after its label, as in a KDP request's `Author:`).
-Street addresses and postcodes aren't masked: told apart only by their digits, every listing number and amount would
-go. It never contains the API key, the
+Since 0.42.3 so are street addresses (`[street address]`), told by a street's words, not by its digits (that way
+every listing number, order number and amount would go): a German street ending in Straße, Str., Weg, Gasse, Allee,
+Platz, Damm, Ufer, Chaussee, Markt, Graben, Promenade, Steig or Kai, with its house number ("Musterstraße 12",
+"Hauptstr. 5a", "Karl-Marx-Allee 90", "Am Markt 3") and its postcode and town when they follow ("Musterstraße 12,
+80331 München"); another street after "Am", "An der", "Unter den" … only with its postcode and town ("Unter den Linden
+77, 10117 Berlin"); and an English one, its number first ("12 Main Street", "221B Baker St"), with its town and ZIP
+code or UK postcode when they follow ("12 Main Street, Springfield, IL 62701"). A postcode and town alone, a year, a
+price, an id or a count stay ("Weihnachtsmarkt 2026", "Speicherplatz 5 GB", "120 pages", "24 Wedding Place Cards"),
+and so does a street named without a street's word ("Lindenhof 3"). It never contains the API key, the
 mailbox password, Etsy's keystring, secret or tokens, or an email's text. It
 does hold your messages and the agent's work, so read it before you share it.
 
