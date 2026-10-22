@@ -577,6 +577,14 @@ dated version of its model is no longer charged at its worst case. And tests:
 every refusal of the money guard, the kill switch pressed mid-round for every
 channel, and three dashboard routes over HTTP.
 
+0.42.4: your Undo of a pin, a Bluesky post or a Printify product no longer
+fails when the service rate-limits its delete (HTTP 429, or 503 with
+Retry-After). Nothing was deleted, so the Undo stays approved and is retried
+when the service says, at most 3 times, as the pins, posts and products it
+undoes already were. Its card says when, **Cancel** still stops it, the kill
+switch holds it, a paused Ember still carries it out, and the daily digest
+counts the wait as a wait.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

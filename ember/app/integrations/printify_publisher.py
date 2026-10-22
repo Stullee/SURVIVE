@@ -32,7 +32,8 @@ made since.
 email is (connectors.stale). 0.42.3 (M3): when Printify asks Ember's code to come back later (HTTP 429, or 503 with
 Retry-After) at the first call that would change anything (a product's picture upload; a change's new design, else the
 change itself), the request stays approved and is tried again then, at most retry.TRIES times (retry.py), or until it
-is too old (connectors.stale); a refusal after that call stays as it was.
+is too old (connectors.stale); a refusal after that call stays as it was. 0.42.4: the owner's Undo of a product too,
+at its delete (its one call), tried again then; an Undo is never too old.
 """
 
 from __future__ import annotations
@@ -734,7 +735,10 @@ def execution(
     conn: sqlite3.Connection, row: sqlite3.Row, scope: AgentScope, clock: Clock, daily_limit: int
 ) -> dict[str, Any] | None:
     """What happened to an approved product, or to the owner's Undo of one (0.39.0: or a change of one), for the
-    dashboard (None before approval). 0.42.3 (M3): one Printify asked to wait says when it is tried again."""
+    dashboard (None before approval). 0.42.3 (M3): one Printify asked to wait says when it is tried again (0.42.4: an
+    Undo too)."""
+    if row["executor"] == "printify_delete" and (waits := retry.undo_execution(conn, row["id"])) is not None:
+        return waits  # 0.42.4 (M3): Printify asked the owner's Undo to wait
     retry_at = retry.waiting(conn, row["id"]) if row["executor"] in ("printify_product", "printify_edit") else None
     if row["executor"] == "printify_edit":
         change = conn.execute("SELECT * FROM printify_edits WHERE approval_id = ?", (row["id"],)).fetchone()
@@ -890,15 +894,15 @@ class Publisher:
             for approval_id in deleting:
                 outcome = self._delete(account, scope, shop, approval_id)
                 done.append((approval_id, outcome))
-                if outcome == connectors.HALTED:
-                    break
+                if outcome in (connectors.HALTED, retry.LATER):
+                    break  # 0.42.4 (M3): or Printify asked to wait: the other Undos wait for the next round
             return done
         finally:
             self._lock.release()
 
     def _approved(self, scope: AgentScope, executor: str) -> list[int]:
         """The approved requests of ``executor`` that Ember's code hasn't begun (0.42.3: or that Printify asked to wait
-        until now), oldest first."""
+        until now; 0.42.4: an Undo too), oldest first."""
         where, params = scope.where()
         with self.db.connection() as conn:
             return [
@@ -1095,11 +1099,11 @@ class Publisher:
         events.record(self.db, "warning", "printify", f"Request #{row['id']}: {note}"[:300])
         return "failed"
 
-    def _wait(self, table: str, approval_id: int, exc: Exception) -> str | None:
+    def _wait(self, table: str | None, approval_id: int, exc: Exception) -> str | None:
         """0.42.3 (analysis-0.40.1 audit, M3): Printify asked to come back later before anything changed there
         (``printify.Busy``): the request stays approved and is tried again then (retry.park; nothing made, so the
         day's limit doesn't count it). None when it may not wait (an unlock's, or it waited retry.TRIES times): it
-        fails as before."""
+        fails as before. 0.42.4: the owner's Undo of a product too (``table`` None: it waits in its journal entry)."""
         if not isinstance(exc, Busy):
             return None
         with self.db.transaction() as conn:
@@ -1161,11 +1165,15 @@ class Publisher:
         )
 
     def _delete(self, account: Account, scope: AgentScope, shop: int, approval_id: int) -> str:
-        """The owner's Undo of a product: Ember's code deletes it at Printify (and Printify its Etsy listing)."""
+        """The owner's Undo of a product: Ember's code deletes it at Printify (and Printify its Etsy listing). 0.42.4
+        (M3): when Printify asks to come back later, nothing was deleted: the Undo stays approved and is tried again
+        then (``_wait``), as a product is."""
         with self.db.transaction() as conn:
             row = conn.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
-            if row is None or row["status"] not in ("approved", "approved_with_changes"):
-                return "skipped"
+            started = conn.execute("SELECT 1 FROM action_journal WHERE approval_id = ?", (approval_id,)).fetchone()
+            again = started is not None and retry.due(conn, approval_id, self.clock.now())  # 0.42.4 (M3)
+            if row is None or row["status"] not in ("approved", "approved_with_changes") or (started and not again):
+                return "skipped"  # cancelled or decided meanwhile (or Printify's wait isn't over)
             if connectors.halted(conn):
                 return connectors.HALTED  # 0.37.3: an Undo neither, once the kill switch is on
             try:
@@ -1181,6 +1189,8 @@ class Publisher:
         except Gone:
             gone = True  # deleted at Printify already: what the Undo wanted
         except Exception as exc:  # noqa: BLE001 - reported on the request, never raised
+            if waits := self._wait(None, approval_id, exc):  # 0.42.4 (M3): "come back later": nothing deleted
+                return waits
             error = str(exc) if isinstance(exc, PrintifyError) else type(exc).__name__
             status = "failed" if isinstance(exc, NotSent) else "unclear"
             with self.db.transaction() as conn:
