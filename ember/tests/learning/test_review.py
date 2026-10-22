@@ -277,9 +277,9 @@ def test_the_planner_sees_todays_review_only_today(data_dir: Path) -> None:
     assert "\nFocus today: " in text and text.endswith(
         "Act on it: a stop is your owner's decision (only they close a line): Ember's code asks them on their Plan tab;"
         " until they decide, Ember's code holds the line: its steps wait. A change is a step of its line's,"
-        ' due today ("Review MM-DD: ..."): carry it out, a request to your owner where it needs one, then plan_step'
-        " done. Work on a bottleneck (reach: its marketing cycles bring buyers) waits for its line's cycle. Ember's"
-        " code kept the lesson."
+        ' due today ("Review MM-DD: ...") unless the line waits for your owner\'s keep-or-drop: carry it out, a'
+        " request to your owner where it needs one, then plan_step done. Work on a bottleneck (reach: its marketing"
+        " cycles bring buyers) waits for its line's cycle. Ember's code kept the lesson."
         "\n- continue: #1 (too_early)"
     )
     agent.clock.advance(days=1)
@@ -504,3 +504,34 @@ def test_the_daily_review_hears_which_channels_are_ready(data_dir: Path) -> None
         f" Printify: at most {settings.printify_products_per_day} products a day." in card
     )
     assert "CHANNELS NOT READY" not in card
+
+
+# --- From 0.42.6 (analysis-0.42.3, 3.3) ---
+
+
+def test_the_scorecard_quotes_the_owners_messages_and_lists_the_kdp_books(data_dir: Path) -> None:
+    """Live, the review of 10-22 read the owner's decisions on requests only: its focus planned the Fahrtenbuch the
+    owner had put off in #205, and pins "linking to Amazon" for two books without a link."""
+    agent, _ = next_day(data_dir)
+    said = "Fix the three table errors in the Kassenbuch first. The Fahrtenbuch waits."
+    assert owner(agent).send_message({"text": said}, "Stefan").status == 201
+    [message] = rows(agent, "SELECT MAX(id) AS id FROM messages WHERE sender = 'owner'")
+    stamp = to_iso(agent.clock.now())
+    with agent.db.transaction() as conn:  # two KDP books: one published with its link, one without
+        for n, link in ((1, "https://www.amazon.de/dp/B0EXAMPLE"), (2, None)):
+            book = store.insert_approval(
+                conn, agent.scope(), 1, stamp, project_id=None, type="sell", title=f"KDP paperback: Book {n}",
+                description="a book", payload=f"book {n}", expected_cost="none", expected_benefit="royalties",
+                executor="kdp_package", action=json.dumps({"format": "paperback"}),
+            )  # fmt: skip
+            conn.execute("UPDATE approvals SET status = 'approved', decided_at = ? WHERE id = ?", (stamp, book))
+            conn.execute(
+                "UPDATE approvals SET status = 'done', closed_at = ?, result_link = ? WHERE id = ?", (stamp, link, book)
+            )
+    text = scorecard(agent).text
+    assert "YOUR OWNER'S MESSAGES IN THE PERIOD (the newest first; what they ask stands" in text
+    assert f"- #{message['id']} (" in text and f'UTC): "{said}"' in text
+    assert '"KDP paperback: Book 1": published at https://www.amazon.de/dp/B0EXAMPLE' in text
+    assert '"KDP paperback: Book 2": published, no link at Amazon yet: no pin or post can link it' in text
+    assert text.index("YOUR OWNER'S MESSAGES") < text.index("AMAZON KDP") < text.index("#1 [")  # before the projects
+    assert "- Read your owner's messages, decisions and comments" in prompts.REVIEW_RULES

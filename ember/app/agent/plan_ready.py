@@ -820,6 +820,9 @@ CALLED = {
 }
 PUBLISHES = {channel: CALLED[executor] for channel, executor in CHANNEL_EXECUTORS.items()}
 EDITS = (CALLED["etsy_edit"], CALLED["printify_edit"])  # 0.42.1: a change of one of the line's listings (``_calls``)
+# 0.42.6 (analysis-0.42.3, 3.1): a promise whose words propose a KDP book is propose_kdp_book's work (``_calls``)
+KDP_PROMISE = re.compile(r"\bkdp\b", re.IGNORECASE)
+PROPOSES = re.compile(r"\b(?:propos|submit)", re.IGNORECASE)
 _CHECKED_BOOK = re.compile(r"KDP would take this (ebook|paperback) ")  # a propose_kdp_book check's result
 # the waits the tools' preconditions set: each carries the tool's words (Candidate.refused)
 REFUSED = frozenset(rule.wait for rules in preconditions.TOOLS.values() for rule in rules)
@@ -936,9 +939,13 @@ def _calls(facts: Facts, row: Mapping[str, Any], found: OwnerLimits) -> list[tup
         return [("message_owner", {"answers": found.asked or _let_through(facts, row)})]
     if row["kind"] == "promise":
         tools = [PUBLISHES[row["channel"]]] if row["channel"] in PUBLISHES else []
+        if not tools and KDP_PROMISE.search(str(row["title"])) and PROPOSES.search(str(row["title"])):
+            tools = ["propose_kdp_book"]  # 0.42.6: it waits while KDP's week holds its book's format
     else:
         tools = [CALLED[e] for e in _executors(row["check_kind"], _spec(row)) if e in CALLED]
     line = int(row["project_id"]) if row["project_id"] is not None else None
+    if line is None and tools == ["propose_kdp_book"]:
+        line = _promised(facts, row)
     calls: list[tuple[str, dict[str, Any]]] = []
     for tool in tools:
         channel = next((c for c, t in PUBLISHES.items() if t == tool), None)
@@ -955,6 +962,19 @@ def _calls(facts: Facts, row: Mapping[str, Any], found: OwnerLimits) -> list[tup
         else:
             calls.append((tool, {"line": line}))
     return calls
+
+
+def _promised(facts: Facts, row: Mapping[str, Any]) -> int | None:
+    """0.42.6: the line a promise's step of no line is about: its obligation's, else the one its words name
+    (obligations.promised_line). Live, promise #67's step stood under "Your owner" while its obligation named line
+    #14, the KDP line whose book format KDP's week counts."""
+    if row["obligation_id"] is not None:
+        found = facts.conn.execute(
+            "SELECT project_id FROM obligations WHERE id = ?", (row["obligation_id"],)
+        ).fetchone()
+        if found is not None and found["project_id"] is not None:
+            return int(found["project_id"])
+    return obligations.promised_line(facts.conn, facts.scope, str(row["title"]))
 
 
 def _book_format(facts: Facts, line: int) -> str | None:

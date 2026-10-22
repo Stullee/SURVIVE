@@ -183,3 +183,20 @@ def test_a_review_hold_the_agent_lifted_stays_lifted_and_a_line_with_a_promise_i
     agent.clock.advance(minutes=5)
     keep(agent)
     assert held(agent, tracker)["hold_reason"] is None  # not held again for the same review
+
+
+# --- From 0.42.6 (analysis-0.42.3, 3.1) ---
+
+
+def test_a_reviews_change_adds_no_step_while_the_line_waits_for_the_owners_keep_or_drop(data_dir: Path) -> None:
+    """Live on 10-21 and 10-22, six cycles ($1.34) closed "Review: ... Kept passive at zero cost. The owner decides at
+    renewal" on lines #3, #4 and #6, each weighing 4.0 (due today) above the KDP book's steps."""
+    agent, line, _ = launched(data_dir)
+    judged(agent, (line, "stop", "demand"))
+    keep(agent)
+    with agent.db.connection() as conn:
+        assert plan.owner_decision(conn, agent.scope(), line, now(agent)) == "deciding"
+    agent.clock.advance(days=1)
+    judged(agent, (line, "change", "reach"))
+    assert not any("change from today's review" in s for s in keep(agent))
+    assert rows(agent, f"SELECT id FROM plan_nodes WHERE template = '{plan.REVIEW_CHANGE}'") == []

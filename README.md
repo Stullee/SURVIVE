@@ -592,6 +592,19 @@ to be tried again and a "don't propose it again", so Ember no longer proposes th
 same thing a second time while your first approval is still to go out. One that
 is still refused after its 3 retries shows as failed, as before.
 
+0.42.6: from the analysis of the report of 10-22. Your message stays in Ember's
+plans for 3 days after you wrote it, marked answered once it is, so an answer
+like "the next cycle applies your fixes" no longer drops the fixes. A message
+promising work in one sentence must record the promise even when another
+sentence reports on an old one. One promise lives in one place (a repeat of an
+open one makes none, and one naming the KDP book goes on the KDP line), and a
+promise to propose a KDP book waits for KDP's next week. The daily review reads
+your messages and your KDP books' Amazon links, and no longer adds a "change"
+step to a line that waits for your keep-or-drop. With the spending stance
+**invest**, a venture's first sale may take the whole runway instead of half,
+so cases can reach you again. Ember's plan_step answers name the step they
+changed.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

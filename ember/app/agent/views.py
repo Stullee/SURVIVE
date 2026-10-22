@@ -767,14 +767,16 @@ def ventures_view(agent: Agent) -> dict[str, Any]:
         # 0.13.0: what rules out a venture with a case that isn't backed yet (the owner lifts or restores each)
         status = agent.economy.life.evaluate()
         net_days = status.runway.net_days
+        whole = status.stance == burn.INVEST  # 0.42.6: the knock-outs' slow rule
+        cash = agent.settings.venture_cash_eur
         knocked = {
-            v["id"]: knockouts.check(conn, v, cash_eur=agent.settings.venture_cash_eur, net_days=net_days)
+            v["id"]: knockouts.check(conn, v, cash_eur=cash, net_days=net_days, whole_runway=whole)
             for v in rows
             if v["cases"] and v["stage"] in ventures.EXPLORING
         }
         # 0.15.0: why Ember's code wouldn't back an unbacked venture: the owner's Back then confirms it
         unbacked = {
-            v["id"]: stages.backing_problem(conn, v, cash_eur=agent.settings.venture_cash_eur, net_days=net_days)
+            v["id"]: stages.backing_problem(conn, v, cash_eur=cash, net_days=net_days, whole_runway=whole)
             for v in rows
             if v["stage"] in (*ventures.EXPLORING, "parked")
         }

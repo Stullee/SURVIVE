@@ -123,6 +123,15 @@ WAIT_ON = ("owner", "upgrade", "step", "date")
 MAX_NEW_STEPS = 4  # steps one change adds
 TITLE_CHARS = 120
 WAITS_A_DAY = 2  # steps Ember may say wait, a day (the owner sees each one)
+
+
+def _named(row: Mapping[str, Any]) -> str:
+    """0.42.6 (analysis-0.42.3, 3.1): a step as plan_step's answer names it, with its title: a change made to YOUR
+    STEP when no step_id was given shows which step that was. Live, a wait meant for promise #67 waited venture #49's
+    research (the cycle's own step), and the answer, "Step #251 waits on 2026-10-23", didn't say so."""
+    return f'#{row["id"]} ("{_cut(" ".join(str(row["title"] or "").split()), 60)}")'
+
+
 WAIT_DAYS = 14  # a wait on a day, at most this far ahead
 DECLINE_WORDS = 6  # 0.42.1: a decline tells the owner why in at least as many words (``decline_step``)
 FIXED_SOURCES = ("owner", "promise", "code")  # what the owner, a promise or Ember's code put there stays
@@ -329,7 +338,7 @@ def step_done(
         raise PlanError("step_id", f"Ember's code checks step #{row['id']}: it closes once {words}")
     _close(conn, row["id"], now, "done", why, by="agent")
     change(conn, scope, row["id"], cycle_id, "agent", "done", why, now)
-    return f"Step #{row['id']} is done."
+    return f"Step {_named(row)} is done."
 
 
 def skip_step(
@@ -357,7 +366,7 @@ def skip_step(
     _close(conn, row["id"], now, "dropped", f"skipped for this period: {why}", by="agent")
     change(conn, scope, row["id"], cycle_id, "agent", "drop", f"skipped for this period: {why}"[:300], now)
     ends = f" (it ends {row['due']})" if row["due"] else ""
-    return f"Step #{row['id']} is skipped for this period{ends}: its channel's next step for this line comes after it."
+    return f"Step {_named(row)} is skipped for this period{ends}: its channel's next step for this line comes after it."
 
 
 def decline_step(
@@ -439,7 +448,12 @@ def wait_step(
         (*params, day_start or _midnight(today)),
     ).fetchone()[0]
     if waited >= WAITS_A_DAY:
-        raise PlanError("action", f"{WAITS_A_DAY} steps were said to wait today already: do what you can of this one")
+        # 0.42.6 (analysis-0.42.3, 3.1): when it can wait. Live, a cycle read the refusal as "already waiting"
+        raise PlanError(
+            "action",
+            f"{WAITS_A_DAY} steps were said to wait today already ({WAITS_A_DAY} a day): this one can wait from"
+            " tomorrow; do what you can of it now",
+        )
     blocked = ""
     if on == "owner":
         found = conn.execute(f"SELECT status FROM approvals WHERE id = ? AND {where}", (ref, *params)).fetchone()
@@ -484,7 +498,7 @@ def wait_step(
         ready_since=None,
     )
     change(conn, scope, row["id"], cycle_id, "agent", "wait", f"on {blocked}: {why}", now)
-    return f"Step #{row['id']} waits on {blocked} ({waited + 1} of {WAITS_A_DAY} waits today)."
+    return f"Step {_named(row)} waits on {blocked} ({waited + 1} of {WAITS_A_DAY} waits today)."
 
 
 def _waits_on(conn: sqlite3.Connection, scope: AgentScope, row: Mapping[str, Any], other: Mapping[str, Any]) -> str:

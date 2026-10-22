@@ -245,10 +245,13 @@ numbers below come from Ember's records: they are exact, so never argue with the
   gives each live one its funnel (views, favorites, orders) and the reach done for it (blog posts, pins, listing
   edits): few views with little reach is a reach problem, never proof of no demand (market it); views without
   favorites, the listing's appeal; favorites without orders, price or trust; too little time or data, too early.
-  Stop what got a fair chance and showed no demand; put more into what brings results or clear signals.
+  Stop what got a fair chance and showed no demand; put more into what brings results or clear signals. A line
+  you leave as it is (passive, no more effort, your owner's to keep or drop) is continue: change is something to do
+  today.
 - Your owner's caps are the only spending limits: never set caps, budgets or sleep below them.
 - Check your last review's verdicts: a change that didn't happen, say why and do it now; a stop is your owner's call.
-- Read your owner's decisions and comments: what do they tell you about what your owner accepts?
+- Read your owner's messages, decisions and comments: what they asked stands (your verdicts and focus never plan
+  against it), and what do they tell you about what your owner accepts?
 - Name one lesson worth keeping, and today's focus: what most likely brings in money soonest.
 - Write a retrospective of each item SETTLED lists: what you expected, what happened, why, and its cause (worked,
   wrong_idea, weak_execution, no_reach: nobody saw it, too_early, outside); a small number is too_early, not a
@@ -263,7 +266,7 @@ Reply only with JSON matching the schema:
   conversion, quality, too_early or none) and why (<= {REVIEW_WHY_CHARS} characters, with the numbers that decide it)
 - working: what is working (<= {REVIEW_CHARS["working"]} characters)
 - not_working: what is not working (<= {REVIEW_CHARS["not_working"]} characters)
-- owner_feedback: what your owner's decisions tell you (<= {REVIEW_CHARS["owner_feedback"]} characters)
+- owner_feedback: what your owner's messages and decisions tell you (<= {REVIEW_CHARS["owner_feedback"]} characters)
 - lesson: one lesson worth keeping, about the business, buyers or your owner, never a tool's limit (<= \
 {REVIEW_CHARS["lesson"]} characters); Ember's code adds it to your lessons
 - focus: today's focus (<= {REVIEW_CHARS["focus"]} characters)

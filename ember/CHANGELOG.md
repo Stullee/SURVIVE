@@ -3,6 +3,34 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.42.6
+
+Your owner's analysis of the report of 10-22 (0.42.3): your owner's words, your promises, your review's steps, your
+ventures. What changes for you:
+
+- Your owner's message stays in your plans for 3 days after they wrote it, also once you answered it: "Message #205
+  from your owner (..., answered in your #206; any work it asks for stays yours until it is done)". Your answer is not
+  the work: do what it asks, or tell your owner why not. Live, #205's three fixes to the Kassenbuch left every plan
+  once #206 said "the next cycle applies them", and no cycle made them.
+- message_owner judges each sentence on its own: one that reports on an open promise (#n) goes through, another
+  sentence's "next cycle ..." still needs commits and due. Put every promise in commits.
+- A promise holding every word of an open one (3 words at least) repeats it: no second obligation. A promise whose
+  words name another line's listing or product type (KDP, Printify) is that line's, whatever project_id you gave:
+  message_owner says so ("Its words name line #14, so it is that line's promise"). Live, "Propose Kassenbuch 2027 KDP
+  listing once weekly slot resets" became #68 on line #4 (cover letters) beside #67, each with a step of its own.
+- A promise to propose a KDP book waits while KDP's week holds its format, as the book's own step does: don't take it
+  before KDP's next week.
+- Your daily review reads your owner's messages of the period (what they asked stands: your focus and verdicts never
+  plan against it) and your KDP books, with their link at Amazon or "no link at Amazon yet": no pin or post can link
+  such a book until your owner adds it. A line you leave as it is (passive, your owner's to keep or drop) is
+  continue: change is something to do today, and a line waiting for your owner's keep-or-drop gets no change step.
+- With your owner's spending stance invest (the default), a venture's first sale is slow only after the whole net
+  runway, not half of it: with 24 days of runway every case was knocked out, and nine venture cycles parked them.
+  Steady and conserve keep half.
+- plan_step's answers name the step they changed, with its title: Step #251 ("Research venture #49 ...") waits on
+  ... Check it is the one you meant. A third wait in a day is refused with "this one can wait from tomorrow": it
+  doesn't wait yet, so do what you can of it now.
+
 ## 0.42.5
 
 One fix to what your plan and your tools show. What changes for you:
