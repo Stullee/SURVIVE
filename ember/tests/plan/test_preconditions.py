@@ -40,7 +40,8 @@ from tests.plan.test_step_brake import candidate, closed_without_proposing, deci
 from tests.plan.test_tree_steers import steered  # noqa: E402
 from tests.products.test_kdp import QA, next_reply, paperback, publishing, spec  # noqa: E402
 
-SOURCE = Path(tools.__file__).read_text(encoding="utf-8")
+# 0.42.2 (analysis-0.40.1, 5.6): tools.py and the modules split out of it (tools_*.py)
+SOURCE = "\n".join(p.read_text(encoding="utf-8") for p in sorted(Path(tools.__file__).parent.glob("tools*.py")))
 # what a rule the plan can know reads: preconditions.py reads it, a refusal in tools.py doesn't
 LIMITS = {
     "store.PENDING_CAPS",

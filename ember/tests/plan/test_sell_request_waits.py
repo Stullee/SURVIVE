@@ -175,7 +175,8 @@ def test_the_plan_waits_on_the_sell_requests_exactly_while_the_tool_would_refuse
 
 def test_each_executors_request_type_is_the_one_its_tool_makes() -> None:
     """store.EXECUTOR_TYPES, which the plan reads, against the type= of every _new_request call in tools.py."""
-    source = (Path(tools.__file__)).read_text(encoding="utf-8")
+    # 0.42.2 (analysis-0.40.1, 5.6): tools.py and the modules split out of it (tools_*.py)
+    source = "\n".join(p.read_text(encoding="utf-8") for p in sorted(Path(tools.__file__).parent.glob("tools*.py")))
     made: set[tuple[str, str]] = set()
     for call in ast.walk(ast.parse(source)):
         if not isinstance(call, ast.Call) or getattr(call.func, "id", None) != "_new_request":

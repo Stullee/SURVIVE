@@ -38,4 +38,5 @@ RUN chmod a+x /etc/s6-overlay/s6-rc.d/ember/run /etc/s6-overlay/s6-rc.d/ember/fi
 LABEL \
     org.opencontainers.image.title="Home Assistant App: Ember" \
     org.opencontainers.image.description="A self-sustaining AI agent that has to earn more than its API calls cost." \
-    org.opencontainers.image.source="https://github.com/Stullee/SURVIVE"
+    org.opencontainers.image.source="https://github.com/Stullee/SURVIVE" \
+    org.opencontainers.image.licenses="MIT"

@@ -28,7 +28,8 @@ MAX_DAYS = 60
 SHOWN_DAYS = 3  # STATUS shows an ended test this many days after its end
 DECIDED = ("approved", "approved_with_changes", "done")
 _NUMBER = re.compile(r"(?<!\d)(\d{9,12})(?!\d)")  # a listing's number, alone or in its address
-_DAYS = re.compile(r"(?<![\d/])(\d{1,2})\s*-?\s*(?:days?|tage[n]?)\b", re.IGNORECASE)
+# 0.42.2 (analysis-0.40.1 audit): one \s* each side of the "-": two in a row split a run of spaces every way (quadratic)
+_DAYS = re.compile(r"(?<![\d/])(\d{1,2})\s*(?:-\s*)?(?:days?|tage[n]?)\b", re.IGNORECASE)
 
 
 def listings_named(conn: sqlite3.Connection, scope: AgentScope, text: str) -> list[int]:

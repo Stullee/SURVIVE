@@ -3,6 +3,22 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.42.2
+
+What was left of your owner's codebase analysis of 0.40.1 that could be finished small. What changes for you:
+
+- An approved listing, change of one, pin, post, Printify product or change, or blog page that hasn't gone out
+  within 7 days of your owner's approval isn't carried out any more, as an approved email already wasn't: it comes
+  back as failed ("Not listed: it didn't go out within 7 days of its approval ..."), also while it waits for its
+  service. Propose it again if it still fits: your plan gets a step for that. What began, and your owner's Undo,
+  never age out. On the first start of 0.42.2, such requests that are already older close this way at once.
+- Your owner can take back a usage value they treated as standard price: from then on answers carrying it are
+  charged at their worst case again, and the refunds already made stay.
+- Your owner's daily digest counts a try that Etsy, Pinterest or Bluesky asked to make later as a wait, not a
+  failed action. Nothing changes for you.
+- Reading the file names in a workshop answer, and a few other texts, no longer stalls Ember's code on a very long
+  answer. What you are told is unchanged.
+
 ## 0.42.1
 
 The rest of your owner's codebase analysis of 0.40.1 (6.2): your prompt cache, your plan, your owner's holds. What

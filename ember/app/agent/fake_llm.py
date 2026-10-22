@@ -745,8 +745,10 @@ def _reflecting(messages: Iterable[Any]) -> bool:
     return False
 
 
-_PROJECT_LINE = re.compile(r"^\s*#(\d+) \[([a-z]+)\] (.+?)(?: · next: (.*?))?(?: · spent .*)?$", re.MULTILINE)
-_FOCUS = re.compile(r"^Focus project: #(\d+) (.+?)(?: \[([a-z]+)\])?\s*$", re.MULTILINE)
+# 0.42.2 (analysis-0.40.1 audit): the spaces of one line: \s* ran over every blank line after each (quadratic)
+_PROJECT_LINE = re.compile(r"^[^\S\n]*#(\d+) \[([a-z]+)\] (.+?)(?: · next: (.*?))?(?: · spent .*)?$", re.MULTILINE)
+# 0.42.2 (analysis-0.40.1 audit): the title greedy, with its status or without (lazy, it read on through spaces at each)
+_FOCUS = re.compile(r"^Focus project: #(\d+) (?:(.+) \[([a-z]+)\][^\S\n]*|(.+))$", re.MULTILINE)
 _HYPOTHESIS = re.compile(r"^Hypothesis: (.+)$", re.MULTILINE)
 _CREATED = re.compile(r"[Cc]reated project #(\d+)")
 _STATE = re.compile(r"\bState: ([a-z_]+)")
@@ -773,9 +775,10 @@ REVIEW_STOP_CYCLES = 12  # the fake's daily review stops a project that took thi
 # 0.35.0: only the owner closes a project: the fake holds the line of its step that its review stopped
 HOLD_STEP = "Hold project #{id}: my review says stop"
 # A project line of the review's scorecard: id, status, title, cycles in all.
-_SCORECARD_PROJECT = re.compile(r"^#(\d+) \[(\w+)[^\]]*\] (.*?) · open .*?cycles in the period \((\d+) in all\)", re.M)
+# 0.42.2 (analysis-0.40.1 audit): \w++ and \d++ (below) keep what they took: given back, what follows read it again
+_SCORECARD_PROJECT = re.compile(r"^#(\d+) \[(\w++)[^\]]*\] (.*?) · open .*?cycles in the period \((\d+) in all\)", re.M)
 _NO_REVENUE = "Revenue recorded: $0.00 in these days"
-_REVIEW_STOP = re.compile(r"^- #(\d+)[^\n]*?: stop: ", re.M)
+_REVIEW_STOP = re.compile(r"^- #(\d++)[^\n]*?: stop: ", re.M)
 _SETTLED = re.compile(r"^- ((?:bet|milestone|project|venture|request) #\d+): ([^\n]*)", re.M)  # 0.18.0
 _HOLD = re.compile(r"hold project #(\d+)")
 PROMOTE_STEP = "Ask for this workshop script to be built into Ember:"
@@ -798,7 +801,8 @@ _FOCUS_VENTURE = re.compile(r"^Focus venture: #(\d+) (.+?)(?: \(branch of #\d+\)
 _STUDY_TITLE = re.compile(r'^Document #\d+ ("(?:[^"\\]|\\.)*")', re.MULTILINE)
 _STUDY_PART = re.compile(r"^\[Part (\d+)\]\n(.*?)(?=\n\n\[Part \d+\]\n|\n</data id=)", re.MULTILINE | re.DOTALL)
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
-_TREE_TITLE = re.compile(r"^\s*- #\d+ (.+?) \([a-z]+(?:, weight \d+)?\)$", re.MULTILINE)
+# 0.42.2 (analysis-0.40.1 audit): the spaces of one line, as _PROJECT_LINE's
+_TREE_TITLE = re.compile(r"^[^\S\n]*- #\d+ (.+?) \([a-z]+(?:, weight \d+)?\)$", re.MULTILINE)
 # The roadmap (0.11.0): the milestones still open (0.35.0: YOUR PLAN lists them), and what the brief's PLAN asks of
 # them. Laying a roadmap out retired with milestone_plan: the plan tree is Ember's code's.
 MOVE_MILESTONE_STEP = "Move overdue milestone #{id} a week"
@@ -848,7 +852,7 @@ def parse_projects(text: str) -> list[Project]:
 def parse_focus(text: str) -> Project | None:
     """The act brief's ``Focus project: #3 Title [active]`` line."""
     match = _FOCUS.search(text)
-    return Project(int(match[1]), match[3] or "active", match[2].strip()) if match else None
+    return Project(int(match[1]), match[3] or "active", (match[2] or match[4]).strip()) if match else None
 
 
 @dataclass(frozen=True)

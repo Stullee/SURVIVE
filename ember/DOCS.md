@@ -1720,6 +1720,18 @@ no longer shown); a study that failed three times stops until you press
   fails as before. Its card says when; **Cancel** still stops it. A request your
   unlock approved isn't tried again (the agent proposes it again), nor is an
   email, nor anything that may have changed something.
+- **Approved too long ago** (0.42.2): a listing, a change, a pin, a post, a
+  Printify product or change, or a blog page that Ember's code hasn't begun 7
+  days after your approval isn't carried out any more, as an email isn't (see
+  [Ember's mailbox](#embers-mailbox)). Ember was paused or stopped, or it
+  waited for money, a connection, a daily limit, its slot or its service, and
+  it may no longer fit: Ember closes it as failed, with why ("Not listed: it
+  didn't go out within 7 days of its approval ..."), and the agent hears it
+  and proposes it again if it still fits (its plan gets a step for that). One
+  that waits for its service ages out too, before it is tried again.
+  What Ember's code began never does, nor your Undo (it takes something down,
+  which still fits), nor what you carry out yourself (a Reddit post, a KDP
+  book), Pinterest's test pin or the last will.
 - **Autonomy** (0.13.0): on the Plan tab, each open product (0.35.0) and each
   open milestone's card has an **Autonomy** box. There you can let Ember's code carry out a few small kinds
   of request for that milestone without your click. Each is off (**Ask me**)
@@ -1793,7 +1805,8 @@ no longer shown); a study that failed three times stops until you press
   on, a Pinterest board or pin made or deleted, a Bluesky post made or deleted,
   a Printify product created or deleted), the newest first. Each one shows:
   - what it acted on, and what it changed (before → after);
-  - how it ended;
+  - how it ended (0.42.2: **Asked to wait** when its service asked Ember's
+    code to come back later, and it is tried again: see Asked to wait above);
   - on whose decision: **You approved it**, **Your unlock**, **Your Undo**,
     or **Ember's code on its own**.
 
@@ -1830,7 +1843,12 @@ no longer shown); a study that failed three times stops until you press
   you unlocked. The newest digest is at the top of this card and in the System
   log; the sensor has its counts (`digest_day`, `digest_actions`, ...). Days
   without a round (a pause) get their digest afterwards, up to 14 days back
-  (0.15.0).
+  (0.15.0). Since 0.42.2 a try that Etsy, Pinterest or Bluesky asked Ember's
+  code to make later (see Asked to wait above) is no failed action: the
+  digest counts the requests that waited apart ("1 request(s) waited when
+  their service asked to come back later (not failures)"), a listing that
+  waited twice and then went out is 1 action, and one that fails at its last
+  try fails once.
 
   **Take back every unlock**, at the top of this card while any unlock
   stands: one click sets every rule of every milestone back to **Ask me**.
@@ -2087,7 +2105,9 @@ included: encrypt your backups.
   approval (Ember was paused, or it waited for money, the daily limit or an
   email to be read) isn't sent any more: Ember closes it as not sent, with
   why, and the agent asks again if it still fits (until 0.40.3 it went out on
-  Resume, weeks late).
+  Resume, weeks late). Since 0.42.2 the other approved actions Ember's code
+  carries out age out after the same 7 days (see
+  [Your part](#your-part), Approved too long ago).
 - Ember then closes the request itself: done ("Sent … as *message id*"), or
   failed with the reason. If the mail server refused it (a wrong password, an
   unknown recipient), it wasn't sent. If the connection broke while the email
@@ -3057,7 +3077,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.42.1 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.42.2 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3287,10 +3307,14 @@ On the dashboard you can record:
   own refunds since the first of them count first). Any other value of the
   field stays at its worst case, and only you can accept one; it stays
   accepted (a call answered while you confirmed is settled at the next start,
-  or with **Settle**). For small amounts not worth looking up, **Keep as
-  charged** on the System warning about calls charged at their worst case
-  hides it for what it names now: it comes back only for calls charged so
-  later. No money moves, and you can still record a correction.
+  or with **Settle**) until you take it back. Since 0.42.2 the dashboard lists
+  each value you accepted, with **Take back** for one accepted by mistake or
+  that came to cost more: past refunds stay; calls from now on are charged at
+  the worst case again, and offered again, as before you accepted it. For
+  small amounts not worth looking up, **Keep as charged** on the System
+  warning about calls charged at their worst case hides it for what it names
+  now: it comes back only for calls charged so later. No money moves, and you
+  can still record a correction.
 - **Correct** on an earlier grant, revenue or expense reduces it (up to its full
   amount, which voids it).
 
@@ -3513,7 +3537,8 @@ counts the unlocks that stand (0.13.0). Of the newest daily digest, `digest_day`
 is the day it covers (an automation can notify you when it changes), and
 `digest_actions`, `digest_failed` and `digest_taken_back` count the actions
 Ember's code carried out that day, those that failed, partly failed or ended
-unclear, and the unlocks taken back; its text is on the dashboard only. The
+unclear (0.42.2: a wait for the service isn't one), and the unlocks taken
+back; its text is on the dashboard only. The
 JSON never contains any text the agent wrote, nor anyone's address.
 In dry run the numbers are the dry run's. If the database can't be read,
 `state` is `unknown` and the numbers are empty.

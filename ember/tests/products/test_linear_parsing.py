@@ -7,28 +7,20 @@
    copy is made.
 4. PR7: a spreadsheet's picture counts COUNTIF's and SUMIF's wildcards as Excel does.
 5. PR9: KDP's flat printing cost for black ink ends at 108 pages.
-6. 6.2: every regular expression of the products and the integrations takes linear time on long runs.
+6. 6.2: every regular expression of the products and the integrations takes linear time on long runs (0.42.2: of all
+   of app/, in test_regex_timing.py), a street with many house numbers among them.
 
 Tests from 0.40.3 (formerly test_fixes_0403_parsing.py)."""
 
 from __future__ import annotations
 
-import importlib
 import json
-import pkgutil
-import re
-import string
 import time
 import zlib
 from decimal import Decimal
-from re import _constants as sre  # the parser's names for the parts of a pattern
-from re import _parser
-from typing import Any
 
 import pytest
 
-import app.integrations
-import app.products
 from app.integrations import kdp
 from app.products import checks, markup, pdf, sheets, site, word
 
@@ -189,119 +181,7 @@ def test_kdp_s_flat_printing_cost_ends_at_108_pages() -> None:
     assert kdp.printing_cost(40, "color", "6x9") == Decimal("3.60")
 
 
-# --- 6. 6.2: every pattern on long runs ---
-
-RUNS = " %[#-|:*\n\t1a"  # the analysis's runs, a digit and a letter
-LONG = 20_000
-# Matched at one place (match), never searched: timed with match.
-ANCHORED = {
-    "app.products.checks._LINE_END": "where a stream keyword ends (checks._pdf counts what it reads)",
-    "app.products.sheets._TOKENS": "at a formula's next token (sheets._tokens)",
-    "app.products.site._STREET": "on each line of the owner's address",
-    "app.integrations.mail._CONTAINER": "at the start of a part's header",
-}
-# Applied only to short texts: not timed.
-BOUNDED = {
-    "app.products.blog._EMAIL": "a post's texts, at most blog.SOURCE_MAX (24,000) characters: about 1 s at worst",
-    "app.integrations.bluesky._TAG_END": "a hashtag in a post's words, at most bluesky.WORDS_CHARS characters",
-    "app.integrations.qa._THREAD": "an email's subject, at most mail.SUBJECT_MAX (150) characters",
-}
-_CATEGORIES = {
-    sre.CATEGORY_DIGIT: str.isdigit,
-    sre.CATEGORY_NOT_DIGIT: lambda c: not c.isdigit(),
-    sre.CATEGORY_SPACE: str.isspace,
-    sre.CATEGORY_NOT_SPACE: lambda c: not c.isspace(),
-    sre.CATEGORY_WORD: lambda c: c.isalnum() or c == "_",
-    sre.CATEGORY_NOT_WORD: lambda c: not (c.isalnum() or c == "_"),
-}
-
-
-def _fits(op: Any, av: Any, char: str) -> bool:
-    """Whether a character is one a single-character part of a pattern matches."""
-    if op is sre.LITERAL:
-        return ord(char) == av
-    if op is sre.NOT_LITERAL:
-        return ord(char) != av
-    if op is sre.ANY:
-        return char != "\n"
-    if op is sre.RANGE:
-        return av[0] <= ord(char) <= av[1]
-    if op is sre.CATEGORY:
-        return _CATEGORIES[av](char)
-    if op is sre.IN:
-        negate = bool(av) and av[0][0] is sre.NEGATE
-        return negate != any(_fits(o, a, char) for o, a in av[negate:])
-    return False
-
-
-def _leads(pattern: re.Pattern[Any]) -> set[tuple[str, str]]:
-    """What leads into each repetition of a pattern, and one repetition of it: texts its parts match, sampled ('['
-    and '/a' for '\\[(?:/\\w+)*', '# ' and 'a' for a heading's '^(#{1,6})\\s+(.*?)...'). A long run after the lead is
-    what makes a pattern backtrack: P1 needed the '[', PR2 the '# a'."""
-    found = {("", "")}
-
-    def walk(items: Any, text: str | None) -> str | None:
-        for op, av in items:
-            if text is None:
-                return None
-            if op in (sre.MAX_REPEAT, sre.MIN_REPEAT, sre.POSSESSIVE_REPEAT):
-                once = walk(av[2], text)
-                found.update({(text, once[len(text) :]), (once, "")} if once is not None else {(text, "")})
-                text = None if once is None else text + once[len(text) :] * av[0]
-            elif op is sre.SUBPATTERN:
-                text = walk(av[3], text)
-            elif op is sre.ATOMIC_GROUP:
-                text = walk(av, text)
-            elif op is sre.BRANCH:
-                text = [walk(branch, text) for branch in av[1]][0]
-            elif op in (sre.LITERAL, sre.NOT_LITERAL, sre.ANY, sre.IN):
-                char = next((c for c in "a1 " + RUNS + string.printable if _fits(op, av, c)), None)
-                text = None if char is None else text + char
-            elif op not in (sre.AT, sre.ASSERT, sre.ASSERT_NOT):
-                return None
-        return text
-
-    walk(_parser.parse(pattern.pattern, pattern.flags), "")
-    return found
-
-
-def _inputs(pattern: re.Pattern[Any]) -> list[Any]:
-    source = pattern.pattern if isinstance(pattern.pattern, str) else pattern.pattern.decode("latin-1")
-    texts = [c * LONG + "\x01" for c in set(source) - set(RUNS)]  # the pattern's own characters
-    for lead, unit in _leads(pattern):
-        texts += [lead + c * LONG + "\x01" for c in RUNS]
-        texts += [lead + unit * (LONG // len(unit)) + "\x01"] if unit else []
-    return [t.encode("latin-1", "replace") for t in texts] if isinstance(pattern.pattern, bytes) else texts
-
-
-def _patterns() -> dict[str, re.Pattern[Any]]:
-    found = {}
-    for package in (app.products, app.integrations):
-        for info in pkgutil.iter_modules(package.__path__):
-            module = importlib.import_module(f"{package.__name__}.{info.name}")
-            found |= {f"{module.__name__}.{n}": v for n, v in vars(module).items() if isinstance(v, re.Pattern)}
-    return found
-
-
-def test_every_pattern_of_the_products_and_the_integrations_takes_linear_time() -> None:
-    """P1 and PR2 were patterns that backtracked on a long run of one character, holding the app: each pattern of
-    these modules (their module's constants) gets long runs after what leads into each of its repetitions, and must
-    answer in 2 s. A pattern only ever matched at one place is timed so; one only applied to short texts is listed
-    in BOUNDED, with why."""
-    patterns = _patterns()
-    assert len(patterns) > 100 and set(ANCHORED) | set(BOUNDED) <= set(patterns)
-    slow = []
-    for name, pattern in sorted(patterns.items()):
-        if name in BOUNDED:
-            continue
-        apply = pattern.match if name in ANCHORED else pattern.search
-        for text in _inputs(pattern):
-            started = time.perf_counter()
-            apply(text)
-            took = time.perf_counter() - started
-            if took > 2:  # a backtracking pattern takes many seconds on 20,000 characters; a busy CI runner less than 2
-                slow.append(f"{name}: {took:.1f} s on {text[:24]!r}... ({len(text):,} characters)")
-    assert not slow, "\n".join(slow)
+# --- 6. 6.2: every pattern on long runs (0.42.2: checked in test_regex_timing.py, for all of app/) ---
 
 
 def test_a_street_with_many_numbers_is_read_at_once() -> None:

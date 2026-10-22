@@ -1039,7 +1039,8 @@ def test_the_tools_can_not_send_anything() -> None:
     assert not any("send" in name for name in names)
     assert {f.name for f in tools.ToolContext.__dataclass_fields__.values()} >= {"mail"}
     assert set(tools.MailAccess.__dataclass_fields__) == {"address", "daily_limit"}
-    source = Path(tools.__file__).read_text(encoding="utf-8")
+    # 0.42.2 (analysis-0.40.1, 5.6): tools.py and the modules split out of it (tools_*.py)
+    source = "\n".join(p.read_text(encoding="utf-8") for p in sorted(Path(tools.__file__).parent.glob("tools*.py")))
     for needle in ("smtplib", "imaplib", "LiveMailbox", "FakeMailbox", "select_mailbox", ".send(", "import executor"):
         assert needle not in source, needle
 
