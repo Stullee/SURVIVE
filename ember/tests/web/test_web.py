@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from app.db import discover_migrations
 from app.security import AccessPolicy, ingress_base_href, is_local_host_header
 from app.version import read_version
 from tests.conftest import HA_CORE, INGRESS
+from tests.economy_helpers import FakeClock
 
 KEY = "sk-ant-api03-verysecretkeyvalue0987654321"
 
@@ -253,6 +255,22 @@ def test_install_time_and_life_survive_restarts(client_factory: Callable) -> Non
     assert second["system"]["installed_at"] == first["system"]["installed_at"]
     assert second["agent"]["life_id"] == first["agent"]["life_id"]
     assert second["agent"]["balance_usd"] == 20.0  # the starting balance is recorded once
+
+
+def test_the_app_answers_by_the_clock_it_is_built_with(client_factory: Callable) -> None:
+    """0.42.3 (analysis-0.40.1 audit): create_app takes a clock, so a test can build the app at a set time (it always
+    ran on the real one). The economy, the agent and the scheduler share it, and the dashboard's day and the life's age
+    follow it across midnight."""
+    clock = FakeClock(datetime(2026, 9, 1, 23, 30, tzinfo=UTC))  # half an hour before midnight
+    with client_factory(LoadedSettings(Settings()), clock=clock) as client:
+        state = client.app.state.ember
+        assert state.economy.clock is clock and state.agent.clock is clock and state.scheduler.economy.clock is clock
+        before = client.get("/api/dashboard").json()
+        assert before["agent"]["born_at"] == "2026-09-01T23:30:00Z" and before["agent"]["age_days"] == 0.0
+        assert before["economy"]["days"][-1]["date"] == "2026-09-01"
+        clock.advance(hours=1)
+        after = client.get("/api/dashboard").json()
+        assert after["economy"]["days"][-1]["date"] == "2026-09-02" and after["agent"]["age_days"] == 0.04
 
 
 def test_broken_database_does_not_stop_the_dashboard(client_factory: Callable, data_dir) -> None:
