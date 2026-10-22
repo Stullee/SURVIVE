@@ -55,7 +55,7 @@ class CallProfile:
     cache_ttls: tuple[str, ...] = ()
 
 
-# The largest requests the agent builds (measured in tests/test_agent_requests.py, which keeps them in step):
+# The largest requests the agent builds (measured in tests/cycle/test_agent_requests.py, which keeps them in step):
 # the planning call that opens a wake cycle (a venture cycle's, with its rules and the VENTURES section: 0.10.0, and
 # the ROADMAP: 0.11.0; the owner's LIBRARY, the memory headings, the last cycles' digests, the OBLIGATIONS and the
 # lessons the owner pinned, and the burn mode in STATUS: 0.12.0; the decision desk's READY with the forecasts' record,

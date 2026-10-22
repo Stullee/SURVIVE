@@ -342,8 +342,8 @@ def unread_messages(conn: sqlite3.Connection, scope: AgentScope) -> int:
 
 
 # 0.38.1: the type of the requests each executor of the agent's tools makes (their _new_request calls), so the plan
-# knows which of PENDING_CAPS a step's request would run into (plan.limits); tests/test_fixes_0381.py keeps the two
-# in step.
+# knows which of PENDING_CAPS a step's request would run into (plan.limits); tests/plan/test_sell_request_waits.py keeps
+# the two in step.
 EXECUTOR_TYPES = {
     "email": "contact",
     "etsy_listing": "sell",

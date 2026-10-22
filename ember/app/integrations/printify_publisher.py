@@ -27,6 +27,9 @@ in printify_edits is committed as 'running' before anything is sent. The new des
 approved. Ember's code uploads it, changes the product at Printify (only what changes) and has Printify publish what
 changed to its Etsy listing. The product as Printify has it (``current_product``) is the approved one with each change
 made since.
+
+0.42.2 (M2): a product or a change not begun within connectors.APPROVED_DAYS of its approval is closed unsent, as an
+email is (connectors.stale).
 """
 
 from __future__ import annotations
@@ -918,6 +921,8 @@ class Publisher:
                 return "skipped"  # cancelled or decided meanwhile
             if connectors.halted(conn):
                 return connectors.HALTED  # 0.37.3: the kill switch came on while this round ran
+            if (stale := connectors.stale(conn, row, self.clock.now())) is not None:  # 0.42.2 (M2): too old to begin
+                return self._lapsed(conn, row, "Not created", stale, stamp)
             if created_today(conn, self.clock, scope) >= self.settings.printify_products_per_day:
                 return "waiting_limit"
             try:
@@ -1053,6 +1058,13 @@ class Publisher:
         self._close(conn, approval_id, "failed", note, None)
         return "failed"
 
+    def _lapsed(self, conn: sqlite3.Connection, row: sqlite3.Row, done: str, why: str, stamp: str) -> str:
+        """0.42.2 (analysis-0.40.1 audit, M2): a product or change approved more than connectors.APPROVED_DAYS ago that
+        never began is closed unsent (connectors.lapse)."""
+        note = connectors.lapse(conn, row, done, why, stamp)
+        events.record(self.db, "warning", "printify", f"Request #{row['id']}: {note}"[:300])
+        return "failed"
+
     def _after(
         self,
         approval_id: int,
@@ -1163,6 +1175,8 @@ class Publisher:
                 return "skipped"
             if connectors.halted(conn):
                 return connectors.HALTED
+            if (stale := connectors.stale(conn, row, self.clock.now())) is not None:  # 0.42.2 (M2): too old to begin
+                return self._lapsed(conn, row, "Not changed", stale, stamp)
             edit: Edit | None = None
             try:
                 edit = edit_from_action(row["action"])
