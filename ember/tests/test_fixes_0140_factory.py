@@ -24,12 +24,12 @@ from app.agent import library, netguard, tools
 from app.agent.sandbox import Jail
 from app.integrations import etsy, qa
 from app.products import checks, images, make, sheets
-from tests.test_etsy import a_listing, listed
-from tests.test_owner_loop import owner
-from tests.test_product_tools import ctx_for, make_agent
-from tests.test_products import CV, jail, spec
-from tests.test_workshop import a_docx, with_parts
-from tests.test_workshop_checks import a_pdf_with, stream
+from tests.channels.test_etsy import a_listing, listed
+from tests.owner.test_owner_loop import owner
+from tests.products.test_product_tools import ctx_for, make_agent
+from tests.products.test_products import CV, jail, spec
+from tests.tools.test_workshop import a_docx, with_parts
+from tests.tools.test_workshop_checks import a_pdf_with, stream
 
 A3 = (3510, 4950)  # Printify's A3 print area: 17.4 MP
 
@@ -94,7 +94,7 @@ def test_look_and_workspace_read_show_a_print_size_poster(data_dir: Path) -> Non
 
 
 def test_a_print_size_poster_can_be_proposed_to_printify(data_dir: Path) -> None:
-    from tests.test_printify import a_proposal, listed, pod_context, read_catalog
+    from tests.channels.test_printify import a_proposal, listed, pod_context, read_catalog
 
     agent, _ = listed(data_dir)
     ctx = pod_context(agent)
@@ -308,7 +308,7 @@ def test_a_page_in_other_digits_is_refused_clearly(tmp_path: Path, page: str) ->
 
 def test_copies_of_one_photo_are_no_qa_fix_and_leave_the_listing_short(data_dir: Path) -> None:
     from app.integrations import etsy_publisher
-    from tests.test_policy import a_milestone, change, reject, work_on
+    from tests.owner.test_policy import a_milestone, change, reject, work_on
 
     agent, listing_id = listed(data_dir)
     ws = agent.roots()[0]

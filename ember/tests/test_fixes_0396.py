@@ -37,11 +37,11 @@ from app.agent.service import Agent  # noqa: E402
 from app.economy import metering  # noqa: E402
 from app.integrations import publish_queue  # noqa: E402
 from app.products import markup, pdf, word  # noqa: E402
-from tests.test_agent import rows  # noqa: E402
-from tests.test_fixes_0280 import lined, now  # noqa: E402
-from tests.test_fixes_0300 import judged  # noqa: E402
-from tests.test_fixes_0340 import ALL, keep  # noqa: E402
-from tests.test_fixes_0353 import CRITIC, PINS, critic, launched  # noqa: E402
+from tests.cycle.test_agent import rows  # noqa: E402
+from tests.learning.test_weekly_look import judged  # noqa: E402
+from tests.plan.test_cycle_line import lined, now  # noqa: E402
+from tests.plan.test_marketing_order import CRITIC, PINS, critic, launched  # noqa: E402
+from tests.plan.test_plan_tree import ALL, keep  # noqa: E402
 from tests.test_fixes_0391 import critic_step, page_texts, seen  # noqa: E402
 
 # --- 1. only work cuts the agent's sleep ---

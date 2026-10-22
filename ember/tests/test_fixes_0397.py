@@ -24,16 +24,16 @@ pytest.importorskip("httpx2")
 
 from app.integrations import executor, mail, mailstore  # noqa: E402
 from app.integrations.optout import opt_out  # noqa: E402
-from tests.test_agent import rows  # noqa: E402
-from tests.test_etsy import call  # noqa: E402
-from tests.test_executor import FakeSMTP, approval, live_approved  # noqa: E402
-from tests.test_executor import smtp as smtp  # noqa: E402, F401 - the fixture
-from tests.test_fixes_0280 import lined, working  # noqa: E402
-from tests.test_fixes_0340 import BOOK, TRACKER, keep, project  # noqa: E402
-from tests.test_fixes_0393 import AGAIN, LATER, hold  # noqa: E402
-from tests.test_fixes_0395 import ANN, STOP_DE, from_ann, sent_to, with_photo  # noqa: E402
-from tests.test_mail import FakeIMAP  # noqa: E402
-from tests.test_mail import imap as imap  # noqa: E402, F401 - the fixture
+from tests.channels.test_etsy import call  # noqa: E402
+from tests.cycle.test_agent import rows  # noqa: E402
+from tests.mail.test_executor import FakeSMTP, approval, live_approved  # noqa: E402
+from tests.mail.test_executor import smtp as smtp  # noqa: E402, F401 - the fixture
+from tests.mail.test_mail import FakeIMAP  # noqa: E402
+from tests.mail.test_mail import imap as imap  # noqa: E402, F401 - the fixture
+from tests.mail.test_mail_parsing import ANN, STOP_DE, from_ann, sent_to, with_photo  # noqa: E402
+from tests.plan.test_cycle_line import lined, working  # noqa: E402
+from tests.plan.test_owner_holds import AGAIN, LATER, hold  # noqa: E402
+from tests.plan.test_plan_tree import BOOK, TRACKER, keep, project  # noqa: E402
 
 # --- 1. a stop below a long thread (4.2) ---
 

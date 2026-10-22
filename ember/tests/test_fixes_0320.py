@@ -24,19 +24,13 @@ from app.agent.fake_llm import FakeTransport  # noqa: E402
 from app.integrations import bluesky, etsy  # noqa: E402
 from app.integrations.bluesky import FakeBluesky  # noqa: E402
 from app.products import sheets  # noqa: E402
-from tests import (  # noqa: E402
-    test_bluesky,
-    test_knockouts,
-    test_pinterest,
-    test_printify,
-    test_venture_stages,
-    test_ventures,
-)
+from tests.channels import test_bluesky, test_pinterest, test_printify  # noqa: E402
+from tests.channels.test_etsy import call, shop_context, started  # noqa: E402
+from tests.cycle.test_agent import ROOMY, rows  # noqa: E402
+from tests.cycle.test_loop_shapes import run  # noqa: E402
+from tests.owner.test_owner_loop import owner  # noqa: E402
 from tests.queue_helpers import slot_comes  # noqa: E402
-from tests.test_agent import ROOMY, rows  # noqa: E402
-from tests.test_etsy import call, shop_context, started  # noqa: E402
-from tests.test_loop_shapes import run  # noqa: E402
-from tests.test_owner_loop import owner  # noqa: E402
+from tests.ventures import test_knockouts, test_venture_stages, test_ventures  # noqa: E402
 
 EVERYWHERE = ROOMY.model_copy(update={"printify_enabled": True, "bluesky_enabled": True, "pinterest_enabled": True})
 POSTER_TITLE = "Minimalist mountain poster, matte print"  # test_printify.a_proposal's

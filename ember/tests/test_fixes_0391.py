@@ -37,17 +37,17 @@ from app.agent.sandbox import Jail  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from app.products import make, markup, pdf  # noqa: E402
-from tests.test_agent import rows  # noqa: E402
-from tests.test_etsy import call  # noqa: E402
-from tests.test_fixes_0161 import backed_pod, first_test_of, grade, on, warn  # noqa: E402
-from tests.test_fixes_0280 import IDLE, cycle, lined, now, texts, working  # noqa: E402
-from tests.test_fixes_0300 import judged  # noqa: E402
-from tests.test_fixes_0340 import TRACKER, keep, project  # noqa: E402
-from tests.test_fixes_0350 import WORK, plan_step, step_id  # noqa: E402
-from tests.test_fixes_0353 import CRITIC, critic, launched  # noqa: E402
-from tests.test_fixes_0360 import explored, exploring_agent  # noqa: E402
-from tests.test_owner_loop import owner  # noqa: E402
-from tests.test_ventures import DROPSHIPPING, JOURNAL  # noqa: E402
+from tests.channels.test_etsy import call  # noqa: E402
+from tests.cycle.test_agent import rows  # noqa: E402
+from tests.learning.test_weekly_look import judged  # noqa: E402
+from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.plan.test_cycle_line import IDLE, cycle, lined, now, texts, working  # noqa: E402
+from tests.plan.test_exploring import explored, exploring_agent  # noqa: E402
+from tests.plan.test_marketing_order import CRITIC, critic, launched  # noqa: E402
+from tests.plan.test_plan_tree import TRACKER, keep, project  # noqa: E402
+from tests.plan.test_tree_steers import WORK, plan_step, step_id  # noqa: E402
+from tests.ventures.test_first_test_grace import backed_pod, first_test_of, grade, on, warn  # noqa: E402
+from tests.ventures.test_ventures import DROPSHIPPING, JOURNAL  # noqa: E402
 
 # --- 1. a book's pages to fill in ---
 

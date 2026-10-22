@@ -36,13 +36,13 @@ from app.agent.fake_llm import FakeTransport, Reply, ToolCalls  # noqa: E402
 from app.integrations import bluesky, etsy, site_publisher  # noqa: E402
 from app.integrations.bluesky import FakeBluesky  # noqa: E402
 from app.products import images, make, sheets  # noqa: E402
+from tests.channels.test_bluesky import SITE, a_post, listed, post_context, post_rows  # noqa: E402
+from tests.channels.test_etsy import call, shop_context  # noqa: E402
+from tests.cycle.test_agent import rows  # noqa: E402
+from tests.cycle.test_loop_shapes import run  # noqa: E402
+from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.plan.test_roadmap import plan  # noqa: E402
 from tests.queue_helpers import slot_comes  # noqa: E402
-from tests.test_agent import rows  # noqa: E402
-from tests.test_bluesky import SITE, a_post, listed, post_context, post_rows  # noqa: E402
-from tests.test_etsy import call, shop_context  # noqa: E402
-from tests.test_loop_shapes import run  # noqa: E402
-from tests.test_owner_loop import owner  # noqa: E402
-from tests.test_roadmap import plan  # noqa: E402
 
 
 def blog_post(agent: Any, slug: str, title: str = "Der Wochenplan") -> None:
@@ -236,7 +236,7 @@ def test_etsy_listing_shows_etsys_numbers_and_the_printify_listings(data_dir: Pa
 
 
 def _listed_shop(data_dir: Path) -> tuple[Any, int]:
-    from tests.test_etsy import listed as etsy_listed  # noqa: PLC0415
+    from tests.channels.test_etsy import listed as etsy_listed  # noqa: PLC0415
 
     return etsy_listed(data_dir)
 
@@ -505,7 +505,7 @@ def test_a_range_on_another_sheet_that_misses_its_data_is_reported() -> None:
 
 
 def test_make_spreadsheet_says_where_the_data_rows_are(tmp_path: Path) -> None:
-    from tests.test_products import jail  # noqa: PLC0415
+    from tests.products.test_products import jail  # noqa: PLC0415
 
     workspace = jail(tmp_path)
     workspace.write("budget.json", json.dumps(BUDGET))
@@ -586,7 +586,7 @@ def test_markup_naming_no_field_of_the_tool_is_left_alone() -> None:
 
 
 def test_a_focus_project_of_another_venture_doesnt_take_the_cycles_listing(data_dir: Path) -> None:
-    from tests.test_etsy import listed as etsy_listed  # noqa: PLC0415
+    from tests.channels.test_etsy import listed as etsy_listed  # noqa: PLC0415
 
     agent, _ = etsy_listed(data_dir)
     ctx = shop_context(agent)
@@ -647,7 +647,7 @@ def test_a_long_reason_is_cut_not_refused(data_dir: Path) -> None:
 
 
 def test_a_project_leaving_a_backed_venture_says_its_test_needs_one(data_dir: Path) -> None:
-    from tests.test_fixes_0161 import backed_pod  # noqa: PLC0415
+    from tests.ventures.test_first_test_grace import backed_pod  # noqa: PLC0415
 
     agent, pod = backed_pod(data_dir)
     ctx = shop_context(agent)

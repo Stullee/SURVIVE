@@ -28,21 +28,16 @@ from app.agent.fake_llm import Fail, FakeTransport, Reply  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from app.economy.metering import NotSent  # noqa: E402
 from app.integrations import executor  # noqa: E402
-from tests.test_agent import rows  # noqa: E402
-from tests.test_agent import tools as calls  # noqa: E402
-from tests.test_etsy import (  # noqa: E402
-    call,
-    listed,
-    shop_context,
-    started,  # noqa: E402
-)
-from tests.test_fixes_0140_unlock_safety import answer, status_of  # noqa: E402
-from tests.test_loop_shapes import run  # noqa: E402
-from tests.test_mail import mail_cycle  # noqa: E402
-from tests.test_never import a_use, approve_as_code  # noqa: E402
-from tests.test_owner_loop import owner  # noqa: E402
-from tests.test_policy import a_milestone  # noqa: E402
-from tests.test_review import kinds, next_day  # noqa: E402
+from tests.channels.test_etsy import call, listed, shop_context, started  # noqa: E402
+from tests.cycle.test_agent import rows  # noqa: E402
+from tests.cycle.test_agent import tools as calls  # noqa: E402
+from tests.cycle.test_loop_shapes import run  # noqa: E402
+from tests.learning.test_review import kinds, next_day  # noqa: E402
+from tests.mail.test_mail import mail_cycle  # noqa: E402
+from tests.owner.test_never import a_use, approve_as_code  # noqa: E402
+from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.owner.test_policy import a_milestone  # noqa: E402
+from tests.owner.test_unlock_safety import answer, status_of  # noqa: E402
 
 # --- 1. the daily review's attempts ---
 

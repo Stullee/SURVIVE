@@ -16,8 +16,8 @@ from app.agent.service import Agent
 from app.db import MigrationError, discover_migrations, migrate
 from app.economy.clock import from_iso, to_iso
 from app.integrations import etsy_publisher
-from tests.test_agent import make_agent, plan, rows
-from tests.test_owner_api import grant, post
+from tests.cycle.test_agent import make_agent, plan, rows
+from tests.owner.test_owner_api import grant, post
 
 
 def decided(executor: str | None) -> dict[str, Any]:

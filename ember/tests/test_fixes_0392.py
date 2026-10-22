@@ -27,13 +27,13 @@ pytest.importorskip("httpx2")
 from app.agent import prompts, tools, workshop  # noqa: E402
 from app.products import markup, pdf  # noqa: E402
 from app.version import app_version  # noqa: E402
-from tests.test_agent import rows  # noqa: E402
-from tests.test_etsy import call  # noqa: E402
-from tests.test_fixes_0280 import lined, working  # noqa: E402
-from tests.test_fixes_0340 import TRACKER, keep, project  # noqa: E402
-from tests.test_fixes_0350 import plan_step, step_id  # noqa: E402
-from tests.test_product_tools import png  # noqa: E402
-from tests.test_rule_audit import SETTINGS, every_channel  # noqa: E402
+from tests.channels.test_etsy import call  # noqa: E402
+from tests.cycle.test_agent import rows  # noqa: E402
+from tests.cycle.test_rule_audit import SETTINGS, every_channel  # noqa: E402
+from tests.plan.test_cycle_line import lined, working  # noqa: E402
+from tests.plan.test_plan_tree import TRACKER, keep, project  # noqa: E402
+from tests.plan.test_tree_steers import plan_step, step_id  # noqa: E402
+from tests.products.test_product_tools import png  # noqa: E402
 
 # --- 1. a book's pages to fill in ---
 

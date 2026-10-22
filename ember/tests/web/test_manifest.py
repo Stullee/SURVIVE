@@ -1,0 +1,239 @@
+"""The app manifest, translations, changelog and container files stay consistent.
+
+These tests also pin down the security-relevant manifest settings from the
+spec, so a later change can't quietly widen what the container may do.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from pathlib import Path
+
+import yaml
+
+from app.config import DEFAULT_PRICE_TABLE, Settings
+from app.version import read_version
+
+APP_DIR = Path(__file__).resolve().parents[2]
+REPO_DIR = APP_DIR.parent
+MANIFEST = yaml.safe_load((APP_DIR / "config.yaml").read_text(encoding="utf-8"))
+
+
+def test_required_keys() -> None:
+    for key in ("name", "version", "slug", "description", "arch"):
+        assert MANIFEST[key], key
+    assert MANIFEST["slug"] == "ember"
+    assert sorted(MANIFEST["arch"]) == ["aarch64", "amd64"]
+    assert isinstance(MANIFEST["version"], str)
+
+
+ALLOWED_KEYS = {
+    "name",
+    "version",
+    "slug",
+    "description",
+    "url",
+    "arch",
+    "init",
+    "startup",
+    "boot",
+    "ingress",
+    "ingress_port",
+    "panel_icon",
+    "panel_title",
+    "homeassistant_api",
+    "hassio_api",
+    "host_network",
+    "backup",
+    "backup_exclude",  # 0.42.0: only the database's copies from before its upgrades (tests/test_disk_space.py)
+    "watchdog",
+    "options",
+    "schema",
+}
+
+
+def test_least_privilege() -> None:
+    """An allowlist: any new manifest key (a new privilege, device, mapping...) must be reviewed here."""
+    assert set(MANIFEST) <= ALLOWED_KEYS, set(MANIFEST) - ALLOWED_KEYS
+    assert MANIFEST["ingress"] is True
+    assert MANIFEST["ingress_port"] == 8099
+    assert MANIFEST["homeassistant_api"] is False
+    assert MANIFEST["hassio_api"] is False
+    assert MANIFEST.get("host_network", False) is False
+    assert MANIFEST["init"] is False  # s6-overlay v3 must be PID 1
+    assert MANIFEST.get("panel_admin", True) is True  # only admins get the control panel
+    assert MANIFEST["backup"] == "cold"  # a consistent copy of the SQLite database
+    # 0.42.0: never the database, the options, the tokens or the workspace (what tests/test_disk_space.py checks)
+    assert MANIFEST.get("backup_exclude", []) == ["backups/ember-schema*.db"]
+
+
+def test_no_build_yaml_and_local_build() -> None:
+    assert not (APP_DIR / "build.yaml").exists()  # deprecated by Home Assistant
+    assert "image" not in MANIFEST  # built on the device from the Dockerfile
+
+
+def test_watchdog_uses_health_endpoint() -> None:
+    assert MANIFEST["watchdog"] == "http://[HOST]:[PORT:8099]/api/health"
+
+
+def test_options_match_settings_defaults() -> None:
+    defaults = Settings()
+    options = MANIFEST["options"]
+    schema = MANIFEST["schema"]
+    fields = set(Settings.model_fields)
+    # Every schema key is a setting; every setting is in the schema.
+    assert set(schema) == fields
+    # Only the optional options ("?") have no default: the API key, the mailbox's address, password and owner, the
+    # workshop's model (the worker model when empty), the strategy and research models (0.12.0: the planner and the
+    # worker model when empty), the Etsy app's keystring and shared secret, and (0.13.0) the Pinterest app's id and
+    # secret, the Printify token and the website's texts (the owner's data for its Impressum among them), (0.14.0)
+    # the blog's SFTP login, (0.19.0) the Bluesky account's handle and app password, (0.22.1) the mail provider's
+    # authserv-id, and (0.25.0) the author name of the owner's KDP books.
+    optional = {key for key, rule in schema.items() if isinstance(rule, str) and rule.endswith("?")}
+    assert optional == {
+        "anthropic_api_key",
+        "email_address",
+        "email_password",
+        "email_owner_name",
+        "email_authserv_id",
+        "workshop_model",
+        "strategy_model",
+        "research_model",
+        "etsy_keystring",
+        "etsy_shared_secret",
+        "pinterest_app_id",
+        "pinterest_app_secret",
+        "bluesky_handle",
+        "bluesky_app_password",
+        "printify_api_token",
+        "site_name",
+        "site_url",
+        "site_owner_name",
+        "site_address",
+        "site_email",
+        "site_phone",
+        "site_vat_id",
+        "site_host",
+        "blog_sftp_host",
+        "blog_sftp_user",
+        "blog_sftp_password",
+        "blog_sftp_host_key",
+        "blog_sftp_folder",
+        "kdp_author",
+    }
+    assert set(options) == fields - optional
+    assert schema["anthropic_api_key"] == schema["email_password"] == schema["etsy_shared_secret"] == "password?"
+    assert schema["pinterest_app_secret"] == schema["printify_api_token"] == schema["blog_sftp_password"] == "password?"
+    assert schema["bluesky_app_password"] == "password?"
+    for key, value in options.items():
+        if key == "price_table":
+            continue
+        if key == "owner_user_ids":  # a list in the options, a tuple in the (frozen) settings
+            assert tuple(value) == defaults.owner_user_ids == ()
+            continue
+        assert value == getattr(defaults, key), key
+    assert [{k: float(v) if k != "model" else v for k, v in row.items()} for row in options["price_table"]] == [
+        p.model_dump() for p in DEFAULT_PRICE_TABLE
+    ]
+
+
+def test_schema_bounds_match_settings() -> None:
+    """The Supervisor's schema bounds and the app's own validation must agree. 0.22.1: an optional option's too
+    (``str(,300)?``): they were skipped."""
+    schema = MANIFEST["schema"]
+    pattern = re.compile(r"^(int|float|str)\((-?[\d.]*),(-?[\d.]*)\)\??$")
+    for key, rule in schema.items():
+        if not isinstance(rule, str):
+            continue
+        match = pattern.match(rule)
+        if not match:
+            continue
+        kind, low, high = match.groups()
+        metadata = Settings.model_fields[key].metadata
+        bounds = {type(m).__name__: m for m in metadata}
+        if kind == "str":
+            assert (bounds["MinLen"].min_length if "MinLen" in bounds else 0) == int(low or 0), key
+            assert bounds["MaxLen"].max_length == int(high), key
+        else:
+            assert float(bounds["Ge"].ge) == float(low), key
+            assert float(bounds["Le"].le) == float(high), key
+
+
+def test_translations_cover_every_option() -> None:
+    translations = yaml.safe_load((APP_DIR / "translations" / "en.yaml").read_text(encoding="utf-8"))
+    configuration = translations["configuration"]
+    assert set(configuration) == set(MANIFEST["schema"])
+    for key, entry in configuration.items():
+        assert entry["name"] and entry["description"], key
+    assert set(configuration["price_table"]["fields"]) == set(MANIFEST["schema"]["price_table"][0])
+
+
+def test_changelog_matches_version() -> None:
+    changelog = (APP_DIR / "CHANGELOG.md").read_text(encoding="utf-8")
+    headings = re.findall(r"^## (\S+)$", changelog, flags=re.MULTILINE)
+    assert headings, "CHANGELOG.md needs '## <version>' headings"
+    assert headings[0] == MANIFEST["version"]
+    assert read_version(APP_DIR / "config.yaml") == MANIFEST["version"]
+
+
+def test_the_reddit_request_states_the_commercial_purpose() -> None:
+    """0.12.0: DOCS had the owner ask Reddit for access as "a personal, non-commercial project" for an agent whose
+    purpose is to earn money; honesty comes first, toward platforms too."""
+    docs = " ".join((APP_DIR / "DOCS.md").read_text(encoding="utf-8").split())
+    template = docs[docs.index("> I would like Data API access") :][:1_400].replace(" > ", " ")
+    assert "for a small commercial project" in template and "non-commercial" not in template
+    assert "written by an AI agent and posted after human review" in template
+    assert f"ember-homeassistant:v{MANIFEST['version']}" in template
+
+
+def test_supervisor_finds_exactly_one_app_manifest() -> None:
+    """The Supervisor scans the whole repository for config.yaml/.yml/.json files."""
+    found = []
+    for path in REPO_DIR.rglob("config.*"):
+        parts = path.relative_to(REPO_DIR).parts
+        if any(p.startswith(".") or p == "rootfs" for p in parts):
+            continue
+        if path.suffix in (".yaml", ".yml", ".json"):
+            found.append(path)
+    assert found == [APP_DIR / "config.yaml"]
+
+
+def test_repository_file() -> None:
+    repository = yaml.safe_load((REPO_DIR / "repository.yaml").read_text(encoding="utf-8"))
+    assert repository["name"]
+
+
+def test_service_scripts_are_executable() -> None:
+    service = APP_DIR / "rootfs" / "etc" / "s6-overlay" / "s6-rc.d" / "ember"
+    assert (service / "type").read_text().strip() == "longrun"
+    for script in ("run", "finish"):
+        assert os.access(service / script, os.X_OK), script
+    assert "exec s6-setuidgid ember python3 -m app" in (service / "run").read_text()
+
+
+def test_service_is_in_the_user_bundle() -> None:
+    """0.41.0: s6-overlay 3.2.3.2 reads the user bundle from user-bundles.d, and ignores that folder (with a
+    deprecation warning) while an s6-rc.d/user folder exists. Older s6-overlays read only s6-rc.d/user, so the base
+    image must be docker-base 2026.10.0 or newer, the first with 3.2.3.2 (2026.08.0 has 3.2.3.0)."""
+    s6 = APP_DIR / "rootfs" / "etc" / "s6-overlay"
+    assert (s6 / "user-bundles.d" / "user" / "contents.d" / "ember").exists()
+    assert not (s6 / "s6-rc.d" / "user").exists()
+    dockerfile = (APP_DIR / "Dockerfile").read_text(encoding="utf-8")
+    release = re.search(r"^ARG BUILD_FROM=\S+-(\d{4})\.(\d{2})\.\d+$", dockerfile, flags=re.MULTILINE)
+    assert release and (int(release[1]), int(release[2])) >= (2026, 10)
+
+
+def test_dockerfile_pins_official_base_image() -> None:
+    dockerfile = (APP_DIR / "Dockerfile").read_text(encoding="utf-8")
+    match = re.search(r"^ARG BUILD_FROM=(\S+)$", dockerfile, flags=re.MULTILINE)
+    assert match
+    assert re.fullmatch(r"ghcr\.io/home-assistant/base-python:3\.12-alpine[\d.]+-\d{4}\.\d{2}\.\d+", match.group(1))
+    assert "COPY config.yaml CHANGELOG.md" in dockerfile
+
+
+def test_requirements_are_pinned() -> None:
+    for line in (APP_DIR / "requirements.txt").read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            assert re.fullmatch(r"[A-Za-z0-9_.\-]+==[\w.]+", line), line

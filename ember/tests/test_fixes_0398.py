@@ -29,6 +29,8 @@ from app.economy import metering  # noqa: E402
 from app.economy.metering import Completed  # noqa: E402
 from app.economy.service import Economy  # noqa: E402
 from app.products import markup, pdf  # noqa: E402
+from tests.channels.test_etsy import call  # noqa: E402
+from tests.cycle.test_agent import rows  # noqa: E402
 from tests.economy_helpers import (  # noqa: E402
     FakeClock,
     ScriptedTransport,
@@ -38,17 +40,15 @@ from tests.economy_helpers import (  # noqa: E402
     request,
     restart,
 )
-from tests.test_agent import rows  # noqa: E402
-from tests.test_etsy import call  # noqa: E402
-from tests.test_fixes_0280 import lined, now, working  # noqa: E402
-from tests.test_fixes_0340 import ALL, TRACKER, keep, project  # noqa: E402
-from tests.test_fixes_0340 import BOOK as BOOK_TITLE  # noqa: E402
-from tests.test_fixes_0350 import plan_step, steered  # noqa: E402
-from tests.test_fixes_0351 import promise  # noqa: E402
-from tests.test_fixes_0353 import critic, launched  # noqa: E402
-from tests.test_fixes_0376 import asked, candidate, closed_without_proposing, cycles, decided  # noqa: E402
-from tests.test_fixes_0376 import waits as waits_on  # noqa: E402
-from tests.test_fixes_0393 import first_marketing_out, waits, weekly  # noqa: E402
+from tests.plan.test_cycle_line import lined, now, working  # noqa: E402
+from tests.plan.test_marketing_order import critic, launched  # noqa: E402
+from tests.plan.test_owner_holds import first_marketing_out, waits, weekly  # noqa: E402
+from tests.plan.test_plan_tree import ALL, TRACKER, keep, project  # noqa: E402
+from tests.plan.test_plan_tree import BOOK as BOOK_TITLE  # noqa: E402
+from tests.plan.test_promises import promise  # noqa: E402
+from tests.plan.test_step_brake import asked, candidate, closed_without_proposing, cycles, decided  # noqa: E402
+from tests.plan.test_step_brake import waits as waits_on  # noqa: E402
+from tests.plan.test_tree_steers import plan_step, steered  # noqa: E402
 from tests.test_fixes_0396 import BOOK, steer, week  # noqa: E402
 
 KNOWN = 1_000 * 2 + 200 * 10  # what each call below costs at the standard price: 1,000 in and 200 out on Sonnet 5

@@ -24,15 +24,16 @@ from app.agent import plan as plan_tree  # noqa: E402
 from app.agent.fake_llm import FakeTransport, Overrun, Reply, ToolCalls, request_kind  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.economy.metering import WORKSHOP  # noqa: E402
-from tests import test_fixes_0140_money_guard, test_fixes_0320  # noqa: E402
+from tests.channels.test_etsy import call, started  # noqa: E402
+from tests.cycle.test_agent import rows  # noqa: E402
+from tests.cycle.test_loop_shapes import run  # noqa: E402
 from tests.economy_helpers import FakeClock, make_economy  # noqa: E402
-from tests.test_agent import rows  # noqa: E402
-from tests.test_etsy import call, started  # noqa: E402
-from tests.test_fixes_0280 import cycle, lined, milestone, now, take, texts, working  # noqa: E402
-from tests.test_fixes_0300 import judged  # noqa: E402
-from tests.test_loop_shapes import run  # noqa: E402
-from tests.test_obligations import forcing  # noqa: E402
-from tests.test_ventures import JOURNAL  # noqa: E402
+from tests.learning.test_weekly_look import judged  # noqa: E402
+from tests.money.test_money_guard import llm_calls, workshop  # noqa: E402
+from tests.plan.test_cycle_line import cycle, lined, milestone, now, take, texts, working  # noqa: E402
+from tests.plan.test_obligations import forcing  # noqa: E402
+from tests.test_fixes_0320 import EVERYWHERE  # noqa: E402
+from tests.ventures.test_ventures import JOURNAL  # noqa: E402
 
 
 def day(agent: Any, days: int) -> str:
@@ -163,13 +164,13 @@ def test_listing_edits_are_reach_but_not_the_visitors_a_fair_test_needs(
 
 def test_the_daily_review_hears_which_channels_are_ready(data_dir: Path) -> None:
     fake = FakeTransport()
-    agent, _ = run(data_dir, fake, cycles=1, settings=test_fixes_0320.EVERYWHERE)
+    agent, _ = run(data_dir, fake, cycles=1, settings=EVERYWHERE)
     agent.clock.advance(days=1)
     since = len(fake.sent)
     agent.run_cycle("schedule")
     [sent] = [r for r in list(fake.sent)[since:] if request_kind(r) == "review"]
     card = sent["messages"][0]["content"][0]["text"]
-    settings = test_fixes_0320.EVERYWHERE
+    settings = EVERYWHERE
     assert (
         f"CHANNELS READY (their tools work now): Pinterest: ember-dry-run, at most {settings.pinterest_pins_per_day}"
         f" pins a day; Bluesky: 0 followers, no post live, at most {settings.bluesky_posts_per_day} posts a day;"
@@ -296,10 +297,10 @@ def test_a_workshop_run_holds_what_the_day_has_left_never_less_than_its_worst_ca
     economy = make_economy(data_dir, settings, clock=FakeClock())
     model = economy.metered(FakeTransport(script=[Overrun(), Overrun()]))
     first = model.open_cycle("test")
-    model.call(first, WORKSHOP, test_fixes_0140_money_guard.workshop(settings))  # a run like #423
+    model.call(first, WORKSHOP, workshop(settings))  # a run like #423
     model.close_cycle(first)
     cycle = model.open_cycle("test")
-    asked = test_fixes_0140_money_guard.workshop(settings)
+    asked = workshop(settings)
     full, quote, money = (
         model.reservation(asked, WORKSHOP),
         model.quote(asked, WORKSHOP),
@@ -309,4 +310,4 @@ def test_a_workshop_run_holds_what_the_day_has_left_never_less_than_its_worst_ca
     held = model.reservation(asked, WORKSHOP, room=money)
     assert held == money and model.reservation(asked, WORKSHOP, room=1) == quote
     model.call(cycle, WORKSHOP, asked, hold=held)  # admitted: the guard holds what the workshop held
-    assert test_fixes_0140_money_guard.llm_calls(economy.db)[-1]["estimate_micros"] == held
+    assert llm_calls(economy.db)[-1]["estimate_micros"] == held

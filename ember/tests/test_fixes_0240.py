@@ -26,22 +26,18 @@ from app.agent.fake_llm import FakeTransport, Plan, Reply, ToolCalls, request_ki
 from app.economy.clock import to_iso  # noqa: E402
 from app.integrations import bluesky  # noqa: E402
 from app.products import make  # noqa: E402
-from tests.test_agent import make_agent, plan, rows, text  # noqa: E402
-from tests.test_agent import tools as calls  # noqa: E402
-from tests.test_bluesky import WORDS, a_post, post_context, posted  # noqa: E402
-from tests.test_etsy import (  # noqa: E402
-    call,
-    shop_context,
-    started,  # noqa: E402
-)
+from tests.channels.test_bluesky import WORDS, a_post, post_context, posted  # noqa: E402
+from tests.channels.test_etsy import call, shop_context, started  # noqa: E402
+from tests.channels.test_pinterest import PINNING  # noqa: E402
+from tests.cycle.test_agent import make_agent, plan, rows, text  # noqa: E402
+from tests.cycle.test_agent import tools as calls  # noqa: E402
+from tests.cycle.test_loop_shapes import JOURNAL, PLAN, run  # noqa: E402
+from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.plan.test_roadmap import plan as fake_plan  # noqa: E402
+from tests.products.test_products import jail  # noqa: E402
 from tests.test_fixes_0140_channels import not_set_up  # noqa: E402
-from tests.test_loop_shapes import JOURNAL, PLAN, run  # noqa: E402
-from tests.test_owner_loop import owner  # noqa: E402
-from tests.test_pinterest import PINNING  # noqa: E402
-from tests.test_products import jail  # noqa: E402
-from tests.test_roadmap import plan as fake_plan  # noqa: E402
-from tests.test_ventures import NUMBERS  # noqa: E402
-from tests.test_workshop import png, result, workshop_answer, workshop_cycle  # noqa: E402
+from tests.tools.test_workshop import png, result, workshop_answer, workshop_cycle  # noqa: E402
+from tests.ventures.test_ventures import NUMBERS  # noqa: E402
 
 
 def now(agent: Any) -> str:

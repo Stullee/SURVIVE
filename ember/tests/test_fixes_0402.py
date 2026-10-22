@@ -32,24 +32,24 @@ from app.agent import plan, review, templates, tools, weights  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from app.integrations import kdp  # noqa: E402
 from app.products import markup, pagecheck, pdf, word  # noqa: E402
-from tests.test_agent import rows  # noqa: E402
-from tests.test_etsy import call  # noqa: E402
-from tests.test_fixes_0140_privacy import state_of  # noqa: E402
-from tests.test_fixes_0280 import cycle, lined, now, working  # noqa: E402
-from tests.test_fixes_0300 import judged  # noqa: E402
-from tests.test_fixes_0340 import ALL, TRACKER, keep, project, request  # noqa: E402
-from tests.test_fixes_0350 import steered  # noqa: E402
-from tests.test_fixes_0351 import promise  # noqa: E402
-from tests.test_fixes_0353 import launched  # noqa: E402
-from tests.test_fixes_0376 import made as used  # noqa: E402
+from tests.channels.test_etsy import call  # noqa: E402
+from tests.cycle.test_agent import rows  # noqa: E402
+from tests.learning.test_weekly_look import judged  # noqa: E402
+from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.plan.test_cycle_line import cycle, lined, now, working  # noqa: E402
+from tests.plan.test_marketing_order import launched  # noqa: E402
+from tests.plan.test_plan_tree import ALL, TRACKER, keep, project, request  # noqa: E402
+from tests.plan.test_promises import promise  # noqa: E402
+from tests.plan.test_step_brake import made as used  # noqa: E402
+from tests.plan.test_tree_steers import steered  # noqa: E402
+from tests.products.test_kdp import ebook, next_reply, proposed, publishing, spec  # noqa: E402
+from tests.products.test_kdp import project as book_line  # noqa: E402
+from tests.products.test_kdp_pages import AI_LINE, SETTINGS, book, check, haushaltsbuch, propose, rendered  # noqa: E402
+from tests.products.test_kdp_pages import QA as PAGES_QA  # noqa: E402
 from tests.test_fixes_0396 import steer  # noqa: E402
 from tests.test_fixes_0398 import move  # noqa: E402
 from tests.test_fixes_0401 import made, older  # noqa: E402
-from tests.test_kdp import ebook, next_reply, proposed, publishing, spec  # noqa: E402
-from tests.test_kdp import project as book_line  # noqa: E402
-from tests.test_kdp_pages import AI_LINE, SETTINGS, book, check, haushaltsbuch, propose, rendered  # noqa: E402
-from tests.test_kdp_pages import QA as PAGES_QA  # noqa: E402
-from tests.test_owner_loop import owner  # noqa: E402
+from tests.web.test_report_privacy import state_of  # noqa: E402
 
 COACHES = "Commercial licence pack for coaches"
 

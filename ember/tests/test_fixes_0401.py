@@ -27,18 +27,18 @@ from app import diagnostics
 from app.agent import loop, plan, quality, tools, weights
 from app.agent.sandbox import Jail
 from app.products import markup, pagecheck, pdf
-from tests.test_agent import ROOMY, make_agent, rows
-from tests.test_decision_wakes import asks_and_sleeps
-from tests.test_etsy import call, listed, shop_context
-from tests.test_fixes_0280 import lined, now
-from tests.test_fixes_0340 import BOOK as BOOK_TITLE
-from tests.test_fixes_0340 import TRACKER, keep
-from tests.test_fixes_0340 import project as line
-from tests.test_fixes_0350 import steered
-from tests.test_fixes_0351 import promise
-from tests.test_fixes_0376 import asked, candidate, closed_without_proposing, cycles, decided
-from tests.test_kdp import project, publishing
-from tests.test_kdp_pages import AI_LINE, SETTINGS, book, check, haushaltsbuch, month, rendered, week
+from tests.channels.test_etsy import call, listed, shop_context
+from tests.cycle.test_agent import ROOMY, make_agent, rows
+from tests.cycle.test_decision_wakes import asks_and_sleeps
+from tests.plan.test_cycle_line import lined, now
+from tests.plan.test_plan_tree import BOOK as BOOK_TITLE
+from tests.plan.test_plan_tree import TRACKER, keep
+from tests.plan.test_plan_tree import project as line
+from tests.plan.test_promises import promise
+from tests.plan.test_step_brake import asked, candidate, closed_without_proposing, cycles, decided
+from tests.plan.test_tree_steers import steered
+from tests.products.test_kdp import project, publishing
+from tests.products.test_kdp_pages import AI_LINE, SETTINGS, book, check, haushaltsbuch, month, rendered, week
 
 # --- 1. the check draws a week ---
 

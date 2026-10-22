@@ -28,12 +28,7 @@ from app.integrations.pinterest_connection import PinterestConnection  # noqa: E
 from app.integrations.pinterest_live import DEFAULT_REFRESH_DAYS, connect  # noqa: E402
 from app.integrations.printify import PrintifyError  # noqa: E402
 from app.products import site  # noqa: E402
-from tests.test_agent import rows  # noqa: E402
-from tests.test_library import GUIDE, a_pdf  # noqa: E402
-from tests.test_loop_shapes import run  # noqa: E402
-from tests.test_owner_api import post  # noqa: E402
-from tests.test_owner_loop import owner  # noqa: E402
-from tests.test_pinterest import (  # noqa: E402
+from tests.channels.test_pinterest import (  # noqa: E402
     LISTING,
     LIVE,
     PINNING,
@@ -43,8 +38,13 @@ from tests.test_pinterest import (  # noqa: E402
     proposed,
     some_tokens,
 )
-from tests.test_site import SITE, WHO, home  # noqa: E402
-from tests.test_ventures import PINTEREST, VENTURING, plan, planner_texts, venture  # noqa: E402
+from tests.channels.test_site import SITE, WHO, home  # noqa: E402
+from tests.cycle.test_agent import rows  # noqa: E402
+from tests.cycle.test_loop_shapes import run  # noqa: E402
+from tests.learning.test_library import GUIDE, a_pdf  # noqa: E402
+from tests.owner.test_owner_api import post  # noqa: E402
+from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.ventures.test_ventures import PINTEREST, VENTURING, plan, planner_texts, venture  # noqa: E402
 
 APP_JS = Path(__file__).parents[1] / "app" / "web" / "static" / "js" / "app.js"
 DAY = 86_400

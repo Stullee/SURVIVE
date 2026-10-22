@@ -21,17 +21,17 @@ from app.economy.clock import from_iso
 from app.economy.metering import Interrupted, Rejected
 from app.integrations import mail, mailstore, printify_publisher
 from app.products import site
-from tests.test_agent import make_agent, rows
-from tests.test_anthropic_transport import BLOCK, REQUEST, START, Server, error, sse, stream, transport
-from tests.test_autonomy import request_for
-from tests.test_decision_wakes import QUIET_REJECTION, asks_and_sleeps
-from tests.test_loop_shapes import run
-from tests.test_money_goal import call
-from tests.test_owner_loop import owner
-from tests.test_printify import proposed
-from tests.test_roadmap import day
-from tests.test_roadmap import plan as idle
-from tests.test_site import OWNER, WHO, home
+from tests.channels.test_printify import proposed
+from tests.channels.test_site import OWNER, WHO, home
+from tests.cycle.test_agent import make_agent, rows
+from tests.cycle.test_anthropic_transport import BLOCK, REQUEST, START, Server, error, sse, stream, transport
+from tests.cycle.test_decision_wakes import QUIET_REJECTION, asks_and_sleeps
+from tests.cycle.test_loop_shapes import run
+from tests.owner.test_autonomy import request_for
+from tests.owner.test_owner_loop import owner
+from tests.plan.test_money_goal import call
+from tests.plan.test_roadmap import day
+from tests.plan.test_roadmap import plan as idle
 
 # --- LIVE 1: the site's address is a folder -------------------------------------------------------------------------
 
