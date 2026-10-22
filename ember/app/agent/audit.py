@@ -549,9 +549,10 @@ def digest(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, day: date)
     """One of the owner's days, in words and numbers."""
     start, end = to_iso(clock.day_start(day)), to_iso(clock.day_start(day + timedelta(days=1)))
     entries = _journal(conn, scope, " AND j.finished_at >= ? AND j.finished_at < ?", (start, end)).fetchall()
-    # 0.42.2: an attempt that waited for its service (retry.py: Etsy, Pinterest or Bluesky asked Ember's code to come
-    # back later, before anything changed) is a wait, not an action: a listing that waited twice and then went out
-    # read "3 actions: 2 failed". The requests that waited are counted apart; one that fails at its last try fails once.
+    # 0.42.2: an attempt that waited for its service (retry.py: Etsy, Pinterest, Bluesky or, 0.42.3, Printify asked
+    # Ember's code to come back later, before anything changed) is a wait, not an action: a listing that waited twice
+    # and then went out read "3 actions: 2 failed". The requests that waited are counted apart; one that fails at its
+    # last try fails once.
     actions = [r for r in entries if not _service_wait(r)]
     service = len({r["approval_id"] for r in entries if _service_wait(r)})
     by = Counter(_who(r) for r in actions)
