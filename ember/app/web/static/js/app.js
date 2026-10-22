@@ -14,6 +14,8 @@
   var SESSION_GRACE_MS = 120000;
   // After "Wake now" the cycle starts within seconds; poll fast until it shows up (or this runs out).
   var WAKE_FAST_POLL_MS = 20000;
+  // 0.42.2: how long a banner's action says what it did once its banner is gone (a take-back's note).
+  var SAID_MS = 300000;
   // Neither Ingress hop times out on its own, so a hung backend would otherwise freeze the page.
   var REQUEST_TIMEOUT_MS = 10000;
   // The diagnostics report gathers the whole system, which may take longer than a dashboard poll.
@@ -37,6 +39,7 @@
     rendered: {},        // section name -> JSON of the data it was last rendered from
     sectionErrors: {},
     bannerKey: null,
+    said: null,          // 0.42.2: what a banner's action said it did, {text, until} (SAID_MS)
     days: null,
     charts: { flow: null, balance: null },
     chartFallback: false,
@@ -845,13 +848,26 @@
         items: [
           calls + " answered with " + usage + ", a usage field " + name + "'s code doesn't know, so each was charged at its worst case: " + usd(b.excess_usd) + " more than at the standard price.",
           num(b.owner_usd) > 0 ? "Your own API cost refunds since then count first: " + usd(b.owner_usd) + " of it." : null,
-          "Only if the Anthropic Console shows these calls at the standard price. From then on such answers cost the price table's price; another value of the field stays at its worst case.",
+          "Only if the Anthropic Console shows these calls at the standard price. From then on such answers cost the price table's price; another value of the field stays at its worst case. You can take it back.",
         ].filter(Boolean),
         action: { label: b.accepted ? "Settle" : "Treat as standard price", post: "api/economy/usage/standard",
           body: { field: b.field, value: b.value, refund_micros: b.refund_micros },
           confirm: (b.accepted ? "Settle " : "Treat " + usage + " as standard price from now on, and settle ") + calls +
             "? " + name + "'s code refunds " + refund + " once." } });
     });
+    // 0.42.2 (analysis-0.40.1 audit): the values the owner treats as standard price, each with its Take back: answers
+    // with it are charged at their worst case again from then on, and the refunds already made stay
+    var standard = isObject(agent.standard_usage) ? agent.standard_usage : {};
+    Object.keys(standard).sort().forEach(function (field) {
+      arr(standard[field]).forEach(function (value) {
+        var usage = "usage." + field + ' = "' + value + '"';
+        list.push({ kind: "info", icon: "i", title: "You treat " + usage + " as standard price",
+          items: ["Answers with it cost the price table's price. Take it back if you accepted it by mistake or the Anthropic Console shows such answers costing more: past refunds stay; calls from now on are charged at the worst case again."],
+          action: { label: "Take back", post: "api/economy/usage/standard/take_back", body: { field: field, value: value }, said: true,
+            confirm: "Take back " + usage + "? Past refunds stay; calls from now on are charged at the worst case again." } });
+      });
+    });
+    if (ui.said && Date.now() < ui.said.until) list.push({ kind: "info", icon: "i", title: ui.said.text });
     // 0.12.0: estimates scaled up after a call cost more than estimated; they come down again, or the owner resets them.
     var factors = arr(agent.estimate_factors);
     if (factors.length) {
@@ -885,6 +901,8 @@
         btn.disabled = true;
         request("POST", spec.action.post, spec.action.body || {}).then(function (res) {
           if (!res.ok) throw httpError(res);
+          // 0.42.2: what it did, said once its banner is gone (a take-back: past refunds stay, the worst case is back)
+          if (spec.action.said && isObject(res.data) && res.data.note) ui.said = { text: String(res.data.note), until: Date.now() + SAID_MS };
         }).catch(function (err) {
           if (!(err instanceof RequestError)) console.error(err);
           btn.disabled = false;
@@ -2717,6 +2735,7 @@
     partial: { icon: "!", label: "Partly done", tone: "warning" },
     failed: { icon: "✕", label: "Failed", tone: "critical" },
     unclear: { icon: "!", label: "Unclear", tone: "critical" },
+    waited: { icon: "◷", label: "Asked to wait", tone: "warning" },  // 0.42.2: its service asked to come back later
   };
 
   function renderAudit(audit, killed) {
@@ -3219,6 +3238,7 @@
   var PRODUCT_EXECUTION = {
     waiting: { icon: "◔", label: "Waiting", tone: "accent" },
     waiting_limit: { icon: "◔", label: "Waiting for tomorrow's limit", tone: "warning" },
+    retrying: { icon: "◷", label: "Printify asked to wait", tone: "warning" },
     running: { icon: "●", label: "At Printify now", tone: "accent" },
     publishing: { icon: "◔", label: "Published: the Etsy listing follows", tone: "accent" },
     active: { icon: "✓", label: "In the shop", tone: "good" },
@@ -3230,6 +3250,7 @@
   // 0.39.0: a change of a live Printify product, as Ember's code makes it.
   var PRODUCT_CHANGE_EXECUTION = {
     waiting: { icon: "◔", label: "Waiting", tone: "accent" },
+    retrying: { icon: "◷", label: "Printify asked to wait", tone: "warning" },
     running: { icon: "●", label: "At Printify now", tone: "accent" },
     done: { icon: "✓", label: "Changed", tone: "good" },
     partial: { icon: "!", label: "Changed at Printify, not in the shop", tone: "warning" },
@@ -3244,6 +3265,7 @@
     var detail;
     if (st === "waiting") detail = [name + (executorOf(a) === "printify_delete" ? " deletes it" : changing ? " changes it" : " creates it") + " by itself shortly; it checks every few minutes."];
     else if (st === "waiting_limit") detail = [name + " has made its products for today, so this one waits for tomorrow's limit."];
+    else if (st === "retrying") detail = retryDetail(ex, "Printify");
     else if (st === "running") detail = ex.started_at ? ["At Printify since ", timeEl(ex.started_at), "."] : ["At Printify now."];
     else if (st === "active") detail = ["In the shop", ex.url && !a.simulated ? [": ", etsyLink(ex.url, ex.url)] : "."];
     else if (ex.result) detail = [endSentence(sentence(ex.result))];
@@ -10202,12 +10224,14 @@
     floor: "its channel brings next to nothing (at its floor): it waits unless you pin it",
     // 0.42.0: another rule Ember's tool refuses by (KDP's week, a first listing's demand note), in the tool's words
     blocked: "Ember's tool would refuse it now",
+    // 0.42.1: a change of a listing in your paid test (the critic's fix too), until the test ends
+    paid: "your paid test runs on its listings: it waits until the test ends",
   };
 
-  // A step's wait in words, with the tool's own words when its tool would refuse it (0.42.0)
+  // A step's wait in words, with the tool's own words when its tool would refuse it (0.42.0; 0.42.1: a paid test's, its end)
   function planWait(st) {
     var said = PLAN_WAIT[st.waiting] || st.waiting;
-    return st.waiting === "blocked" && st.refused ? said + ": " + st.refused : said;
+    return (st.waiting === "blocked" || st.waiting === "paid") && st.refused ? said + ": " + st.refused : said;
   }
   var PLAN_DECIDED = {
     pin: "you pinned it", promise: "a promise to you or your decision (first, until 0.36.0)",
@@ -10763,6 +10787,7 @@
       st.stale ? h("span", { class: "pl-stale", text: "ready " + Math.floor(st.age_days) + " days" }) : null,
       planPinButton(st),
       planUnwaitButton(st),
+      planReworkButton(st),
       planDecideButtons(st, q));
     if (st.why) row.appendChild(h("p", { class: "pl-why muted", text: st.why }));
     else if (st.status !== "open" && st.result) row.appendChild(h("p", { class: "pl-why muted", text: st.result }));
@@ -10803,6 +10828,25 @@
       request("POST", "api/plan/steps/" + encodeURIComponent(String(st.id)) + "/unwait", {}).then(function (res) {
         if (!res.ok) throw httpError(res);
         setStatusText("pl-status", "Wait lifted: the step is weighed again. Pin it to keep " + agentName() + " from putting it off.", "ok");
+        loadPlan();
+      }).catch(function (err) {
+        button.disabled = false;
+        setStatusText("pl-status", "Couldn't save it: " + errorText(err), "error");
+      });
+    });
+    return button;
+  }
+
+  // 0.42.1: a rework of a request you rejected that Ember declined (plan_step decline, its reason below the step):
+  // yours to have made anyway.
+  function planReworkButton(st) {
+    if (!st.reworkable) return null;
+    var button = h("button", { type: "button", class: "btn btn-small", text: "Rework it anyway" });
+    button.addEventListener("click", function () {
+      button.disabled = true;
+      request("POST", "api/plan/steps/" + encodeURIComponent(String(st.id)) + "/rework", {}).then(function (res) {
+        if (!res.ok) throw httpError(res);
+        setStatusText("pl-status", "A step proposing it again is pinned: the next cycle takes it first.", "ok");
         loadPlan();
       }).catch(function (err) {
         button.disabled = false;

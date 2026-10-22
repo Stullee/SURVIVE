@@ -51,6 +51,7 @@ from typing import Any, Protocol
 from ..agent import econ
 from ..config import Settings
 from ..economy.clock import Clock, to_iso
+from . import retry
 from .etsy import Upload
 
 API_HOST = "api.printify.com"
@@ -80,6 +81,11 @@ class NotSent(PrintifyError):
 
 class Gone(NotSent):
     """Printify has no such product (deleted there)."""
+
+
+class Busy(retry.Busy, NotSent):
+    """0.42.3 (analysis-0.40.1 audit, M3): Printify asked Ember's code to come back later (HTTP 429, or 503 with
+    Retry-After): nothing changed."""
 
 
 class Unclear(PrintifyError):

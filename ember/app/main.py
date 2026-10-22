@@ -22,6 +22,7 @@ from .agent.owner import KILL_RESET_KEY, apply_kill_switch_reset
 from .agent.scheduler import Scheduler
 from .agent.service import Agent
 from .config import LoadedSettings, load_settings, safe_mode_keeps
+from .economy.clock import Clock
 from .economy.life import KILLED_KEY
 from .economy.metering import ProcessLock, lock_path
 from .economy.service import Economy
@@ -78,7 +79,12 @@ class CatchAllMiddleware:
             await send({"type": "http.response.body", "body": body})
 
 
-def create_app(loaded: LoadedSettings | None = None, *, dev_mode: bool | None = None) -> FastAPI:
+def create_app(
+    loaded: LoadedSettings | None = None, *, dev_mode: bool | None = None, clock: Clock | None = None
+) -> FastAPI:
+    """The app. ``clock`` (0.42.3, analysis-0.40.1 audit): the time its economy, agent and scheduler go by; a test's
+    builds the app at a set time (a midnight, a day boundary, an expiry), and without one it is the real clock, as
+    before."""
     loaded = loaded or load_settings()
     dev_mode = dev_mode_enabled() if dev_mode is None else dev_mode
     register_secret(loaded.settings.anthropic_api_key.get_secret_value())
@@ -92,7 +98,7 @@ def create_app(loaded: LoadedSettings | None = None, *, dev_mode: bool | None = 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Database work never runs on the event loop (see db._refuse_on_event_loop).
-        state = await asyncio.to_thread(_start, loaded, dev_mode)
+        state = await asyncio.to_thread(_start, loaded, dev_mode, clock)
         app.state.ember = state
         if state.db_error is None:
             state.log_handler = events.install(state.db)
@@ -120,7 +126,7 @@ def create_app(loaded: LoadedSettings | None = None, *, dev_mode: bool | None = 
     return app
 
 
-def _start(loaded: LoadedSettings, dev_mode: bool) -> AppState:
+def _start(loaded: LoadedSettings, dev_mode: bool, clock: Clock | None = None) -> AppState:
     database = dbmod.Database(paths.db_path())
     state = AppState(loaded=loaded, db=database, dev_mode=dev_mode)
     try:
@@ -154,7 +160,8 @@ def _start(loaded: LoadedSettings, dev_mode: bool) -> AppState:
         _record(state, "warning", "config", f"Safe mode: built-in defaults are used and dry-run is forced on; {kept}.")
     economy: Economy | None = None
     try:
-        economy = Economy(database, loaded, lock=ProcessLock(lock_path(paths.data_dir())))
+        # 0.42.3: the agent and the scheduler read the economy's clock (Agent.clock, Scheduler: economy.clock)
+        economy = Economy(database, loaded, clock=clock, lock=ProcessLock(lock_path(paths.data_dir())))
         economy.start()
         if loaded.safe_mode:
             _hold_kill_switch(state, loaded)

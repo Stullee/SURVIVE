@@ -205,10 +205,10 @@ SECTION_CHARS = {
     "META": 30_000,
     EVENTS_TITLE: 100_000,
 }
-SHAREABLE = (
-    "Shareable report: other people's text (emails, web pages, emails to others) is left out; email addresses,"
-    " one-time codes, tokens in links and the words you removed from your messages are masked. Read it before you"
-    " share it."
+SHAREABLE = (  # 0.42.3: it named what was masked before 0.40.3 only (phone numbers, IBANs) and 0.42.3 (streets)
+    "Shareable report: other people's text (emails, web pages, emails to others) is left out; email addresses, phone"
+    " numbers, IBANs, street addresses, one-time codes, tokens in links and the words you removed from your messages"
+    " are masked. Read it before you share it."
 )
 PRIVATE = (
     "PRIVATE report: it holds other people's emails and the web text the agent read. Don't share it, and don't paste"
@@ -814,7 +814,8 @@ def _cycle(c: Any, calls: list[Any], tools: list[Any], texts: list[Any], full: b
             f"act_end={_cell(c['act_end_reason'])} sleep={c['sleep_minutes']} project={_cell(c['project_id'])}"
             + (f" venture_cycle venture={_cell(c['venture_id'])}" if c["venture"] else "")
             + (" marketing_cycle" if c["marketing"] else "")  # 0.28.0
-            + (f" milestone={_cell(c['milestone_id'])}" if c["milestone_id"] else ""),
+            + (f" milestone={_cell(c['milestone_id'])}" if c["milestone_id"] else "")
+            + cache_line(calls),
             _plan(c["plan"]),
             _rows(
                 calls,
@@ -830,6 +831,7 @@ def _cycle(c: Any, calls: list[Any], tools: list[Any], texts: list[Any], full: b
                     "input_tokens",
                     "output_tokens",
                     "cache_write_5m_tokens",
+                    "cache_write_1h_tokens",  # 0.42.1
                     "cache_read_tokens",
                     "web_search_requests",
                     "iterations",  # 0.15.0: the samplings of a server tool's loop
@@ -844,6 +846,21 @@ def _cycle(c: Any, calls: list[Any], tools: list[Any], texts: list[Any], full: b
             _rows(tools, ["id", "llm_call_id", "seq", "phase", "tool", "status", "summary", "input", "result"]),
         ]
     )
+
+
+def cache_line(calls: list[Any]) -> str:
+    """0.42.1 (analysis-0.40.1 codebase, 6.2 cache): the lifetime the cycle's calls asked the prompt cache for, as the
+    guard priced them: " cache=1h" if any asked for an hour (loop.cache_ttl chose it), " cache=5m" if they asked only
+    for 5 minutes, "" if none was cached."""
+    ttls: set[str] = set()
+    for call in calls:
+        try:
+            plan = json.loads(call["plan"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        if isinstance(plan, dict):
+            ttls.update(plan.get("cache_ttls") or ())
+    return " cache=1h" if "1h" in ttls else " cache=5m" if ttls else ""
 
 
 def _reply_text(row: Any, full: bool) -> str:

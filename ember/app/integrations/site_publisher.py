@@ -11,8 +11,10 @@ exactly the approved one (its SHA-256). Every upload is journaled (site.publish_
 owner's Undo ('site_restore') puts back what it replaced: the old version, or no file for a new post, and the list
 without it. Only these files are ever written (blog.allowed): never the owner's home pages, Impressum, privacy page or
 stylesheet. Without a connection the approved requests wait (a new try every RETRY_MINUTES) and fail after
-GIVE_UP_HOURS. The dry run's server is a fake one: nothing leaves the app. 0.16.0: the live view's files
-(blog.LIVE_FILES, made by live_view.py without an approval) go up over the same connection (``put``).
+GIVE_UP_HOURS; 0.42.2 (M2): a post or link page not begun within connectors.APPROVED_DAYS of its approval (paused,
+say) is closed unsent, as an email is (connectors.stale). The dry run's server is a fake one: nothing leaves the app.
+0.16.0: the live view's files (blog.LIVE_FILES, made by live_view.py without an approval) go up over the same
+connection (``put``).
 """
 
 from __future__ import annotations
@@ -431,13 +433,14 @@ class Publisher:
 
     # --- carrying out ---
 
-    def run(self) -> list[tuple[int, str]]:
-        """Upload the approved pages (and carry out the owner's Undos) that are due."""
+    def run(self, undos: bool = False) -> list[tuple[int, str]]:
+        """Upload the approved pages (and carry out the owner's Undos) that are due; with ``undos`` (0.42.3: while the
+        agent is paused or waits for money, as the other publishers since 0.15.0) only the owner's Undos."""
         if not self.settings.blog_enabled or not self._lock.acquire(blocking=False):
             return []
         try:
             scope = self.scope()
-            due = self._approved(scope)
+            due = [(a, e) for a, e in self._approved(scope) if not undos or e == RESTORE]
             if not due or not self._may_try():
                 return []
             try:
@@ -554,6 +557,10 @@ class Publisher:
                 return "skipped"
             if connectors.halted(conn):
                 return connectors.HALTED  # 0.37.3: pressed while the server was read
+            if (stale := connectors.stale(conn, row, self.clock.now())) is not None:  # 0.42.2 (M2): too old to begin
+                note = connectors.lapse(conn, row, "Not uploaded", stale, stamp)
+                events.record(self.db, "warning", "website", f"Request #{approval_id}: {note}"[:300])
+                return "failed"
             fingerprints = {name: (blog.sha256(data) if data is not None else None) for name, data in before.items()}
             connectors.begin(conn, approval_id, stamp, subject=path or None, before={"pages": fingerprints})
             if problem is not None:

@@ -40,6 +40,7 @@ from ..economy.pricing import opening_cost, working_cycle_cost
 from ..economy.service import Economy
 from ..integrations import (
     bluesky_publisher,
+    connectors,
     etsy,
     etsy_publisher,
     etsy_revenue,
@@ -1072,7 +1073,8 @@ class Agent:
         (0.19.0) Bluesky posts that are due (the scheduler calls this before every decision). 0.15.0: while the agent
         is paused or waits for money, only the owner's Undo. 0.39.5: each executor on its own, so one that fails holds
         back none of the others: the emails' read of the mailbox raised, and while an approved email waited no
-        listing, pin, post, Printify product or upload to the website went out."""
+        listing, pin, post, Printify product or upload to the website went out. 0.42.3: then what none of them began
+        within its days is closed unsent (``close_stale``)."""
         runs: list[tuple[str, Callable[[], list[tuple[int, str]]]]]
         if self.executor_blocked():
             if self.undo_blocked():
@@ -1082,6 +1084,8 @@ class Agent:
                 ("pins' undos", lambda: self.pins.run(undos=True)),
                 ("Printify products' undos", lambda: self._pod_run(undos=True)),
                 ("Bluesky posts' undos", lambda: self._bluesky_run(undos=True)),
+                # 0.42.3: the owner's Undo of an upload was accepted while paused (Owner.undo) but waited for Resume
+                ("the website's undos", lambda: self._blog_run(undos=True)),
             ]
         else:
             runs = [
@@ -1091,6 +1095,7 @@ class Agent:
                 ("Bluesky posts", self._bluesky_run),
                 ("Printify products", self._pod_run),
                 ("uploads to the website", self._blog_run),
+                ("requests approved too long ago", self.close_stale),  # 0.42.3: last, whatever ran before
             ]
         done: list[tuple[int, str]] = []
         for what, run in runs:
@@ -1099,6 +1104,20 @@ class Agent:
             except Exception:  # noqa: BLE001 - one executor must never hold back the others
                 log.exception("Carrying out the approved %s failed", what)
         return done
+
+    def close_stale(self) -> list[tuple[int, str]]:
+        """0.42.3 (analysis-0.40.1 audit): after the executors, every approved request none of them began within
+        connectors.APPROVED_DAYS of its approval is closed unsent, as its executor closes one (connectors.sweep; an
+        email by its executor, Executor.sweep). An executor that doesn't run (its account disconnected, Bluesky refusing
+        the login, Printify without a shop, Ember's mailbox unreadable or switched off) never read a request's age, and
+        its card said "approved" until it ran again. Not while Ember is paused or waits for money (nothing is carried
+        out then, and no request expires: run_policy), nor while the kill switch is on."""
+        with self.db.transaction() as conn:
+            closed = connectors.sweep(conn, self.scope(), self.clock.now())
+        for row, note in closed:
+            source = connectors.LAPSED[str(row["executor"])][1]
+            events.record(self.db, "warning", source, f"Request #{row['id']}: {note}"[:300])
+        return [(int(row["id"]), "failed") for row, _ in closed] + self.executor.sweep()
 
     def _bluesky_run(self, undos: bool = False) -> list[tuple[int, str]]:
         """0.19.0: the approved Bluesky posts (the fake account of a dry run needs no network)."""
@@ -1116,10 +1135,10 @@ class Agent:
         with netguard.sealed() if account.simulated else contextlib.nullcontext():
             return self.pod.run(undos)
 
-    def _blog_run(self) -> list[tuple[int, str]]:
+    def _blog_run(self, undos: bool = False) -> list[tuple[int, str]]:
         """0.14.0: the approved uploads to the owner's website (the fake server of a dry run needs no network)."""
         with netguard.sealed() if self.mode == "dry_run" else contextlib.nullcontext():
-            return self.blog.run()
+            return self.blog.run(undos)
 
     def publish_live(self) -> str | None:
         """0.16.0: upload the live view to the owner's website when it is due (every live.UPLOAD_MINUTES, at once when

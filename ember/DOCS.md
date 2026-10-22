@@ -167,6 +167,13 @@ spending about the same, let Ember wake less often: raise **Shortest sleep** to
 cycle cap to 0.60 or more: the dashboard warns you if the cycle cap is too low
 for one planning call, for one working cycle, or for 1.5 working cycles.
 
+Opus 5.5's safety classifiers sometimes refuse a request that is fine. Since
+0.42.1, when the planner refuses to plan and the worker is another model, the
+worker plans that cycle instead, once, under the same caps: the System log warns,
+and the cycle's note says *planned by claude-sonnet-5 after claude-opus-5-5
+refused*. If the worker refuses too, or the caps leave no room for its plan, the
+cycle stops as before. A work step's refusal still ends its cycle.
+
 The **Workshop model** can be `claude-opus-5-5` too, for harder code. A run's
 first call may then cost up to about $0.68, so raise **Workshop cap per run** to
 1.00 (the dashboard says so when the cap is too low for one run).
@@ -1284,6 +1291,11 @@ no cycle for a day. Since 0.40.1 it stays urgent until Ember proposes it again
 (or you hold or drop the product), not for 3 days after your decision: five
 cycles in those days ran out of room before they proposed the book, and from the
 fourth day it got one try a day, weighing as much as a step of the daily review.
+Since 0.42.1, when your rejection means "not this", Ember may **decline** the
+rework (`plan_step` decline, with why in a sentence): the step closes with her
+reason on your Plan tab, and nothing proposes that request again; **Rework it
+anyway** on that step brings it back, pinned. A later request you reject gets a
+step again.
 Since 0.40.3, when the line has no listing yet and its newest demand note is
 older than 14 days (Ember's tool refuses a first listing then), a step for a new
 note comes before the proposal, which waits behind it.
@@ -1475,7 +1487,11 @@ then they took cycles on the product you held (a rejection on its day, a promise
 each day as its day neared). No cycle is aimed at it, and Ember's tools refuse
 its work (a request, a listing, a pin or a post; she can still note its record),
 since 0.39.7 in a venture cycle too: one filed a request about a product you
-held. **Hold it** names what waits with it. Ember's own hold leaves what she
+held. Since 0.42.1 they refuse its files too: a draft, a workshop run or a
+document made from a file of the product, a change of its files, and a request
+or an email naming its listing (reading them stays possible); the same holds
+while a review's stop holds the line, until you keep it or Ember lifts the hold.
+**Hold it** names what waits with it. Ember's own hold leaves what she
 owes you going on. **Hold new things** on the Ventures box is "nothing new":
 no venture cycle and no new product until you **Resume**. Ember's code refuses
 a new product whatever venture it names, and (since 0.39.3) a new venture:
@@ -1695,15 +1711,34 @@ no longer shown); a study that failed three times stops until you press
   product says which of its files changed since it was proposed (as a KDP
   book's does): Ember uploads only the files as proposed, so **Approve** is
   refused for it; reject it and ask the agent to propose it again.
-- **Asked to wait** (0.42.0): when Etsy, Pinterest or Bluesky answers "too many
-  requests" (or "down for now, come back later") before anything changed (no
-  draft, no part of a change, no new board, no post yet), the approved request
-  stays approved: Ember tries it again when the service said, at least a minute
-  and at most 6 hours later, with every check again (the kill switch, a pause,
-  the files, the daily limit, the publishing queue), at most 3 times, then it
-  fails as before. Its card says when; **Cancel** still stops it. A request your
-  unlock approved isn't tried again (the agent proposes it again), nor is an
-  email, nor anything that may have changed something.
+- **Asked to wait** (0.42.0): when Etsy, Pinterest or Bluesky (0.42.3: or
+  Printify) answers "too many requests" (or "down for now, come back later")
+  before anything changed (no draft, no part of a change, no new board, no post
+  yet; at Printify, no picture uploaded yet, nor a change made), the approved
+  request stays approved: Ember tries it again when the service said, at least
+  a minute and at most 6 hours later, with every check again (the kill switch,
+  a pause, the files, the daily limit, the publishing queue), at most 3 times,
+  then it fails as before. Its card says when; **Cancel** still stops it. A
+  request your unlock approved isn't tried again (the agent proposes it again),
+  nor is an email, nor anything that may have changed something: a Printify
+  product that Printify refuses once its picture went up (the picture stays in
+  your Printify library) fails as before.
+- **Approved too long ago** (0.42.2): a listing, a change, a pin, a post, a
+  Printify product or change, or a blog page that Ember's code hasn't begun 7
+  days after your approval isn't carried out any more, as an email isn't (see
+  [Ember's mailbox](#embers-mailbox)). Ember was paused or stopped, or it
+  waited for money, a connection, a daily limit, its slot or its service, and
+  it may no longer fit: Ember closes it as failed, with why ("Not listed: it
+  didn't go out within 7 days of its approval ..."), and the agent hears it
+  and proposes it again if it still fits (its plan gets a step for that). One
+  that waits for its service ages out too, before it is tried again. Since
+  0.42.3 also one Ember's code can't carry out at all (your account is
+  disconnected, Bluesky refuses the login, Printify has no shop, Ember's
+  mailbox can't be read): until then its card said approved for as long as
+  that lasted.
+  What Ember's code began never does, nor your Undo (it takes something down,
+  which still fits), nor what you carry out yourself (a Reddit post, a KDP
+  book), Pinterest's test pin or the last will.
 - **Autonomy** (0.13.0): on the Plan tab, each open product (0.35.0) and each
   open milestone's card has an **Autonomy** box. There you can let Ember's code carry out a few small kinds
   of request for that milestone without your click. Each is off (**Ask me**)
@@ -1777,7 +1812,8 @@ no longer shown); a study that failed three times stops until you press
   on, a Pinterest board or pin made or deleted, a Bluesky post made or deleted,
   a Printify product created or deleted), the newest first. Each one shows:
   - what it acted on, and what it changed (before → after);
-  - how it ended;
+  - how it ended (0.42.2: **Asked to wait** when its service asked Ember's
+    code to come back later, and it is tried again: see Asked to wait above);
   - on whose decision: **You approved it**, **Your unlock**, **Your Undo**,
     or **Ember's code on its own**.
 
@@ -1814,7 +1850,22 @@ no longer shown); a study that failed three times stops until you press
   you unlocked. The newest digest is at the top of this card and in the System
   log; the sensor has its counts (`digest_day`, `digest_actions`, ...). Days
   without a round (a pause) get their digest afterwards, up to 14 days back
-  (0.15.0).
+  (0.15.0). Since 0.42.2 a try that Etsy, Pinterest, Bluesky or (0.42.3)
+  Printify asked Ember's code to make later (see Asked to wait above) is no
+  failed action: the digest counts the requests that waited apart
+  ("1 request(s) waited when their service asked to come back later (not
+  failures)"), a listing that waited twice and then went out is 1 action, and
+  one that fails at its last try fails once. Since 0.42.3 an approved request
+  that went back unsent because Ember's code didn't begin it within 7 days of
+  your approval (see Approved too long ago above, and for an email Ember's
+  mailbox) is no action and no failure either: the digest counts it apart,
+  with whose approval it had ("1 request went back unsent (1 you approved): it
+  didn't go out within 7 days of its approval (Ember proposes it again if it
+  still fits)"), and `digest_actions` and `digest_failed` leave it out. Until
+  then it read "carried out 1 action (1 you approved): 1 failed", though
+  nothing was carried out. The list of what Ember's code did has no entry for
+  it (nothing began; a try that waited for its service before shows there as
+  waited), and a request that really failed still counts as failed.
 
   **Take back every unlock**, at the top of this card while any unlock
   stands: one click sets every rule of every milestone back to **Ask me**.
@@ -2071,7 +2122,10 @@ included: encrypt your backups.
   approval (Ember was paused, or it waited for money, the daily limit or an
   email to be read) isn't sent any more: Ember closes it as not sent, with
   why, and the agent asks again if it still fits (until 0.40.3 it went out on
-  Resume, weeks late).
+  Resume, weeks late; until 0.42.3 one that waited for the mailbox to be read,
+  or whose mailbox was switched off, stayed approved until it could go out).
+  Since 0.42.2 the other approved actions Ember's code carries out age out
+  after the same 7 days (see [Your part](#your-part), Approved too long ago).
 - Ember then closes the request itself: done ("Sent … as *message id*"), or
   failed with the reason. If the mail server refused it (a wrong password, an
   unknown recipient), it wasn't sent. If the connection broke while the email
@@ -2389,9 +2443,12 @@ listings (Etsy Ads on three listings, say), Ember's code keeps it as a test:
 the listings, their views on the day you decided it and the day it ends (the
 request's "for 7 days", else 7 days later). STATUS shows it while it runs, so
 the agent leaves those listings alone and doesn't judge them by a keep-or-drop
-date within it, and for 3 days after it ended, with what the listings gained,
-so the agent asks you for the ads' numbers (what it cost, how often they were
-shown and clicked) and says whether it goes on. Record what the ads cost as an
+date within it (since 0.42.1 a change of those listings, the critic's fix
+too, waits until it ends, as Ember's tool refuses it, and the product's
+keep-or-drop dates are read after its end), and for 3 days after it ended,
+with what the listings gained, so the agent asks you for the ads' numbers
+(what it cost, how often they were shown and clicked) and says whether it goes
+on. Record what the ads cost as an
 expense when Etsy bills it. Live, you turned Etsy Ads on at 01:03 on 10-16 and
 nothing in Ember's plan knew.
 
@@ -2950,14 +3007,14 @@ Ember's code also keeps a text off the page whatever you say if it holds an @
 (in any form, also spelled out or as a fullwidth sign), a web address, an IBAN,
 a phone number or a number of 5 digits or more, read after folding look-alike
 and invisible characters, or anything the shareable diagnostics report masks
-(an address, a code, a link's token, an email's sender, a word you removed) or a
-secret the logs hide. It can't tell a person's name from other words: that is
-what your approval is for. Etsy's listings are shown only for 6 hours after
-Ember's code read them, as Etsy's API terms allow; the page footer carries
-Etsy's trademark notice. Every file is checked again before it goes up (no
-script, nothing from elsewhere), and only these six files are ever written. The
-agent's titles stay in the language it wrote them in; the English page marks the
-blog's posts as German.
+(an email or street address, a code, a link's token, an email's sender, a word
+you removed) or a secret the logs hide. It can't tell a person's name from
+other words: that is what your approval is for. Etsy's listings are shown only
+for 6 hours after Ember's code read them, as Etsy's API terms allow; the page
+footer carries Etsy's trademark notice. Every file is checked again before it
+goes up (no script, nothing from elsewhere), and only these six files are ever
+written. The agent's titles stay in the language it wrote them in; the English
+page marks the blog's posts as German.
 
 The page has your site's head, header and footer and refreshes itself every 5
 minutes in an open tab. The page and the banner say when they were made (date
@@ -3038,7 +3095,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.42.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.42.3 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3214,8 +3271,15 @@ Assistant name and user ID (`[the owner]`, `[the owner's user ID]`). Since 0.40.
 (`[phone number]`) and IBANs (`[IBAN]`), and your personal options wherever they are written (your name, address,
 email, phone, VAT ID, the KDP author, the SFTP user and folder: `[the author's name]`, `[the SFTP user]` …; a value
 of one ordinary word, such as an author named "Ember", only after its label, as in a KDP request's `Author:`).
-Street addresses and postcodes aren't masked: told apart only by their digits, every listing number and amount would
-go. It never contains the API key, the
+Since 0.42.3 so are street addresses (`[street address]`), told by a street's words, not by its digits (that way
+every listing number, order number and amount would go): a German street ending in Straße, Str., Weg, Gasse, Allee,
+Platz, Damm, Ufer, Chaussee, Markt, Graben, Promenade, Steig or Kai, with its house number ("Musterstraße 12",
+"Hauptstr. 5a", "Karl-Marx-Allee 90", "Am Markt 3") and its postcode and town when they follow ("Musterstraße 12,
+80331 München"); another street after "Am", "An der", "Unter den" … only with its postcode and town ("Unter den Linden
+77, 10117 Berlin"); and an English one, its number first ("12 Main Street", "221B Baker St"), with its town and ZIP
+code or UK postcode when they follow ("12 Main Street, Springfield, IL 62701"). A postcode and town alone, a year, a
+price, an id or a count stay ("Weihnachtsmarkt 2026", "Speicherplatz 5 GB", "120 pages", "24 Wedding Place Cards"),
+and so does a street named without a street's word ("Lindenhof 3"). It never contains the API key, the
 mailbox password, Etsy's keystring, secret or tokens, or an email's text. It
 does hold your messages and the agent's work, so read it before you share it.
 
@@ -3268,10 +3332,14 @@ On the dashboard you can record:
   own refunds since the first of them count first). Any other value of the
   field stays at its worst case, and only you can accept one; it stays
   accepted (a call answered while you confirmed is settled at the next start,
-  or with **Settle**). For small amounts not worth looking up, **Keep as
-  charged** on the System warning about calls charged at their worst case
-  hides it for what it names now: it comes back only for calls charged so
-  later. No money moves, and you can still record a correction.
+  or with **Settle**) until you take it back. Since 0.42.2 the dashboard lists
+  each value you accepted, with **Take back** for one accepted by mistake or
+  that came to cost more: past refunds stay; calls from now on are charged at
+  the worst case again, and offered again, as before you accepted it. For
+  small amounts not worth looking up, **Keep as charged** on the System
+  warning about calls charged at their worst case hides it for what it names
+  now: it comes back only for calls charged so later. No money moves, and you
+  can still record a correction.
 - **Correct** on an earlier grant, revenue or expense reduces it (up to its full
   amount, which voids it).
 
@@ -3421,6 +3489,21 @@ As an outside safety net, give Ember its own
 [Anthropic workspace](https://console.anthropic.com/settings/workspaces) and
 API key and set a monthly spend limit there.
 
+**The prompt cache across cycles** (0.42.1). Every work step reads the tools
+and the system prompt (about 10,000 tokens) from Anthropic's prompt cache, which
+keeps them 5 minutes, so each cycle's first step wrote them again (about $0.03
+with claude-sonnet-5). When the median of the last three gaps between cycle
+starts is 50 minutes or less, a cycle asks the cache to keep them an hour, and
+its plan's system prompt too, so the next cycle reads them at the cache-read
+price. Writing for an hour costs twice the input price (for 5 minutes, 1.25
+times), so with sleeps of hours it stays at 5 minutes. In a dry run of
+half-hourly cycles on claude-sonnet-5, the cycle that wrote for an hour cost
+about $0.02 more and each one after it about $0.03 less. The money guard prices
+an hour's write at the price table's **Cache write 1 h**, for at most the tokens
+of the tools and the system prompt, and a plan that wouldn't fit the caps so is
+sent without it. The diagnostics report's cycle line says `cache=1h` or
+`cache=5m`.
+
 **Dry run** uses the fake model. Its simulated costs are shown as a separate
 test balance that starts from your real balance; nothing real is spent. In dry
 run you can also record *test money*, which only exists in the current dry-run
@@ -3479,7 +3562,9 @@ counts the unlocks that stand (0.13.0). Of the newest daily digest, `digest_day`
 is the day it covers (an automation can notify you when it changes), and
 `digest_actions`, `digest_failed` and `digest_taken_back` count the actions
 Ember's code carried out that day, those that failed, partly failed or ended
-unclear, and the unlocks taken back; its text is on the dashboard only. The
+unclear (0.42.2: a wait for the service isn't one; 0.42.3: an approved
+request that went back unsent after 7 days is in neither count), and the
+unlocks taken back; its text is on the dashboard only. The
 JSON never contains any text the agent wrote, nor anyone's address.
 In dry run the numbers are the dry run's. If the database can't be read,
 `state` is `unknown` and the numbers are empty.

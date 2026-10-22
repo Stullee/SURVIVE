@@ -5,6 +5,7 @@ Two tools, for the diagnostics report above all (the owner shares it to get help
 - ``Masker`` masks email addresses, one-time codes and the tokens in links (a login link, an OAuth code) in a text,
   and leaves out other people's text (emails, web pages) unless the owner asks for everything. 0.15.0: a sender's
   name is masked only when it looks like a person's (``person_like``), only whole, and never inside an address.
+  0.40.3: phone numbers and IBANs too, and 0.42.3 street addresses, told by a street's words (not by its digits).
 - ``Redactor`` finds the words the owner removed. When the owner removes the text of a message (a password sent by
   mistake), its secret-looking words are registered as salted hashes, never as text (``register``). Any text can then
   be checked word by word: the report, and Ember's code scrubs the agent's memory, open projects and workspace files
@@ -196,7 +197,7 @@ class Masker:
     """Masks a text for someone other than the owner: addresses, codes, link tokens and the removed words, and
     (unless ``full``) other people's text from emails and web pages, and their words wherever they were quoted
     (``others``: the emails' subjects and senders' names, and what shows instead), and (0.40.3) phone numbers and
-    IBANs."""
+    IBANs, and (0.42.3) street addresses."""
 
     own_address: str = ""
     redactor: Redactor = field(default_factory=Redactor)
@@ -225,6 +226,7 @@ class Masker:
         text = self.redactor.apply(text)
         if not self.full:  # 0.40.3 (analysis-0.40.1, 6.2): before the codes, which would take a number's first part
             text = _LINE_PHONE.sub(_phone, _IBAN.sub(_iban, text))
+            text = _STREET.sub(STREET, text)  # 0.42.3 (analysis-0.40.1 audit)
         text = _CODE_AFTER.sub(lambda m: f"{m[1]}{CODE}", text)
         return _CODE_BEFORE.sub(lambda m: f"{CODE}{m[2]}", text)
 
@@ -316,6 +318,59 @@ _LINE_PHONE = re.compile(
     r"\+[^\S\n]?\(?\d(?:[\d()/.-]|[^\S\n]){4,}\d"
     r"|(?<![\w.,+])0\d{1,4}(?:[/()-]|[^\S\n])+\d(?:[\d()/-]|[^\S\n])*\d"
 )
+# 0.42.3 (analysis-0.40.1 audit): what the Masker shows of a street address (the shareable report printed them: in the
+# owner's messages, the agent's notes and drafts, a signature it quoted), which the public page refuses too, also
+# without a postcode. unpublishable's run of 5 digits can't tell one: masked, it would take every listing number, order
+# number and token count. A street is told by its words, within its line:
+# - a German one ending in a street's word, with its house number ("Musterstraße 12", "Hauptstr. 5a", "Karl-Marx-Allee
+#   90", "Berliner Straße 5", "Am Markt 3"), and its postcode and town when they follow (", 80331 München", "1010
+#   Wien"); a street of other words after "Am", "An der" ... only with them ("Unter den Linden 77, 10117 Berlin": "Am
+#   Montag 3 Pins" is none), and so is "Platz" or "Weg" after a word of its own ("Berliner Platz 1": "Der Weg 2" is
+#   none);
+# - an English one by its number and its street's word ("12 Main Street", "221B Baker St"), and its town and a state's
+#   ZIP code or a UK postcode when they follow (", Springfield, IL 62701").
+# A house number has 1 to 3 digits (4 are a year: "Weihnachtsmarkt 2026"), and one with a capitalized word after it
+# counts that word ("Speicherplatz 5 GB", "24 Wedding Place Cards"), as an English "Place" or "Drive" with any word
+# after it does ("2 Google Drive links"). Each start is a word's or a number's, and each part bounded: linear.
+STREET = "[street address]"
+_GAP = r"[^\S\n]"  # a space within a line
+_ENDS = ("straße", "strasse", "str.", "weg", "gasse", "allee", "platz", "damm", "ufer", "chaussee", "markt", "graben")
+_ENDS += ("promenade", "steig", "kai")  # not "ring", "zeile", "winkel", "pfad": "During 3", "Zeile 12", "Dateipfad 2"
+_ALONE = ("straße", "strasse", "str.", "gasse", "allee", "damm", "ufer", "chaussee", "markt", "promenade")
+
+
+def _either(words: tuple[str, ...], capital: bool = False) -> str:
+    return "|".join(re.escape(w.capitalize() if capital else w) for w in words)
+
+
+_BY = rf"(?:Am|Im|Beim|Zum|Zur|(?:An|In|Auf|Unter|Hinter|Vor|Bei){_GAP}de[mnrs]){_GAP}"  # "Am ", "Unter den "
+_CAPS = r"[A-ZÄÖÜ][^\W\d_]*"  # a capitalized word of letters
+_JOINED = r"(?:-[^\W\d_]+)*"  # and the words joined to it ("Karl-Marx", "Halle-Neustadt")
+_ADJECTIVE = rf"[A-ZÄÖÜ][^\W\d_]{{2,}}?e[nrs]?{_GAP}"  # "Berliner ", "Neue ", "Alten " (not "Der ", "Die ")
+_DE_STREET = (
+    rf"{_BY}(?:{_either(_ENDS, True)})"  # "Am Markt"
+    rf"|(?:{_BY})?(?:{_CAPS}{_JOINED}?(?:{_either(_ENDS)}|-(?:{_either(_ENDS, True)}))"  # "Musterstraße", "…-Allee"
+    rf"|{_ADJECTIVE}(?:{_either(_ALONE, True)}))"  # "Berliner Straße", "Am Alten Markt"
+)
+_DE_OTHER = rf"{_BY}{_CAPS}{_JOINED}(?:{_GAP}{_CAPS})?|{_ADJECTIVE}(?:Platz|Weg|Ring)"  # only with its postcode
+_LETTER = r"(?:[a-zA-Z](?![^\W_]))"  # "5a", not "5 am"
+_HOUSE = rf"\d{{1,3}}(?:{_GAP}?{_LETTER})?(?:{_GAP}?[-–/]{_GAP}?\d{{1,3}}{_LETTER}?)?(?![.,]?\d)"  # 12, 5a, 5-7a, 12/3
+_NEXT = rf"(?:{_GAP}*(?:[,;]|⏎|<br{_GAP}?/?>|\n){_GAP}*|{_GAP})"  # a comma, a line break (⏎ in a cell) or a space
+_DE_TOWN = rf"{_NEXT}(?:[A-Z]{{1,2}}-)?\d{{4,5}}(?!\d){_GAP}+{_CAPS}{_JOINED}"  # 80331 München, D-80331, 1010 Wien
+_EN_WORD = r"(?:[A-Z][\w'’.-]*|\d{1,3}(?:st|nd|rd|th))"  # "Main", "Baker", "34th"
+_EN_SURE = r"(?:Street|St\.?|Avenue|Ave\.?|Road|Rd\.?|Lane|Ln\.?|Boulevard|Blvd\.?|Terrace|Parkway|Highway)(?![\w-])"
+_EN_LOOSE = r"(?:Drive|Dr\.?|Court|Ct\.?|Place|Pl\.?|Square|Sq\.?|Way)(?![\w-])"  # also words of a product's title
+_EN_SIDE = rf"(?:{_GAP}(?:N|S|E|W|NE|NW|SE|SW)(?![\w-]))?"  # 1600 Pennsylvania Avenue NW
+_EN_TOWN = (  # ", Springfield, IL 62701", ", London SW1A 2AA"
+    rf"{_NEXT}(?:[A-Z][a-z]+(?:{_GAP}[A-Z][a-z]+){{0,2}}(?:,{_GAP}*|{_GAP}+))?"
+    rf"(?:[A-Z]{{2}}{_GAP}+\d{{5}}(?:-\d{{4}})?|[A-Z]{{1,2}}\d[A-Z\d]?{_GAP}?\d[A-Z]{{2}})(?![\w-])"
+)
+_STREET = re.compile(  # each begins with a capital or a digit: looked for first, it is 5 times as quick
+    rf"(?=[\dA-ZÄÖÜ])(?:(?<![\w-])(?:{_DE_STREET}){_GAP}?{_HOUSE}(?:{_DE_TOWN}|(?!{_GAP}?[A-ZÄÖÜ%€$:\d]))"
+    rf"|(?<![\w-])(?:{_DE_OTHER}){_GAP}?{_HOUSE}{_DE_TOWN}"
+    rf"|(?<![\w#$€£.,/:-])\d{{1,5}}[A-Za-z]?{_GAP}(?:{_EN_WORD}{_GAP}){{1,4}}"
+    rf"(?:{_EN_SURE}{_EN_SIDE}(?:{_EN_TOWN}|(?!{_GAP}?[A-Z]))|{_EN_LOOSE}{_EN_SIDE}(?:{_EN_TOWN}|(?!{_GAP}?[^\W\d_]))))"
+)
 
 
 def _phone(match: re.Match[str]) -> str:
@@ -365,9 +420,9 @@ def _digits(match: re.Match[str]) -> int:
 def unpublishable(text: str) -> str | None:
     """0.16.1's live page showed a text of the agent's whenever the Masker changed nothing in it: what keeps one off a
     public page instead (None: nothing), read after folding (``folded``): an @ in any form (an email address), a web
-    address (a link, a domain, an IP address), an IBAN, a phone number, or a run of 5 or more digits (a postcode, an
-    account, order or customer number). Strict on purpose: a title or a last will rarely needs any of them, and the
-    owner approves each text as well (a person's name can't be told from other words)."""
+    address (a link, a domain, an IP address), an IBAN, a phone number, a run of 5 or more digits (a postcode, an
+    account, order or customer number), or (0.42.3) a street address. Strict on purpose: a title or a last will rarely
+    needs any of them, and the owner approves each text as well (a person's name can't be told from other words)."""
     text = folded(text)
     if "@" in text:
         return "an @ (an email address)"
@@ -380,4 +435,6 @@ def unpublishable(text: str) -> str | None:
         return "a phone number"
     if _RUN.search(text):
         return "a number of 5 digits or more"
+    if _STREET.search(text):  # 0.42.3: one without its postcode too, as the shareable report masks it
+        return "a street address"
     return None

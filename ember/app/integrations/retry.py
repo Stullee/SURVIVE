@@ -17,6 +17,12 @@ Only the owner's own approvals wait: an unlock approves the agent's next proposa
 unlock back stops only what nothing began. The owner can cancel a waiting request, and a park or kill of its venture
 stops it (``waiting_sql``). Anything that may have changed something (a timeout, a 5xx without Retry-After, a refusal
 after the draft or the new board exists) is never tried again, and an email never is.
+
+0.42.3 (analysis-0.40.1 audit, M3): Printify too, which had none. A product waits only when Printify refuses its
+picture's upload, the first of its three calls that change anything (the upload, the product, its publishing); a change
+of a live product only when Printify refuses the first of its calls (the new design's upload, else the change itself).
+A refusal after that fails it as before: by then the picture is in the owner's Printify library (where it stays, unlike
+a Bluesky picture no post uses), and the product may exist or have changed.
 """
 
 from __future__ import annotations
@@ -35,7 +41,8 @@ CEILING = timedelta(hours=6)  # and the longest
 UNSAID = timedelta(minutes=15)  # the wait when the service names none
 LATER = "retrying"  # what a run says of a request that waits for its service, and its status on the Approvals tab
 APPROVED = ("approved", "approved_with_changes")
-PARKED = ("etsy_listings", "etsy_edits", "pinterest_pins", "bluesky_posts")  # the executors' rows a request waits in
+# The executors' rows a request waits in (0.42.3: and Printify's products and changes)
+PARKED = ("etsy_listings", "etsy_edits", "pinterest_pins", "bluesky_posts", "printify_products", "printify_edits")
 
 
 class Busy(Exception):

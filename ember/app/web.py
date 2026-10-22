@@ -284,6 +284,17 @@ def accept_standard_usage(request: Request, body: Annotated[Any, Body()] = None)
     return _reply(reply)
 
 
+@router.post("/api/economy/usage/standard/take_back")
+def take_back_standard_usage(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """0.42.2 (analysis-0.40.1 audit): the owner takes back a usage field's value they treat as standard-priced: answers
+    with it are charged at their worst case again from now on, and the refunds already made stay. The agent has no tool
+    for it."""
+    economy = _economy(request)
+    if economy is None:
+        return UNAVAILABLE
+    return _reply(economy.take_back_usage(body, _owner(request)))
+
+
 @router.post("/api/economy/uncertain/keep")
 def keep_as_charged(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
     """0.42.0 (analysis-0.40.1 codebase, 6.2 bills): the owner keeps the calls charged at their worst case that the
@@ -727,6 +738,15 @@ def unwait_plan_step(request: Request, node_id: ItemId) -> JSONResponse:
     if actions is None:
         return NO_AGENT
     return _reply(actions.unwait_step(node_id, _owner(request)))
+
+
+@router.post("/api/plan/steps/{node_id}/rework")
+def rework_plan_step(request: Request, node_id: ItemId) -> JSONResponse:
+    """0.42.1: the owner has a rework Ember declined made anyway (a step proposing it again, pinned)."""
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.rework_step(node_id, _owner(request)))
 
 
 @router.post("/api/plan/products/{node_id}/worth")

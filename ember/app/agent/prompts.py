@@ -43,6 +43,9 @@ CRITIC_MAX_TOKENS = 1_000  # a fatal flaw and what would change its mind (300 ch
 DRAFT_MAX_TOKENS = tools.DRAFT_MAX_TOKENS  # a long file in one call of its own (0.12.0: the draft tool)
 DRAFT_CHARS = tools.DRAFT_CHARS
 FETCH_MAX_CONTENT_TOKENS = 4_000
+# 0.42.1 (analysis-0.40.1 codebase, 6.2 cache): the lifetimes of the cache entry at the end of the system prompt: the
+# API's default (5 minutes), or an hour when the next cycle will likely read it (loop.cache_ttl chooses)
+FIVE_MINUTES, HOUR = "5m", "1h"
 REFLECT_MARKER = "REFLECT PHASE."
 # 0.40.3 (analysis-0.40.1 codebase, C3): the last work step is told in text, after the conversation, that it is the
 # last: its tool_choice stays "auto" ("none" changed the prompt cache's key, so the step wrote the conversation again)
@@ -607,6 +610,12 @@ def _text(text: str, **extra: Any) -> dict[str, Any]:
     return {"type": "text", "text": text, **extra}
 
 
+def _cached(ttl: str) -> dict[str, Any]:
+    """0.42.1 (analysis-0.40.1 codebase, 6.2 cache): a cache marker of lifetime ``ttl`` (FIVE_MINUTES, the default,
+    is the marker as before)."""
+    return {"type": "ephemeral", "ttl": HOUR} if ttl == HOUR else {"type": "ephemeral"}
+
+
 def _thinking(model: str, max_tokens: int) -> dict[str, Any]:
     """The request's thinking and output limit for ``model``. 0.40.3 (analysis-0.40.1 codebase, C4): thinking off as
     the model takes it (pricing.thinking_off): Claude Sonnet 5.5 refuses "disabled" and takes "between_tools"."""
@@ -626,15 +635,28 @@ def strategy_model(settings: Settings) -> str:
     return settings.strategy_model or settings.planner_model
 
 
-def plan_request(settings: Settings, context: str, venture: bool = False, marketing: bool = False) -> dict[str, Any]:
+def plan_request(
+    settings: Settings,
+    context: str,
+    venture: bool = False,
+    marketing: bool = False,
+    *,
+    cache_ttl: str = FIVE_MINUTES,
+    model: str | None = None,
+) -> dict[str, Any]:
     """The plan of a wake cycle; a venture cycle's (``venture``) is told what venture cycles are for, and (0.12.0) is
-    made on the strategy model; 0.28.0: a marketing cycle's (``marketing``) is told what marketing cycles are for."""
+    made on the strategy model; 0.28.0: a marketing cycle's (``marketing``) is told what marketing cycles are for.
+    0.42.1 (analysis-0.40.1 codebase, 6.2): ``cache_ttl`` HOUR caches the system prompt for the next cycle's plan (a
+    cycle plans once, so a 5-minute entry would never be read: none then); ``model``, the model that plans instead
+    (the worker's, after the planner's refused: loop.CycleRunner._plan_answer)."""
     rules = [
         _text(PLANNER_RULES),
         *([_text(VENTURE_RULES)] if venture else []),
         *([_text(MARKETING_RULES)] if marketing else []),
     ]
-    model = strategy_model(settings) if venture else settings.planner_model
+    if cache_ttl == HOUR:
+        rules[-1] = {**rules[-1], "cache_control": _cached(HOUR)}
+    model = model or (strategy_model(settings) if venture else settings.planner_model)
     return {
         "model": model,
         **_thinking(model, PLAN_MAX_TOKENS),
@@ -677,6 +699,7 @@ def work_request(
     kdp: bool = False,
     marketing: bool = False,
     marketing_apart: bool = False,
+    cache_ttl: str = FIVE_MINUTES,
 ) -> dict[str, Any]:
     """One step of the act loop. The prefix (system, tools, brief) stays byte-identical, so it is cached; ``mail``,
     ``etsy``, ``venture``, ``library``, ``pinterest``, ``printify`` and ``site`` (whether Ember has a mailbox, a shop, a
@@ -686,7 +709,9 @@ def work_request(
     workshop runs, which the owner's options must allow too, and brainstorms). 0.28.0: ``marketing``, a marketing
     cycle's tools; ``marketing_apart``, marketing cycles run, so an ordinary cycle has no marketing tools. 0.40.3
     (analysis-0.40.1 codebase, C3): ``final``, the last step, ends its last user turn with FINAL_STEP (its tool_choice
-    was "none", which the prompt cache's key includes)."""
+    was "none", which the prompt cache's key includes). 0.42.1 (analysis-0.40.1 codebase, 6.2 cache): ``cache_ttl``,
+    the lifetime of the entry at the end of the system prompt (with the tools before it), the same for every step of a
+    cycle; the conversation after it is cached for 5 minutes, automatically (a 1-hour entry must come first)."""
     messages = [{"role": "user", "content": [_text(brief)]}, *turns]
     if final:  # the conversation always ends with a user turn (the brief, or the last step's tool results)
         messages[-1] = {**messages[-1], "content": [*messages[-1]["content"], _text(FINAL_STEP)]}
@@ -712,9 +737,7 @@ def work_request(
         "system": [
             _text(constitution(settings)),
             _text(knowledge()),
-            _text(
-                operating_rules(any(d["name"] in tools.MAKERS for d in offered)), cache_control={"type": "ephemeral"}
-            ),
+            _text(operating_rules(any(d["name"] in tools.MAKERS for d in offered)), cache_control=_cached(cache_ttl)),
         ],
         "tools": offered,
         "tool_choice": {"type": "auto"},
@@ -759,6 +782,7 @@ def reflect_request(
     drafted: bool = False,
     marketing: bool = False,
     marketing_apart: bool = False,
+    cache_ttl: str = FIVE_MINUTES,
 ) -> dict[str, Any]:
     """The final turn of the same conversation (so the cached prefix is reused: its tool list stays the work's, which
     it reads from the cache at a tenth of the price); ``ended`` says why the work ended, ``undone`` which of its tool
@@ -784,6 +808,7 @@ def reflect_request(
         kdp=kdp,
         marketing=marketing,
         marketing_apart=marketing_apart,
+        cache_ttl=cache_ttl,
     )
     messages = request["messages"]
     prompt = _text(reflect_prompt(ended, undone, drafted))
