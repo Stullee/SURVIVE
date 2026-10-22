@@ -18,7 +18,8 @@ everything that leaves the container, and only the owner can record revenue.
 
 Dry run (the default) runs the whole agent with a built-in fake model at no
 cost. With an API key and dry run off it calls the Anthropic API and spends real
-money within the caps. Findings from live testing come next.
+money within the caps. Each release since going live folds in what live testing
+found; the paragraphs below say what each one changed.
 
 0.4.0 adds the first integrations: Ember's own mailbox (it reads mail on its
 own; an email it proposes is sent by Ember's code only after the owner approves
@@ -535,6 +536,32 @@ page sat idle is retried quietly instead of reading "Ember refused the request".
 CI measures coverage with a floor, pins its actions, audits the dependencies
 (Pillow 13 fixes eight advisories) and runs weekly.
 
+0.42.1: the analysis's model-call and plan items, and the tests by feature. Cycles
+that come within the hour keep Ember's tools and system prompt in Anthropic's
+prompt cache for an hour (about $0.03 less per cycle on Sonnet 5; the diagnostics
+cycle line shows cache=1h), and a refusal by the planner's model no longer costs
+the cycle: the worker model plans it once, under the same caps. A work step
+refused before any output ends the cycle instead of paying for a nudge. Your hold
+on a product line now covers its files, and the requests and emails that name
+them. When your rejection of a request means "not this", Ember can decline to
+rework it, with a reason you see, and **Rework it anyway** on the Plan tab brings
+it back. Ember leaves a listing in your paid test alone until the test ends. The
+tests are grouped in folders by feature.
+
+0.42.2: what was left of the analysis that could be finished small, and the
+license. Like an email, an approved listing, change, pin, post, Printify product
+or blog page that Ember's code hasn't begun within 7 days of your approval is no
+longer carried out weeks later: it closes as failed, with why, and Ember proposes
+it again if it still fits. What began, and your Undo, never age out; on the first
+start after updating, older requests like that close at once. Each usage value
+you treat as standard price is listed on the dashboard with **Take back**: past
+refunds stay, and calls from then on are charged at the worst case again. The
+daily digest counts a try a service asked to make later as a wait, not a failure.
+A very long run of dots, dashes or spaces in a workshop answer (and in a few
+other texts) could freeze Ember for seconds; every pattern in Ember's code is now
+timed against that. `plan.py` and `tools.py` are split into smaller modules,
+with no change in behaviour. Ember is MIT-licensed, and releases aren't tagged.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
@@ -580,7 +607,7 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   in `ember/app/security.py`.
 - **Least privilege.** `homeassistant_api: false`, `hassio_api: false`, no host
   network, no mapped folders besides the app's own `/data`, no published ports.
-  `ember/tests/test_manifest.py` fails if any of this is loosened. Since 0.42.0
+  `ember/tests/web/test_manifest.py` fails if any of this is loosened. Since 0.42.0
   the Python process runs as the unprivileged user `ember` (UID and GID 1000),
   not root: the s6 run script, as root, prepares `/data` and then starts Python
   with `s6-setuidgid`. At each start it gives every file in `/data` that isn't
@@ -588,7 +615,7 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   the workspace, as earlier versions wrote them as root), changing a link
   itself and never what it points to. The app's code (`/opt/ember`, the Python
   packages) is root's and read-only to it, PID 1's environment is unreadable to
-  it, and it has no capabilities. Enforced in `ember/tests/test_entrypoint.py`
+  it, and it has no capabilities. Enforced in `ember/tests/web/test_entrypoint.py`
   and by CI's image smoke test.
 - **Options can't be changed from inside.** The Supervisor hands every app a
   token that can change the app's own options or uninstall it, even with
@@ -651,8 +678,13 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   again when the service said (1 minute to 6 hours later, at most 3 times),
   through every check again (`ember/app/integrations/retry.py`). Nothing that may
   have changed something is tried again, nor anything an unlock approved, nor an
-  email. A card whose file changed since it was proposed says so, and its
-  Approve is refused. The kill switch stops whatever
+  email. 0.42.2: like an email, an approved listing, change, pin, post, Printify
+  product or blog page that Ember's code hasn't begun within 7 days of its
+  approval (also one still waiting for its service) isn't carried out at all:
+  it is closed unsent, and the agent proposes it again if it still fits
+  (`ember/app/integrations/connectors.py`). Nothing that began ages out, nor
+  the owner's Undo. A card whose file changed since it was proposed says so,
+  and its Approve is refused. The kill switch stops whatever
   Ember's code hasn't begun, also in the middle of a round (0.37.3). A Reddit
   post becomes a link the owner opens and posts from their own account; a KDP
   book (0.25.0) becomes a package the owner publishes at KDP from their own
@@ -662,7 +694,7 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   the text can't close. What the agent writes back can quote it word for word:
   since 0.39.4 tool-call markup in a text is only text, except in the agent's
   journal, where a call written inside it runs only when it only reads
-  (`ember/app/agent/tools.py`, `unleaked` and `run`).
+  (`unleaked` in `ember/app/agent/tools_checks.py`, `run` in `tools.py`).
 - **CSRF.** State-changing requests must carry an `X-Ember-Request: 1` header,
   which cross-site pages can't send.
 - **Strict CSP.** No inline scripts or styles; Chart.js is vendored, nothing is
@@ -729,6 +761,22 @@ ruff check app tests && ruff format --check app tests
 GitHub Actions runs the same checks and builds the image for both architectures
 (`.github/workflows/ci.yml`).
 
+The tests are grouped by feature, one package each under `ember/tests/`: `cycle/`
+(the wake cycle, its context, prompts, wakes and model calls), `plan/` (the plan
+tree, its steps, waits and promises, the roadmap), `ventures/`, `learning/` (the
+daily review, the weekly look, lessons and bets), `money/` (the ledger, the
+budget guard, life states), `owner/` (requests, unlocks, NEVER, the audit, parks),
+`tools/` (the sandbox, the workspace, the workshop, tool limits), `mail/`,
+`channels/` (Etsy, Pinterest, Bluesky, Printify, the blog and the website, the
+publishing queue), `products/` (the files Ember makes, KDP) and `web/` (the web
+layer, the database, the report, the manifest). `conftest.py` and the shared
+helpers (`*_helpers.py`) stay at the top, so their fixtures apply everywhere;
+`python -m pytest tests/plan` runs one package. A fix's tests go into the module of
+the feature it fixes, each test's docstring telling its release's story, not
+into a module named for the release. A test of a migration computes the
+migrations it expects from `app/migrations/` (`discover_migrations()`), so a new
+migration changes no older test.
+
 ### Secret scanning
 
 This repository is public, and everything ever committed stays in its history.
@@ -764,10 +812,10 @@ committed in 0.4.0, which has to be changed where it is used.
    green on that exact commit (tests and lint, the secret scan, both image
    builds). The secret scan reads every branch on GitHub, so a finding on any
    branch makes it red.
-5. Only then fast-forward the branch Home Assistant tracks to that commit, push
-   it, and tag it: `git tag v0.2.0 <commit> && git push origin v0.2.0`. A push
-   to the tracked branch is the release, so never push a commit there that CI
-   hasn't passed.
+5. Only then fast-forward the branch Home Assistant tracks to that commit and
+   push it. A push to the tracked branch is the release (the version lives in
+   `ember/config.yaml`; releases aren't tagged), so never push a commit there
+   that CI hasn't passed.
 6. In Home Assistant, the app shows an update (reload the store to see it sooner).
    Updating rebuilds the image on the device.
 
@@ -802,7 +850,8 @@ ember/                       the app
     agent/                   the wake cycle, tools, context, fake model (constitution.md: the fixed prompt core)
     integrations/            Ember's mailbox (IMAP/SMTP), the executor of approved emails, Reddit links,
                              Etsy, Pinterest, Bluesky, Printify, the blog's SFTP uploads
-  tests/
+  tests/                     by feature: cycle/, plan/, ventures/, learning/, money/, owner/, tools/,
+                             mail/, channels/, products/, web/; conftest.py and the shared helpers on top
 ```
 
 ## Differences from the original spec
@@ -848,5 +897,6 @@ the documentation wins:
 
 ## License
 
-No license has been chosen yet. Chart.js (vendored in
-`ember/app/web/static/vendor/`) is MIT-licensed; its license file sits next to it.
+Ember is released under the MIT License: see [LICENSE](LICENSE). Chart.js
+(vendored in `ember/app/web/static/vendor/`) is MIT-licensed too; its license file
+sits next to it.

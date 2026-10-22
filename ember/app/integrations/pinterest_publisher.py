@@ -10,7 +10,9 @@ hours, hours after the last pin, a listing at most every two days) and goes out 
 request of theirs (executor 'pinterest_delete'), carried out here too, at once. The sync reads each live pin's numbers
 (impressions, saves, outbound clicks) at most every SYNC_HOURS. 0.42.0 (M3): when Pinterest asks Ember's code to come
 back later (HTTP 429, or 503 with Retry-After) at a pin on a board that exists, the pin stays approved and waits for its
-slot again, from then on (retry.py); a pin that made a new board first isn't tried again.
+slot again, from then on (retry.py); a pin that made a new board first isn't tried again. 0.42.2 (M2): a pin not
+begun within connectors.APPROVED_DAYS of its approval, or still waiting for Pinterest then, is closed unsent, as an
+email is (connectors.stale).
 
 0.30.2: the sandbox's test pin (executor 'pinterest_test_pin'), for the video of the owner's Standard access request:
 a request of Ember's code, put on the owner's list when they connect with the sandbox option on (``request_test``):
@@ -392,6 +394,8 @@ class Publisher:
                 return "skipped"  # cancelled or decided meanwhile (or Pinterest's wait isn't over)
             if connectors.halted(conn):
                 return connectors.HALTED  # 0.37.3: the kill switch came on while this round ran
+            if (stale := connectors.stale(conn, row, self.clock.now())) is not None:  # 0.42.2 (M2): too old to begin
+                return self._lapsed(conn, row, stale, stamp)
             if created_today(conn, self.clock, scope) >= self.settings.pinterest_pins_per_day:
                 return "waiting_limit"
             try:
@@ -492,6 +496,13 @@ class Publisher:
             " VALUES (?, ?, ?, ?, ?, 'running', ?)",
             (scope.mode, scope.session, approval_id, title[:100], link[:500], stamp),
         )
+
+    def _lapsed(self, conn: sqlite3.Connection, row: sqlite3.Row, why: str, stamp: str) -> str:
+        """0.42.2 (analysis-0.40.1 audit, M2): a pin approved more than connectors.APPROVED_DAYS ago that never began
+        (or that waited for Pinterest since) is closed unsent (connectors.lapse)."""
+        note = connectors.lapse(conn, row, "Not pinned", why, stamp)
+        events.record(self.db, "warning", "pinterest", f"Request #{row['id']}: {note}"[:300])
+        return "failed"
 
     def _wait(self, approval_id: int, exc: Exception) -> str | None:
         """0.42.0 (M3): Pinterest asked to come back later before anything changed (``pinterest.Busy``): the pin

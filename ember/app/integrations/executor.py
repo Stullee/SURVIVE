@@ -76,8 +76,9 @@ REPLIED = (
 WAITING_REPLY = "waiting_reply"  # 0.40.3: a run's outcome for an approved email REPLIED holds
 # 0.40.3 (analysis-0.40.1 codebase, M2): an approved email not begun within this many days of its approval (a pause, a
 # wait for money, the daily limit, the kill switch or an unread reply held it) is closed unsent: on Resume after 21
-# days paused, one approved before went out at once, to someone who may have long moved on
-APPROVED_DAYS = 7
+# days paused, one approved before went out at once, to someone who may have long moved on. 0.42.2 (analysis-0.40.1
+# audit, M2): the days of every request Ember's code carries out (connectors.stale)
+APPROVED_DAYS = connectors.APPROVED_DAYS
 STALE = (
     "it didn't go out within {days} days of its approval (Ember was paused, or it waited for money, the daily limit or"
     " an email to be read), so it may no longer fit: it takes a new request if it still does"

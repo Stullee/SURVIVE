@@ -15,11 +15,14 @@ anything is sealed, and only Ember's own code talks to the mail server.
 from __future__ import annotations
 
 import contextlib
+import functools
+import itertools
 import json
 import logging
 import math
 import re
 import secrets
+import statistics
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -120,6 +123,13 @@ MAX_CONVERSATION_BYTES = 96_000
 # this share on
 ROOM_MARKER = "Room: "
 ROOM_SHORT = 0.75
+# 0.42.1 (analysis-0.40.1 codebase, 6.2 cache): every cycle's first step wrote the tools and the system prompt to the
+# cache again (9,500 to 12,300 tokens, about $0.025 to $0.03 on Sonnet 5): cycles are 30 minutes or more apart, and an
+# entry lives 5 minutes. One that lives an hour costs 2 times the input price to write (5 minutes': 1.25 times) and
+# pays only when the next cycle reads it, so a cycle asks for it when the median of the last CACHE_GAPS gaps between
+# cycle starts is at most CACHE_HOUR_GAP_MINUTES (cache_ttl): within the hour, with time for the cycle's own work.
+CACHE_GAPS = 3
+CACHE_HOUR_GAP_MINUTES = 50
 MAX_EMPTY_NUDGES = 1
 RETRY_DELAY_SECONDS = 5.0
 NUDGE = "Continue with the plan, or reply with a short report of what you did."
@@ -141,6 +151,21 @@ CUT_OTHER = (
 def cut_call(name: str) -> str:
     """Why a call of a reply cut off by max_tokens didn't run, and how its next try fits."""
     return CUT_CALL if name in ("workspace_write", "draft") else CUT_OTHER
+
+
+def cache_ttl(conn: Any, simulated: bool) -> str:
+    """0.42.1 (analysis-0.40.1 codebase, 6.2 cache): the lifetime of the cache entry at the end of the system prompt
+    for the cycle that began last (its row is the newest), from the gaps between its start and those of the cycles
+    before it (CACHE_GAPS, CACHE_HOUR_GAP_MINUTES): prompts.HOUR, or prompts.FIVE_MINUTES (also without a gap yet)."""
+    starts = [
+        from_iso(row[0])
+        for row in conn.execute(
+            "SELECT started_at FROM cycles WHERE simulated = ? ORDER BY id DESC LIMIT ?",
+            (1 if simulated else 0, CACHE_GAPS + 1),
+        )
+    ]
+    gaps = [(newer - older).total_seconds() / 60 for newer, older in itertools.pairwise(starts)]
+    return prompts.HOUR if gaps and statistics.median(gaps) <= CACHE_HOUR_GAP_MINUTES else prompts.FIVE_MINUTES
 
 
 def room_line(size: int) -> str:
@@ -324,6 +349,10 @@ class CycleRunner:
         self.marketing_apart = False
         self.owner_waits = False  # 0.28.0: the owner woke the cycle and their messages wait: READY isn't forced
         self.max_steps = settings.max_tool_steps
+        # 0.42.1 (analysis-0.40.1 codebase, 6.2): the lifetime of the system prompt's cache entry in the cycle's plan,
+        # work steps and reflection (cache_ttl), and who planned when the planner's model refused (_plan_answer)
+        self.cache_ttl = prompts.FIVE_MINUTES
+        self.plan_note: str | None = None
         # 0.15.0: why the owner's unlocks don't act in this cycle (policy.off; the service knows safe mode)
         self.unlocks_off = policy.off(settings.owner_user_ids, False) if unlocks_off is None else unlocks_off
 
@@ -366,6 +395,7 @@ class CycleRunner:
         self.reactive = trigger == "event"
         self.news_kept = frozenset()  # 0.15.0: set by the first work step (a cycle that plans no work keeps none)
         self.notes_kept = None  # 0.40.3 (analysis-0.40.1 codebase, C2): set by an ordinary cycle's plan
+        self.cache_ttl, self.plan_note = prompts.FIVE_MINUTES, None  # 0.42.1: set by the plan (_plan_act_reflect)
         self.max_steps = (
             min(self.settings.max_tool_steps, agenda.REACTIVE_STEPS) if self.reactive else self.settings.max_tool_steps
         )
@@ -427,6 +457,8 @@ class CycleRunner:
             log.exception("Wake cycle #%d failed", cycle_id)
             end = CycleEnd("failed", f"internal error ({type(exc).__name__})")
         end.cycle_id = cycle_id
+        if self.plan_note:  # 0.42.1 (analysis-0.40.1 codebase, 6.2): the cycle's note says who made its plan
+            end.note = f"{self.plan_note}; {end.note}" if end.note else self.plan_note
         if end.sleep_minutes is None:
             end.sleep_minutes, end.sleep_reason = state.sleep_minutes, state.sleep_reason or None
         try:
@@ -991,23 +1023,22 @@ class CycleRunner:
         ctx.net_runway_days = self.net_runway_days  # 0.13.0: the knock-outs' slow rule
         kind = "venture " if ctx.venture else "marketing " if ctx.marketing else ""
         self._progress(cycle_id, phase="plan", current_action=f"Planning this {kind}cycle")
-        request = None
+        with self.db.connection() as conn:
+            self.cache_ttl = cache_ttl(conn, self.meter.simulated)  # 0.42.1 (analysis-0.40.1 codebase, 6.2 cache)
+        plan_for: Callable[..., dict[str, Any]] | None = None
         for scale in PLANNER_SCALES:
             planner, planned = context.planner_context(snap, self.dry_run, scale)
-            request = prompts.plan_request(self.settings, planner, venture=ctx.venture, marketing=ctx.marketing)
-            if context.fits(request, PLANNER_OPENING.input_tokens):
+            plan_for = functools.partial(
+                prompts.plan_request, self.settings, planner, venture=ctx.venture, marketing=ctx.marketing
+            )
+            if context.fits(plan_for(cache_ttl=self.cache_ttl), PLANNER_OPENING.input_tokens):
                 break
         else:
             return CycleEnd("failed", "the planning prompt doesn't fit its budget")
-        try:
-            result = self._call(cycle_id, "plan", request)
-        except CallRefused as exc:
-            return CycleEnd("refused", f"planning refused: {exc.reason}", rerun=exc.state == "critical")
-        except CallFailed as exc:
-            return CycleEnd("failed", f"planning failed: {exc.result.error or exc.result.status}")
-        response = result.response or {}
+        response = self._plan_answer(cycle_id, plan_for)
+        if isinstance(response, CycleEnd):
+            return response
         text = _text_of(response)
-        self._save_text(result.call_id, text, response)
         stop = response.get("stop_reason")
         if stop == "refusal":
             return CycleEnd("stopped", "the model refused to plan")
@@ -1174,6 +1205,55 @@ class CycleRunner:
         if ctx.state.sleep_minutes:  # set_sleep, the last call winning (the reflection's after the act phase's)
             return CycleEnd(status, note, sleep_minutes=ctx.state.sleep_minutes, sleep_reason=ctx.state.sleep_reason)
         return CycleEnd(status, note, sleep_minutes=plan.sleep_minutes)
+
+    def _plan_answer(self, cycle_id: int, plan_for: Callable[..., dict[str, Any]]) -> dict[str, Any] | CycleEnd:
+        """The plan call's answer (its text kept), or how the cycle ends; ``plan_for`` builds the plan request.
+        0.42.1 (analysis-0.40.1 codebase, 6.2): with the system prompt cached for the cycle's ``cache_ttl``, if the plan
+        fits the guard so: an hour's entry costs more to write, and a plan refused for money starves Ember. A refusal by
+        the planner's model is planned once more on the worker's, if that is another model, in the same cycle and under
+        the same guard and caps (after a back-off the planner would likely refuse the same context again), and the
+        cycle's note says so (``plan_note``). A refusal of that plan, or the guard's, ends the cycle as the refusal did.
+        A work step's refusal still ends the cycle at once."""
+        request = plan_for(cache_ttl=self.cache_ttl)
+        if self.cache_ttl == prompts.HOUR and not self._fits(cycle_id, "plan", request):
+            request = plan_for()
+        try:
+            response = self._answered(cycle_id, "plan", request)
+        except CallRefused as exc:
+            return CycleEnd("refused", f"planning refused: {exc.reason}", rerun=exc.state == "critical")
+        except CallFailed as exc:
+            return CycleEnd("failed", f"planning failed: {exc.result.error or exc.result.status}")
+        planner, worker = str(request["model"]), self.settings.worker_model
+        if response.get("stop_reason") != "refusal" or planner == worker:
+            return response
+        events.record(
+            self.db, "warning", "agent", f"{planner} refused to plan cycle #{cycle_id}: {worker} plans it, once"
+        )
+        try:
+            response = self._answered(cycle_id, "plan", plan_for(model=worker))
+        except CallRefused as exc:
+            note = f"the model refused to plan, and the guard refused {worker}'s plan: {exc.reason}"
+            return CycleEnd("stopped", note, rerun=exc.state == "critical")
+        except CallFailed as exc:
+            note = f"the model refused to plan, and {worker}'s plan failed: {exc.result.error or exc.result.status}"
+            return CycleEnd("stopped", note)
+        if response.get("stop_reason") != "refusal":
+            self.plan_note = f"planned by {worker} after {planner} refused"
+        return response
+
+    def _answered(self, cycle_id: int, purpose: str, request: dict[str, Any]) -> dict[str, Any]:
+        """A metered call's answer, its text kept. Raises CallRefused or CallFailed."""
+        result = self._call(cycle_id, purpose, request)
+        response = result.response or {}
+        self._save_text(result.call_id, _text_of(response), response)
+        return response
+
+    def _fits(self, cycle_id: int, purpose: str, request: dict[str, Any]) -> bool:
+        """Whether the guard would let ``request`` through as a ``purpose`` call now (reads only)."""
+        try:
+            return self.meter.affordable(request, purpose, cycle_id)[0]
+        except Unpriceable:
+            return False
 
     def _line_milestone(self, conn: Any, plan: Plan, focus: Any) -> str:
         """0.28.0: a cycle on one line is aimed at a milestone the line may serve (its own, its venture's, or one of no
@@ -1915,6 +1995,11 @@ class CycleRunner:
             response = result.response or {}
             content = response.get("content") or []
             stop = response.get("stop_reason")
+            if stop == "refusal" and not content:
+                # 0.42.1: a refusal before any output (a classifier's usual way) ends the cycle like one with text: it
+                # was nudged once (another paid call on the same refused context) and then ended as "done"
+                act.end_reason = "refusal"
+                return act
             if not content:
                 # The API rejects an empty assistant turn, so it is never sent back: nudge inside the last
                 # user turn instead (once), or end the act phase.
@@ -2000,6 +2085,7 @@ class CycleRunner:
             "blog": self.blog_on,
             "bluesky": self.bluesky_on,
             "kdp": self.kdp_on,
+            "cache_ttl": self.cache_ttl,  # 0.42.1 (analysis-0.40.1 codebase, 6.2 cache)
             **_offered(ctx),
         }
 
@@ -2808,8 +2894,9 @@ def _rejected(error: str | None) -> bool:
 
 
 def _first_object(text: str) -> str | None:
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    return match.group(0) if match else None
+    # 0.42.2 (analysis-0.40.1 audit): as review's; re.search(r"\{.*\}", text, re.DOTALL) tried each '{' (quadratic)
+    start, end = text.find("{"), text.rfind("}")
+    return text[start : end + 1] if 0 <= start < end else None
 
 
 def _step_growth(state: tools.CycleTools, turns: list[dict[str, Any]]) -> int:
