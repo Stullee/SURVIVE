@@ -248,7 +248,7 @@ def test_a_live_post_counts_for_the_product_line_its_second_link_links(data_dir:
     with agent.db.connection() as conn:
         [funnel] = reach.funnels(conn, scope).values()
         assert funnel.listings == [LISTING] and funnel.bluesky == 1
-        assert f" -> {PAGE} and {LISTING_URL}: " in bluesky_publisher.text(conn, scope)
+        assert f" -> {PAGE} and {LISTING_URL}: " in bluesky_publisher.text(conn, scope, agent.clock)
         [shown] = [bluesky_publisher.post_json(r) for r in bluesky_publisher.posts(conn, scope)]
         assert (shown["link"], shown["second_link"]) == (PAGE, LISTING_URL)
     # The listing as the link and the page as the second: one post more, counted once for the line it links.

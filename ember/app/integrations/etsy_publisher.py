@@ -1453,6 +1453,10 @@ def shop_text(
             lines.append(
                 f"- #{r['listing_id']} [{state}] {_flat(r['title'], 80)} · since {r['started_at'][:10]}{ending}"
             )
+        elif waits := retry.waiting_words(conn, r["approval_id"], clock, "Etsy"):
+            # 0.42.5: Etsy asked to wait, nothing listed: it read "[failed] ...: HTTP 429", and the agent could
+            # propose the listing again while its approval was still to be tried
+            lines.append(f"- request #{r['approval_id']} [{retry.SHOWN}] {_flat(r['title'], 80)}: {waits}")
         else:
             lines.append(
                 f"- request #{r['approval_id']} [{r['status']}] {_flat(r['title'], 80)}: {_flat(r['error'], 100)}"
@@ -1475,10 +1479,12 @@ def shop_text(
         params,
     ).fetchall()
     if waiting:
-        where_now = {"pending": "your owner decides"}
-        changes = [
-            f"request #{w['id']} for #{w['listing_id']} ({where_now.get(w['status'], 'approved')})" for w in waiting
-        ]
+        changes = []
+        for w in waiting:
+            waits = retry.waiting_words(conn, w["id"], clock, "Etsy")  # 0.42.5: Etsy asked to wait, with until when
+            where_now = "your owner decides" if w["status"] == "pending" else "approved"
+            where_now = f"{retry.SHOWN}: {waits}" if waits else where_now
+            changes.append(f"request #{w['id']} for #{w['listing_id']} ({where_now})")
         lines.append(f"Changes not made yet: {'; '.join(changes)}.")
     return "\n".join(lines)
 

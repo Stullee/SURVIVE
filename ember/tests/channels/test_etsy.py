@@ -1475,7 +1475,7 @@ def test_the_plan_and_the_review_see_every_live_listing_top_sellers_first(data_d
         )
     with agent.db.connection() as conn:
         shop = etsy_publisher.shop_text(conn, scope, agent.clock, "Shop", 3)
-        review_text = review._etsy(conn, scope, to_iso(agent.clock.now() - timedelta(days=1)))
+        review_text = review._etsy(conn, scope, agent.clock, to_iso(agent.clock.now() - timedelta(days=1)))
     summary = next(line for line in shop.splitlines() if line.startswith("All 15 live listings"))
     order = [int(part.split(" ", 1)[0][1:]) for part in summary.split(": ", 1)[1].split(" · ")]
     assert sorted(order) == list(range(5_001, 5_016)) and order[0] == 5_001  # all, the one that sold first

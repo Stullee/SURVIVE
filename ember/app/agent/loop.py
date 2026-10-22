@@ -879,7 +879,7 @@ class CycleRunner:
                 account = self.pinterest.username() or "your owner's account"
                 per_day = self.settings.pinterest_pins_per_day
                 pins = f"Your owner's account: {account} (at most {per_day} pins a day).\n" + pinterest_publisher.text(
-                    conn, self.scope
+                    conn, self.scope, self.clock
                 )
                 queue = publish_queue.text(conn, self.scope, self.clock, "pinterest", per_day)  # 0.37.8
                 pins += f"\n{queue}" if queue else ""
@@ -888,7 +888,7 @@ class CycleRunner:
             posted = ""
             if self.bluesky_on and self.bluesky is not None:  # 0.19.0
                 posted = _bluesky_head(self.bluesky, self.settings.bluesky_posts_per_day) + bluesky_publisher.text(
-                    conn, self.scope
+                    conn, self.scope, self.clock
                 )
                 queue = publish_queue.text(conn, self.scope, self.clock, "bluesky", self.settings.bluesky_posts_per_day)
                 posted += f"\n{queue}" if queue else ""  # 0.37.8
@@ -900,7 +900,7 @@ class CycleRunner:
                 pod = (
                     f"Printify shop: {known.get('title') or 'yours'} (prices in {self.settings.printify_currency};"
                     f" at most {self.settings.printify_products_per_day} products a day).\n"
-                    + printify_publisher.text(conn, self.scope)
+                    + printify_publisher.text(conn, self.scope, self.clock)
                 )
             elif self.printify is not None:  # 0.15.0: switched on, but not set up
                 pod = _waiting("Printify", self.printify.status(), self._etsy_state(), self.printify_waits)

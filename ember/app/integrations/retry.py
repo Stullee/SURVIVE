@@ -29,6 +29,11 @@ had to press it again. Its delete is one call: a "come back later" to it changed
 executor's, so it waits in its journal entry alone (``park`` with no table; ``waiting`` and ``due`` read the journal as
 for the others), and its card reads it there (``undo_execution``). Etsy's Undo is a change, which waited already. An
 Undo never ages out (connectors.AGING), waiting or not.
+
+0.42.5: the sections the agent reads (ETSY SHOP, PINTEREST, BLUESKY, PRINTIFY and the daily review's listings) showed
+the executor's 'failed' row of a request that waits, with the service's "HTTP 429", so the agent could propose the same
+listing, pin, post or product again while its approval was still to be tried. Now they say it waits, until when, and
+not to propose it again (``waiting_words``); one its service refused after its tries still reads as failed.
 """
 
 from __future__ import annotations
@@ -48,6 +53,7 @@ FLOOR = timedelta(minutes=1)  # the shortest wait, whatever Retry-After says
 CEILING = timedelta(hours=6)  # and the longest
 UNSAID = timedelta(minutes=15)  # the wait when the service names none
 LATER = "retrying"  # what a run says of a request that waits for its service, and its status on the Approvals tab
+SHOWN = "waiting"  # 0.42.5: its status in the sections the agent reads (waiting_words says why)
 APPROVED = ("approved", "approved_with_changes")
 # The executors' rows a request waits in (0.42.3: and Printify's products and changes)
 PARKED = ("etsy_listings", "etsy_edits", "pinterest_pins", "bluesky_posts", "printify_products", "printify_edits")
@@ -156,8 +162,18 @@ def may_wait(conn: sqlite3.Connection, approval_id: int) -> bool:
 
 
 def _when(clock: Clock, at: datetime) -> str:
-    local = at.astimezone(clock.tz)
-    return f"{local:%H:%M}" if local.date() == clock.today() else f"{local:%H:%M} tomorrow"
+    local, today = at.astimezone(clock.tz), clock.today()
+    # 0.42.5: or a day past (waiting_words: while paused, or until a pin's or post's slot), which read "tomorrow"
+    days = {today: "", today + timedelta(days=1): " tomorrow", today - timedelta(days=1): " yesterday"}
+    return f"{local:%H:%M}{days.get(local.date(), f' on {local:%Y-%m-%d}')}"
+
+
+def waiting_words(conn: sqlite3.Connection, approval_id: int | None, clock: Clock, service: str) -> str | None:
+    """0.42.5: why a request that waits for its service isn't out yet, for the sections the agent reads (its executor's
+    row says 'failed' until it is tried again): "Etsy asked to come back at 14:05; don't propose it again". None when
+    it doesn't wait: one its service refused after its tries reads as failed."""
+    at = waiting(conn, approval_id) if approval_id is not None else None
+    return None if at is None else f"{service} asked to come back at {_when(clock, at)}; don't propose it again"
 
 
 def park(

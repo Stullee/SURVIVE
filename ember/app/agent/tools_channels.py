@@ -55,7 +55,7 @@ def _pinterest_boards(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
     made = pinterest_publisher.boards(conn, ctx.scope)
     head = f"Your owner's Pinterest account: {account.username} (at most {account.daily_limit} pins a day)."
     queue = publish_queue.text(conn, ctx.scope, ctx.clock, "pinterest", account.daily_limit)  # 0.37.8
-    text = f"{head}\n{pinterest_publisher.text(conn, ctx.scope, 12)}" + (f"\n{queue}" if queue else "")
+    text = f"{head}\n{pinterest_publisher.text(conn, ctx.scope, ctx.clock, 12)}" + (f"\n{queue}" if queue else "")
     return Outcome(True, text, f"{len(made)} boards")
 
 
@@ -254,8 +254,9 @@ def _bluesky_posts(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
         return Outcome(True, f"{head}.\nNo post of yours yet." + (f"\n{queue}" if queue else ""), "0 posts")
     synced = max((str(r["synced_at"]) for r in made if r["synced_at"]), default=None)
     read = f"Numbers as Ember's code read them at {_local(ctx, synced)}" if synced else "Numbers not read yet"
+    listed = bluesky_publisher.text(conn, ctx.scope, ctx.clock, 12)
     text = (
-        f"{head}; {bluesky_publisher.summary(conn, ctx.scope)}.\n{bluesky_publisher.text(conn, ctx.scope, 12)}\n"
+        f"{head}; {bluesky_publisher.summary(conn, ctx.scope)}.\n{listed}\n"
         f"{read}. Bluesky counts no views or clicks: the listings a post links show their views (etsy_listing)."
     )
     queue = publish_queue.text(conn, ctx.scope, ctx.clock, "bluesky", account.daily_limit)  # 0.37.8

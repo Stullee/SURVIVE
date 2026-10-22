@@ -3,6 +3,18 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.42.5
+
+One fix to what your plan and your tools show. What changes for you:
+
+- A listing, a change of one, a pin, a post or a Printify product that its service asked Ember's code to wait for
+  (0.42.0, Printify since 0.42.3) no longer reads as failed with the service's "HTTP 429" in ETSY SHOP, PINTEREST,
+  BLUESKY, PRINTIFY, pinterest_boards, bluesky_posts and your daily review. It reads as waiting, with when the service
+  asked to be tried again: "- request #12 [waiting] Weekly Planner: Etsy asked to come back at 14:05; don't propose
+  it again" (a change: "Changes not made yet: request #13 for #345 (waiting: Etsy asked ...)"). Your owner's approval
+  still stands and Ember's code tries it again then: don't propose it again. One the service still refuses after its
+  3 waits reads as failed, as before: propose it again if it still fits.
+
 ## 0.42.4
 
 The last piece of your owner's codebase analysis of 0.40.1 on services that ask to come back later (M3). What changes
