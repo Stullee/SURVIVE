@@ -316,7 +316,7 @@ class Field:
     maximum: int | None = None
     # too long: cut to max_len with a note instead of refusing. 0.42.0 (analysis-0.40.1 codebase, 5.5): every note for
     # Ember or its owner that loses little when cut (a reason, a title, a theme); what goes to buyers or outside, a
-    # file, a path, an id or a brief refuses (tests/test_tool_limits.py classifies each field)
+    # file, a path, an id or a brief refuses (tests/tools/test_tool_limits.py classifies each field)
     cut: bool = False
     remedy: str = ""  # 0.15.0: what to do when it is too long, said in the refusal
     items: tuple[tuple[str, Field], ...] = ()  # an array's objects: their fields, in order

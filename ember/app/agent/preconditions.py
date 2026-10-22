@@ -20,7 +20,7 @@ Not here: what only the call's input shows (a text too long, a picture, a listin
 daily limits (etsy_listings_per_day, pinterest_pins_per_day and the like), by which no tool refuses: an approved
 request waits for the next day in Ember's code (integrations/*_publisher.py, executor.py), and proposing it today
 costs no refusal. The workshop's runs a day are the workshop's own refusal, and no step's tool is the workshop.
-tests/test_preconditions.py fails on a refusal in tools.py that reads one of these limits itself.
+tests/plan/test_preconditions.py fails on a refusal in tools.py that reads one of these limits itself.
 """
 
 from __future__ import annotations
@@ -60,7 +60,7 @@ class Facts:
 @dataclass(frozen=True)
 class Rule:
     """A precondition: ``check`` returns its refusal's text, or None; ``wait`` is what a step of a tool that refuses
-    by it waits on (plan.WAITS); ``name`` names it (tests/test_preconditions.py reads tools.py by it)."""
+    by it waits on (plan.WAITS); ``name`` names it (tests/plan/test_preconditions.py reads tools.py by it)."""
 
     name: str
     wait: str

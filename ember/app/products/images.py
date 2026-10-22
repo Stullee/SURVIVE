@@ -61,7 +61,7 @@ LOOK_BITS = 2 * LOOK_SIZE * LOOK_SIZE
 MARK = "ember-shows"  # a PNG text chunk: a hash of what a photo make_image made shows (its pages or lines)
 _LOOKS: dict[str, str] = {}  # looks by the picture's SHA-256 (a request card shows the same photos again and again)
 # Pillow's own guard against decompression bombs stays above the limit: it warns above Image.MAX_IMAGE_PIXELS (89 MP)
-# and refuses twice that, so it never refuses a picture within MAX_PIXELS (tests/test_fixes_0140_factory.py).
+# and refuses twice that, so it never refuses a picture within MAX_PIXELS (tests/products/test_pictures.py).
 
 
 class ImageError(ValueError):
