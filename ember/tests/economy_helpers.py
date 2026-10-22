@@ -8,8 +8,9 @@ from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import Any
 
+from app import db as dbmod
 from app.config import LoadedSettings, Settings
-from app.db import Database, migrate
+from app.db import Database
 from app.economy.clock import Clock
 from app.economy.metering import Completed, MeteredModel, Outcome
 from app.economy.service import Economy
@@ -79,7 +80,7 @@ def make_economy(
 ) -> Economy:
     db = Database(data_dir / "ember.db")
     _opened.append(db)
-    migrate(db.path)
+    dbmod.migrate(db.path)  # a copy of a migrated database, while conftest.py's migrate_from_a_copy is in place
     loaded = LoadedSettings(settings or Settings(), errors=["broken option"] if safe_mode else [])
     economy = Economy(db, loaded, clock=clock or FakeClock())
     economy.start()
