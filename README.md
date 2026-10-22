@@ -577,6 +577,13 @@ dated version of its model is no longer charged at its worst case. And tests:
 every refusal of the money guard, the kill switch pressed mid-round for every
 channel, and three dashboard routes over HTTP.
 
+0.42.4: a listing, pin, post or Printify product its service rate-limited
+(and that stays approved, to be retried) no longer shows as "failed: HTTP 429"
+in what Ember reads each cycle. It shows as waiting, with when the service asked
+to be tried again and a "don't propose it again", so Ember no longer proposes the
+same thing a second time while your first approval is still to go out. One that
+is still refused after its 3 retries shows as failed, as before.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
