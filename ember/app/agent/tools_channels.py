@@ -549,6 +549,7 @@ def _propose_blog_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Out
         conn,
         payload,
         action,
+        public=[post.body],  # 0.45.0 (C1): the article itself, which its action names by its hash
         type="publish",
         title=_cut(f"Blog post: {post.title}", 120),
         description=reason,

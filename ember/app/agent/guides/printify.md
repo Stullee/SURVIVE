@@ -19,7 +19,7 @@ A PRODUCT NEEDS:
 2. variants of one print area's shape (posters of 12x18 and 24x36 in are both 2:3), with their prices in the shop's
    currency: 'variant_id: price, ...' (at most {MAX_VARIANTS}).
 3. the listing's title, description (what it is, sizes, material, made on order) and tags, as for any listing (Etsy's
-   rules). Ember's code adds a line saying AI helped design it.
+   rules). Ember's code adds a line saying Ember, an AI agent, made it.
 4. its project (a product line): a new product line's first product needs a demand note, as a listing does.
 
 PRICES: each price must keep {MIN_MARGIN}% of what the buyer pays after Etsy's fees, making and shipping (who pays

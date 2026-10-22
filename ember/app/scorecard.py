@@ -29,13 +29,20 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import Any
 
-VERSION = 1  # the definitions' version: a changed floor, target or formula gets a new one
+from .agent import digest
+from .economy.ledger import OWN_CORRECTIONS, SETTLED_COST
+
+# The definitions' version: a changed floor, target or formula gets a new one. 2 (0.45.0, evaluation 2026-10-22, C2):
+# cycles weigh what their calls cost once settled (ledger.SETTLED_COST), not what was booked, and X2 counts work
+# left undone.
+VERSION = 2
 LIMITS = ("step limit reached", "the conversation got too long")  # how a cycle's work was cut (loop's end reasons)
 PRODUCT_TOOLS = ("make_document", "make_spreadsheet", "make_image", "make_cost_statement", "resize_image", "workshop")
 BATCHED_TOOLS = ("venture_update", "plan_step", "project_update")  # decisions one cycle can make together
 SMALL_REQUESTS = ("pinterest_pin", "pinterest_test_pin", "bluesky_post")  # a pin or a post counts a fifth
 NOT_SHIPPED = ("pinterest_delete", "bluesky_delete", "printify_delete", "site_restore", "live_will")  # Undos, the will
 RUNWAY_CAP = 365.0  # days: what a runway with no net burn shows
+NOT_DONE = ("error", "skipped", "interrupted", "started")  # a tool call that wasn't done (agent/digest.py)
 ANSWER_HOURS = 12  # an owner's message answered within this many hours counts as answered
 CASE_DAYS = 2  # a retrospective within this many days of what settled counts
 LOOKBACK_DAYS = 28  # calibration, evidence and the critic's cases: the last four weeks
@@ -82,9 +89,9 @@ DEFINITIONS = (
         0.85,
         10,
         "both",
-        "share of the cycles' cost spent in cycles that moved something: a request proposed, a product made, a plan"
-        " step closed, an owner's message answered, a venture moved (not parked within a day of its idea), a bet, a"
-        " daily review or a weekly look",
+        "share of the cycles' settled cost spent in cycles that moved something: a request proposed, a product made,"
+        " a plan step closed, an owner's message answered, a venture moved (not parked within a day of its idea), a"
+        " bet, a daily review or a weekly look",
     ),
     Kpi("E4", "economy", "Cost per shipped thing", "USD", 10, 2, 1, "both", "API spend / requests approved to go out"),
     Kpi("M1", "market", "Views per live listing", "views", 1, 25, 3, "both", "listing views gained (observations)"),
@@ -101,7 +108,8 @@ DEFINITIONS = (
         0.9,
         10,
         "both",
-        "cycles whose work wasn't cut by a limit and left nothing undone",
+        "cycles whose work wasn't cut by a limit and left nothing undone: no call that wasn't done (refused, failed,"
+        " skipped or cut off) without a later call of the same tool and target that was",
     ),
     Kpi("X3", "execution", "First-pass approvals", "share", 0.5, 0.9, 3, "agent", "the owner's decisions, unchanged"),
     Kpi("X6", "execution", "Critic score", "1-10", 4, 8, 3, "agent", "the newest quality check of each listing"),
@@ -181,6 +189,17 @@ class Scorer:
         self.sim = 1 if mode == "dry_run" else 0
         self.now = now
         self.tz = tz
+        # 0.45.0 (scorecard 2, evaluation 2026-10-22, C2): each cycle's calls at what they cost once settled
+        # (ledger.SETTLED_COST), once: E3, V1, the alarms and by version weigh by it. Version 1 weighed the calls'
+        # booked cost: E3 read 74.6% for a real 78.7% in the week 10-12 to 10-18, 0.39.6 $0.922 a cycle for $0.258.
+        self.cost: dict[int, int] = {
+            int(row[0]): int(row[1])
+            for row in conn.execute(
+                f"SELECT c.cycle_id, COALESCE(SUM({SETTLED_COST}), 0) FROM llm_calls c LEFT JOIN {OWN_CORRECTIONS} k"
+                " ON k.llm_call_id = c.id WHERE c.cycle_id IS NOT NULL AND c.simulated = ? GROUP BY c.cycle_id",
+                (self.sim,),
+            )
+        }
 
     def one(self, sql: str, params: tuple[Any, ...] = ()) -> Any:
         row = self.conn.execute(sql, params).fetchone()
@@ -274,11 +293,17 @@ class Scorer:
             return RUNWAY_CAP, 1
         return min(max(int(balance), 0) / burn, RUNWAY_CAP), 1
 
-    def _cycles(self, w: Window) -> list[Any]:
-        return self.rows(
-            "SELECT c.*, COALESCE((SELECT SUM(cost_micros) FROM llm_calls l WHERE l.cycle_id = c.id), 0) AS cost"
-            " FROM cycles c WHERE c.simulated = ? AND c.started_at >= ? AND c.started_at < ? ORDER BY c.id",
-            (self.sim, w.start, w.end),
+    def _costed(self, cycles: list[Any]) -> list[dict[str, Any]]:
+        """Cycles with their settled cost (``cost``, micros)."""
+        return [{**dict(c), "cost": self.cost.get(int(c["id"]), 0)} for c in cycles]
+
+    def _cycles(self, w: Window) -> list[dict[str, Any]]:
+        return self._costed(
+            self.rows(
+                "SELECT c.* FROM cycles c WHERE c.simulated = ? AND c.started_at >= ? AND c.started_at < ?"
+                " ORDER BY c.id",
+                (self.sim, w.start, w.end),
+            )
         )
 
     def moved(self, c: Any) -> bool:
@@ -401,15 +426,35 @@ class Scorer:
         )
 
     def work_finished(self, w: Window) -> tuple[float | None, int]:
-        marks = ", ".join("?" for _ in LIMITS)
-        row = self.conn.execute(
-            "SELECT COUNT(*), COALESCE(SUM((c.act_end_reason IS NULL OR c.act_end_reason NOT IN"
-            f" ({marks})) AND COALESCE(d.undone, 0) = 0), 0) FROM cycles c LEFT JOIN cycle_digests d ON d.cycle_id ="
-            " c.id WHERE c.simulated = ? AND c.started_at >= ? AND c.started_at < ? AND EXISTS (SELECT 1 FROM"
-            " llm_calls l WHERE l.cycle_id = c.id AND l.purpose = 'work')",
-            (*LIMITS, self.sim, w.start, w.end),
-        ).fetchone()
-        return (row[1] / row[0], int(row[0])) if row[0] else (None, 0)
+        """The work cycles whose work no limit cut and that left nothing undone (``left_undone``). Version 1 counted
+        every call not done (the digest's undone), a refusal the next call put right too: in the week 10-12 to 10-18
+        X2 read 10% while 86% of the cycles weren't cut by a limit (the evaluation of 2026-10-22, Measurement 4)."""
+        cycles = self.rows(
+            "SELECT c.id, c.act_end_reason FROM cycles c WHERE c.simulated = ? AND c.started_at >= ?"
+            " AND c.started_at < ? AND EXISTS (SELECT 1 FROM llm_calls l WHERE l.cycle_id = c.id"
+            " AND l.purpose = 'work')",
+            (self.sim, w.start, w.end),
+        )
+        finished = sum(1 for c in cycles if c["act_end_reason"] not in LIMITS and not self.left_undone(int(c["id"])))
+        return (finished / len(cycles), len(cycles)) if cycles else (None, 0)
+
+    def left_undone(self, cycle_id: int) -> int:
+        """0.45.0 (scorecard 2): a cycle's work-step calls that weren't done (refused, failed, skipped or cut off) and
+        that no later call of the same tool and target (the digest's: its file, record or title) did after all. A
+        journal tried during the work isn't work (the reflection writes it)."""
+        calls = self.rows(
+            "SELECT tool, status, input FROM tool_calls WHERE cycle_id = ? AND parent_id IS NULL AND phase = 'act'"
+            " ORDER BY id",
+            (cycle_id,),
+        )
+        targets = [(c["tool"], digest.target_of(c["input"])) for c in calls]
+        return sum(
+            1
+            for n, c in enumerate(calls)
+            if c["status"] in NOT_DONE
+            and c["tool"] != "write_journal"
+            and not any(calls[m]["status"] == "ok" and targets[m] == targets[n] for m in range(n + 1, len(calls)))
+        )
 
     def first_pass(self, w: Window) -> tuple[float | None, int]:
         row = self.conn.execute(
@@ -535,11 +580,7 @@ class Scorer:
 
     def cost_per_decision(self, w: Window) -> tuple[float | None, int]:
         decisions = len(self._moves(w))
-        spent = self.one(
-            "SELECT COALESCE(SUM(l.cost_micros), 0) FROM llm_calls l JOIN cycles c ON c.id = l.cycle_id"
-            " WHERE c.simulated = ? AND c.venture = 1 AND c.started_at >= ? AND c.started_at < ?",
-            (self.sim, w.start, w.end),
-        )
+        spent = sum(int(c["cost"]) for c in self._cycles(w) if c["venture"])
         return (spent / 1_000_000 / decisions, decisions) if decisions else (None, 0)
 
     def researched(self, venture: Any) -> bool:
@@ -656,10 +697,11 @@ class Scorer:
             " GROUP BY COALESCE(app_version, '?') ORDER BY MIN(started_at)",
             (self.sim,),
         ):
-            cycles = self.rows(
-                "SELECT c.*, COALESCE((SELECT SUM(cost_micros) FROM llm_calls l WHERE l.cycle_id = c.id), 0) AS cost"
-                " FROM cycles c WHERE c.simulated = ? AND COALESCE(c.app_version, '?') = ?",
-                (self.sim, version),
+            cycles = self._costed(
+                self.rows(
+                    "SELECT c.* FROM cycles c WHERE c.simulated = ? AND COALESCE(c.app_version, '?') = ?",
+                    (self.sim, version),
+                )
             )
             cost = sum(int(c["cost"]) for c in cycles)
             moved = sum(int(c["cost"]) for c in cycles if self.moved(c))

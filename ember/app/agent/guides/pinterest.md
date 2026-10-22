@@ -9,7 +9,7 @@ A PIN NEEDS:
    sees first. Show the product in use, readable at a glance, with a few words on it. Look at it before you propose.
 2. title (at most {PIN_TITLE} characters): what it is, in the words people search ('Weekly meal planner printable').
 3. description (at most {PIN_DESCRIPTION} characters): who it helps and how, with the search words in sentences. Ember's
-   code adds a line saying AI helped design it.
+   code adds a line saying Ember, an AI agent, made it.
 4. listing_id: one of your live Etsy listings (one Printify made too): the pin sends buyers there (Ember's code sets
    the link). At most {CAP:propose_pin} pins a cycle.
 5. board_id, one of your boards, or board_name, a new board. Boards are shelves by theme ('Meal planning

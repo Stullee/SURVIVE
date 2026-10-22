@@ -3093,7 +3093,7 @@
         }), photos.length || files.length ? [h("br"), workspaceButton(photos.concat(files).map(function (f) { return f.path; }))] : null)),
       h("h4", { class: "small-head", text: final ? "The agent's original description" : "Description" }),
       h("pre", { class: "payload capped", tabindex: "0", text: asText(action.description) }),
-      h("p", { class: "muted small", text: "Ember adds this line at the end: \"This digital product was designed with the help of AI and reviewed by the seller before listing.\"" }));
+      h("p", { class: "muted small", text: "Ember adds this line at the end: \"Made by Ember, an AI agent, and checked by the seller before listing.\"" }));
   }
 
   function changeExecutionView(a, st) {

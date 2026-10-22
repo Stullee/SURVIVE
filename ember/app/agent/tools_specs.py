@@ -800,7 +800,7 @@ SPECS: dict[str, Spec] = {
         Spec(
             "propose_etsy_listing",
             "Ask your owner to approve a listing in their Etsy shop: once approved, Ember's code publishes it with "
-            "its photos and files (USD 0.20) and a line saying AI helped design it. Guide 'etsy' first.",
+            "its photos and files (USD 0.20) and a line saying an AI made it. Guide 'etsy' first.",
             {
                 "title": _s("What it is and for whom, the words buyers search for first.", etsy.TITLE_CHARS),
                 "description": _s(
@@ -877,7 +877,7 @@ SPECS: dict[str, Spec] = {
             "propose_pin",
             # 0.32.0: which listing is listing_id's (the fixed prompt's room went to workspace_write's edit)
             "Ask your owner to approve a pin on their Pinterest account: your picture on a board, linking to a "
-            "listing. Once approved, Ember's code makes it (free), with a line saying AI helped design it. Guide "
+            "listing. Once approved, Ember's code makes it (free), with a line saying an AI made it. Guide "
             "'pinterest' first.",
             {
                 "listing_id": _i("The live Etsy listing it links to.", minimum=1),
@@ -946,7 +946,7 @@ SPECS: dict[str, Spec] = {
             "Ask your owner to approve a Printify product sold in their Etsy shop: one of your pictures on a "
             "product (printify_catalog first), variants of one print area's shape with prices, and its listing. Once "
             f"approved, Ember's code publishes it if each price keeps {printify.MIN_MARGIN * 100:.0f}% after fees, "
-            "making and shipping, with a line saying AI helped design it. Guide 'printify' first.",
+            "making and shipping, with a line saying an AI made it. Guide 'printify' first.",
             {
                 "blueprint_id": _i("", minimum=1),
                 "provider_id": _i("", minimum=1),

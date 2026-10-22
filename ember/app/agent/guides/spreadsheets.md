@@ -50,4 +50,4 @@ workspace_read shows any Excel file's cells (formulas with their results); make_
 
 WHAT SELLS: trackers and planners that save time (budget, debt payoff, savings goals, habit, meal, wedding,
 bookkeeping, invoices), with dropdowns, automatic totals and charts, clear instructions, and
-realistic sample rows the buyer deletes. Say in the notes that it was made with AI help.
+realistic sample rows the buyer deletes. Say in the notes that Ember, an AI agent, made it.

@@ -434,7 +434,7 @@ def test_the_scorecard_counts_the_records(data_dir: Path, tmp_path: Path) -> Non
     files = unpacked(export.build(state_of(agent)), tmp_path)
     card = json.loads(files["scorecard.json"])
     week = card["weeks"][-1]
-    assert card["mode"] == "dry_run" and card["scorecard"] == 1 and len(card["definitions"]) == 25
+    assert card["mode"] == "dry_run" and card["scorecard"] == 2 and len(card["definitions"]) == 25
     assert week["measures"]["X1"]["sample"] == calls and week["measures"]["X1"]["value"] == round(done / calls, 3)
     assert week["measures"]["O6"] == {"value": 1.0, "sample": cycles, "score": None, "too_early": True}  # under 10
     assert card["alarms"]["today"]["cycles"] == cycles

@@ -47,7 +47,10 @@ KEYWORD_CHARS = 50
 MAX_CATEGORIES = 3
 CATEGORY_CHARS = 160  # a path such as "Self-Help > Journal Writing"
 LANGUAGES = ("English", "German", "French", "Spanish", "Italian", "Dutch", "Portuguese")
-DISCLOSURE = "This book was created with the help of AI and reviewed by the publisher before publication."
+# 0.45.0 (evaluation 2026-10-22, C1): who made it; until then EARLIER (live, her description went one step further:
+# "Designed by the author with the help of an AI tool")
+DISCLOSURE = "Made by Ember, an AI agent, and checked by the publisher before publication."
+EARLIER = ("This book was created with the help of AI and reviewed by the publisher before publication.",)
 # What the owner answers when KDP asks whether AI tools made the book's texts, images or translations: Ember's are
 # AI-generated (KDP's word for what an AI tool made, even when edited afterwards), not AI-assisted.
 AI_ANSWER = (
@@ -84,6 +87,11 @@ SPINE_TEXT_MARGIN = Decimal("0.0625")  # the space between spine text and the sp
 BARCODE = (Decimal("2"), Decimal("1.2"))  # the space KDP's barcode takes at the back cover's bottom right, in inches
 BARCODE_GAP = Decimal("0.25")  # from the trim's bottom and the spine
 SIZE_TOLERANCE = Decimal("0.01")  # inches a PDF's page may differ from the size KDP expects
+# 0.45.0 (evaluation 2026-10-22, C6): what a cover's words and pictures keep inside its trim (KDP's cover guide), the
+# coarseness its front is drawn at to find them and how far from the front's background colour counts as printed
+SAFE_ZONE = Decimal("0.125")
+FRONT_DPI = 100
+FRONT_CONTRAST = 48
 INK_DPI = 36  # pages drawn this coarsely to find what is printed in their margins (0.25 in is 9 pixels)
 INK_LEVEL = 245  # darker than this (0 to 255, any channel) counts as printed
 # An ebook's cover: KDP's proportions are 1.6 high to 1 wide; 2,560 x 1,600 is its ideal, 1,000 x 625 its least
@@ -238,8 +246,9 @@ def check_description(text: Any, limit: int = DESCRIPTION_CHARS) -> str:
     if not isinstance(text, str) or not text.strip():
         raise KdpError("the description is empty")
     text = text.replace("\r\n", "\n").strip()
-    if text.endswith(DISCLOSURE):  # Ember's code adds it; a copy the agent wrote isn't doubled
-        text = text[: -len(DISCLOSURE)].rstrip()
+    for line in (DISCLOSURE, *EARLIER):  # Ember's code adds it; a copy the agent wrote isn't doubled
+        if text.endswith(line):
+            text = text[: -len(line)].rstrip()
     if len(text) > limit:
         raise KdpError(f"the description has more than {limit:,} characters")
     if _CONTROL.search(text.replace("\n", "").replace("\t", "")):
@@ -535,6 +544,30 @@ def check_cover(size: tuple[float, float], pages: int, trim: str, paper: str) ->
         f"the cover is {inches(width)} x {inches(height)}; for {pages} pages on {paper} paper at {trim} it must be "
         f"{inches(want[0])} x {inches(want[1])} (the spine is {inches(spine_width(pages, paper))}): give cover.front "
         "for Ember's code to make it from this interior"
+    ]
+
+
+def check_front(box: tuple[float, float, float, float] | None, trim: str, pages: int, paper: str) -> list[str]:
+    """0.45.0 (evaluation 2026-10-22, C6): a paperback cover's front, where ``box`` is what it prints on its background
+    (in inches from the cover's top left corner; None: nothing, or art to its edges): it keeps SAFE_ZONE inside the
+    trim at the top, the bottom and the outside edge, or KDP's cut may take it. Live, the Haushaltsbuch's title printed
+    0.048 in inside the trim, and propose_kdp_book said KDP would take it."""
+    if box is None:
+        return []
+    width, height = (float(v) for v in cover_size(trim, pages, paper))
+    bleed, least = float(BLEED), float(SAFE_ZONE) - float(SIZE_TOLERANCE)
+    _, top, right, bottom = box
+    rooms = (("top", top - bleed), ("bottom", height - bleed - bottom), ("outside edge", width - bleed - right))
+    close = [
+        f"{inches(abs(room))} {'inside' if room >= 0 else 'beyond'} the trim at the {side}"
+        for side, room in rooms
+        if room < least
+    ]
+    if not close:
+        return []
+    return [
+        f"the cover's front prints words or pictures {', '.join(close)}: KDP asks for {inches(SAFE_ZONE)} inside the "
+        "trim, or its cut may take them"
     ]
 
 

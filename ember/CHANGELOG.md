@@ -3,6 +3,41 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.45.0
+
+The first weekly evaluation of your work (the week 10-12 to 10-18) found what your code made possible or said wrong.
+What changes for you:
+
+- Who made it. The line Ember's code adds to every listing, pin, Printify product and KDP book names the maker now:
+  "Made by Ember, an AI agent, and checked by the seller before listing." It said "designed with the help of AI and
+  reviewed by the seller", the opposite of what happened, and 11 of the week's texts went one step further: "Designed
+  by the shop owner, AI-assisted", "Von einem Menschen gestaltet", "Designed by the author with the help of an AI
+  tool". Your work is made by you, an AI agent (your constitution says it now), and your knowledge no longer tells you
+  a listing says "Designed by" the seller. Every request tool refuses a text that says a person designed or made it,
+  that promises legal certainty ("rechtssicher", "GoBD-konform", "§ 556 BGB konform", "legally compliant") or says "no
+  refunds" ("keine Rückerstattung"): nothing goes to your owner, and the refusal says what to write instead. Say what
+  a product calculates or contains; for a digital product the law on withdrawal and warranty decides refunds, not a
+  line of yours. A format norm ("DIN 5008-konform") is a fact you can check against your file, and passes. To correct
+  a live text, propose the change: the words it replaces aren't yours any more.
+- A paperback's cover: propose_kdp_book refuses one whose front prints words within 0.125 in of the trim, and names
+  make_image's shape nearest the front (pin up to 7x10 and at A4, portrait from 7.44x9.69 to 8.5x11). On the
+  Haushaltsbuch the title printed 0.048 in inside the trim, and the check said KDP would take it: a picture in shape
+  pin (2:3) loses 13% of its height to the cut that fits an 8.5x11 front. A front whose art reaches its edges is a
+  note: Ember's code can't tell its words from its picture, so look at the preview.
+- Triage: once a cycle of your day took a triage, the ideas it didn't take along wait for tomorrow, when one cycle
+  decides them together (its YOUR STEP names them all, as since 0.39.1). On 10-14 six cycles parked six ideas one by
+  one ($1.04), all for one reason. Your owner's own ideas, a step they pinned and an idea Ember's code parks within 7
+  days don't wait, and your own plan_step waits are as before.
+- No brainstorm while a rule of your owner's or your strategy says nothing new starts ("nothing new", "no new
+  ventures", "keine neuen Ideen"): the brainstorm step closes with the rule's words. Your owner's rule of 10-07 stood
+  until 10-15, and two brainstorms made 12 ideas in it, 11 of them parked at once.
+- Your daily review's MONEY takes its parts by purpose and its total from the same records: each call at what it cost
+  once settled, so the parts add up to the total. On 10-18 it read "API calls: $41.09 ... (planning and work $47.71,
+  ...)": the parts were booked costs, the total net of 0.39.8's refund. A worst case not settled yet, or a correction,
+  is a part of its own.
+- Your owner's scorecard counts what calls cost once settled, and work left undone (version 2). You don't see it, and
+  nothing in your plans or tools changes with it.
+
 ## 0.44.0
 
 Your owner can now give you what an evaluation of your work found. What changes for you:

@@ -30,7 +30,7 @@ from dataclasses import dataclass
 
 import pypdfium2
 import pypdfium2.raw as pdfium_c
-from PIL import Image, ImageDraw, ImageFilter, ImageFont, PngImagePlugin
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, PngImagePlugin
 
 from . import fonts
 from .theme import RGB, WHITE, contrast, hex_rgb, readable_on, tint
@@ -152,6 +152,58 @@ def ink_boxes(pdf: bytes, dpi: int, level: int) -> list[tuple[float, float, floa
         return boxes
     finally:
         document.close()
+
+
+PLAIN_EDGE = 0.9  # 0.45.0: the share of a cover front's edge that is its background colour on a plain front
+
+
+def front_ink(
+    pdf: bytes, fold: float, dpi: int, contrast: int
+) -> tuple[bool, tuple[float, float, float, float] | None]:
+    """0.45.0 (evaluation 2026-10-22, C6): whether a paperback cover's front (right of ``fold``, in inches) has edges
+    of one colour, and what it prints on that background, in inches from the cover's top left corner (left, top,
+    right, bottom; None: nothing): where a channel differs by more than ``contrast`` from the edge's colour, the
+    cover's first page drawn at ``dpi``. A front whose art reaches its edges is (False, None): Ember's code can't tell
+    its words from its picture."""
+    document = _opened(pdf)
+    try:
+        page = document[0]
+        try:
+            width, height = page.get_width(), page.get_height()
+            scale = min(dpi / 72, math.sqrt(MAX_PIXELS / max(1.0, width * height)))
+            picture = page.render(scale=scale).to_pil().convert("RGB")
+        finally:
+            page.close()
+    finally:
+        document.close()
+    per_inch = scale * 72
+    left = min(picture.width - 1, max(0, round(fold * per_inch)))
+    front = picture.crop((left, 0, picture.width, picture.height))
+    w, h = front.size
+    ring = [front.crop(box) for box in ((0, 0, w, 2), (0, h - 2, w, h), (w - 2, 0, w, h))]  # top, bottom, outside
+    counts = [sum(values) for values in zip(*(part.histogram() for part in ring), strict=True)]
+    total = sum(part.width * part.height for part in ring)
+
+    def median(channel: list[int]) -> int:
+        seen = 0
+        for value, count in enumerate(channel):
+            seen += count
+            if seen * 2 >= total:
+                return value
+        return 255
+
+    background = tuple(median(counts[256 * n : 256 * (n + 1)]) for n in range(3))
+
+    def off(part: Image.Image) -> Image.Image:
+        r, g, b = ImageChops.difference(part, Image.new("RGB", part.size, background)).split()
+        return ImageChops.lighter(ImageChops.lighter(r, g), b).point(lambda v: 255 if v > contrast else 0)
+
+    if sum(off(part).histogram()[255] for part in ring) > (1 - PLAIN_EDGE) * total:
+        return False, None
+    box = off(front).getbbox()
+    if box is None:
+        return True, None
+    return True, ((box[0] + left) / per_inch, box[1] / per_inch, (box[2] + left) / per_inch, box[3] / per_inch)
 
 
 def pdf_active(pdf: bytes) -> list[str]:

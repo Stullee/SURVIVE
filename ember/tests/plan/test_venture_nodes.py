@@ -381,3 +381,94 @@ def test_the_brainstorms_rest_reads_its_last_batch_of_ideas() -> None:
     assert desk.brainstorm_rests([*batch[1:], idea(1, 3711, stage="researching")], later) == ""
     assert desk.brainstorm_rests([idea(1, 3711), idea(2, 3700)], later) == ""  # one idea a cycle: no brainstorm
     assert desk.brainstorm_rests([*batch, idea(9, 3720, by="owner"), idea(10, 3721)], later) == said  # not theirs
+
+
+# --- 0.45.0 (evaluation 2026-10-22, C4) ---
+
+
+@pytest.mark.exploring
+def test_one_cycle_a_day_triages_the_ideas_that_wait(data_dir: Path) -> None:
+    """Live on 10-14 six cycles, 30 minutes apart, parked ventures #28 to #33 one each ($1.04), all for one reason: a
+    triage's YOUR STEP named the others from 0.39.1 on, and now a cycle that didn't take them along leaves them to the
+    next day's."""
+    agent = exploring_agent(data_dir)
+    owners = set(idea_steps(agent))  # the owner's ideas: their wishes, never held
+    brainstormed = cycle(agent)
+    with agent.db.transaction() as conn:  # a brainstorm's four ideas
+        made = [
+            ventures.create(
+                conn, agent.scope(), title=f"Idea {n}", pitch="A guess.", stage="idea", now=now(agent),
+                cycle_id=brainstormed,
+            )
+            for n in range(4)
+        ]  # fmt: skip
+    keep(agent)
+    triages = idea_steps(agent)
+    first = triages[made[0]]
+    with agent.db.transaction() as conn:  # the owner's Explore next: the first idea's triage is this cycle's step
+        plan.pin(conn, agent.scope(), first, True, "Owner", now(agent))
+    steer = explored(agent)
+    assert steer.kind == "venture" and steer.step is not None and steer.step.id == first
+    taken = cycle(agent)
+    with agent.db.transaction() as conn:  # a venture cycle takes the triage and parks its own idea only
+        plan.record(conn, agent.scope(), taken, now(agent), steer)
+        ventures.update(conn, made[0], now(agent), stage="parked", parked_by="agent")
+    said = "\n".join(keep(agent))
+    held = {v: triages[v] for v in made[1:]}
+    for v, s in held.items():
+        assert f"Plan tree: step #{s} (venture #{v}'s triage) waits for tomorrow: a triage cycle today (step" in said
+    waiting = {c.step.id: c.waiting for c in explored(agent).found}
+    assert {waiting[s] for s in held.values()} == {"date"}
+    assert {waiting[triages[v]] for v in owners} == {None}
+    assert {r["actor"] for r in rows(agent, "SELECT actor FROM plan_changes WHERE action = 'wait'")} == {"code"}
+    agent.clock.advance(days=1)
+    lifted = keep(agent)
+    for s in held.values():
+        assert any(line.startswith(f"Plan tree: step #{s} is ready again (") for line in lifted), lifted
+
+
+def test_no_brainstorm_while_the_owner_s_rule_or_her_strategy_says_nothing_new() -> None:
+    """Live, the owner's rule of 10-07 "This week, ... 3) nothing new" stood until 10-15, and two brainstorms made 12
+    ideas in two days, 11 of them parked at once."""
+    rule = {"id": 4, "text": "This week, 1) finish the book 2) no ads 3) nothing new. No title or tag edits"}
+    assert desk.brainstorm_stopped([rule], "") == (
+        'your owner\'s rule #4 says "nothing new": no brainstorm while it stands (their rulebook: they remove the rule'
+        " when it no longer holds)"
+    )
+    strategy = "Reach is the bottleneck. No new ventures until the KDP book sells."
+    assert desk.brainstorm_stopped([], strategy) == (
+        'your strategy says "No new ventures": no brainstorm while it does (change your strategy first)'
+    )
+    assert desk.brainstorm_stopped([{"id": 5, "text": "Keine neuen Ideen bis November."}], "").startswith(
+        'your owner\'s rule #5 says "Keine neuen Ideen"'
+    )
+    for words in (
+        "Don't message me if nothing new happened.",
+        "Sleep longer when there is nothing new to act on.",
+        "Etsy's slow start is nothing new.",
+        "Write when there's nothing new? No, only with news.",
+    ):
+        assert desk.brainstorm_stopped([{"id": 6, "text": words}], words) == "", words
+
+
+@pytest.mark.exploring
+def test_a_brainstorm_step_waits_while_the_owner_s_rule_says_nothing_new(data_dir: Path) -> None:
+    agent = exploring_agent(data_dir)
+    for v in rows(agent, "SELECT id FROM ventures WHERE stage = 'idea'"):  # the owner parks the ideas: a thin funnel
+        assert owner(agent).decide_venture(v["id"], {"action": "park"}, "Stefan").status == 200
+    keep(agent)
+    assert [s["status"] for s in brainstorm_steps(agent)] == ["open"]
+    with agent.db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO rules (mode, session, place, text, created_at, entered_by) VALUES (?, ?, 1, ?, ?, 'Stefan')",
+            (agent.scope().mode, agent.scope().session, "This week: 3) nothing new.", now(agent)),
+        )
+    keep(agent)
+    [rule] = rows(agent, "SELECT id FROM rules")
+    assert brainstorm_steps(agent) == [
+        {
+            "status": "dropped",
+            "result": f'your owner\'s rule #{rule["id"]} says "nothing new": no brainstorm while it stands (their'
+            " rulebook: they remove the rule when it no longer holds)",
+        }
+    ]

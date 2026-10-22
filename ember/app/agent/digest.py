@@ -212,7 +212,7 @@ def _reflection(conn: sqlite3.Connection, cycle_id: int) -> str:
 
 
 def undone_line(call: sqlite3.Row) -> str:
-    target = _target(call["input"])
+    target = target_of(call["input"])
     status = "interrupted" if call["status"] == "started" else call["status"]
     why = _flat(call["summary"], REASON_CHARS)
     detail = f"{status}: {why}" if why and why != status else status
@@ -225,7 +225,9 @@ def _done(call: sqlite3.Row) -> str:
     return f"{tool} ({summary})" if summary else tool
 
 
-def _target(raw: Any) -> str:
+def target_of(raw: Any) -> str:
+    """What a tool call is about, from its input: a file, a record's number, a title or question ("": nothing named).
+    0.45.0: the scorecard's X2 matches a call not done with a later one by it."""
     try:
         data = json.loads(raw) if isinstance(raw, str) else {}
     except ValueError:

@@ -23,7 +23,7 @@ from typing import Any
 from .. import privacy
 from ..economy.clock import Clock, from_iso, to_iso
 from ..economy.costs import micros_to_usd
-from ..economy.ledger import Books, Scope
+from ..economy.ledger import OWN_CORRECTIONS, SETTLED_COST, Books, Scope
 from ..economy.life import LifeStatus, Runway
 from ..integrations import etsy, etsy_publisher, retry
 from ..version import app_version
@@ -216,7 +216,7 @@ def scorecard(
     settled = learning.settled(conn, scope, _last_time(conn, scope, today) or since)  # 0.18.0
     parts = [  # the most important first: a scorecard over its limit loses its end
         _header(first, today, dry_run),
-        _money(conn, scope, books, ledger_scope, status, since),
+        _money(conn, books, ledger_scope, status),
         _last_review(conn, scope, today),
         _owner_words(conn, scope, since),  # 0.42.6: the owner's own words, which the focus and verdicts follow
         _books(conn, scope),  # 0.42.6: which KDP book a pin or post can link
@@ -297,26 +297,10 @@ def runway_text(runway: Runway) -> str:
     return f"{text} at your API spending; net of revenue and expenses, {net}"
 
 
-def _money(
-    conn: sqlite3.Connection,
-    scope: AgentScope,
-    books: Books,
-    ledger_scope: Scope,
-    status: LifeStatus,
-    since: str,
-) -> str:
+def _money(conn: sqlite3.Connection, books: Books, ledger_scope: Scope, status: LifeStatus) -> str:
     series = books.day_series(ledger_scope, days=WINDOW_DAYS + 2)  # from the day before the period to today
     before, days, today = series[0], series[1:-1], series[-1]
-    spent = sum(d["api_cost_usd"] for d in days) + today["api_cost_usd"]
-    by_purpose: dict[str, int] = {}
-    for row in conn.execute(
-        "SELECT c.purpose, COALESCE(SUM(c.cost_micros), 0) FROM llm_calls c JOIN cycles y ON y.id = c.cycle_id"
-        " WHERE y.session = ? AND y.simulated = ? AND c.ts >= ? GROUP BY c.purpose",
-        (scope.session, 1 if scope.simulated else 0, since),
-    ):
-        label = _PURPOSES.get(row[0], row[0])
-        by_purpose[label] = by_purpose.get(label, 0) + int(row[1])
-    split = ", ".join(f"{label} ${micros_to_usd(m):.2f}" for label, m in sorted(by_purpose.items(), key=_largest) if m)
+    spent, split = _api_spend(conn, ledger_scope, days[0]["date"])
     per_day = " · ".join(f"{date.fromisoformat(d['date']):%a} ${d['api_cost_usd']:.2f}" for d in days)
     average = sum(d["api_cost_usd"] for d in days) / WINDOW_DAYS
     revenue = sum(d["revenue_usd"] for d in days) + today["revenue_usd"]
@@ -346,6 +330,40 @@ def _money(
             f" Runway {runway}.",
         ]
     )
+
+
+def _api_spend(conn: sqlite3.Connection, ledger_scope: Scope, first_day: str) -> tuple[float, str]:
+    """The period's API spend (from ``first_day``: the ledger's, net of its corrections) and its parts by the calls'
+    purpose, both from the ledger's rows of the period. 0.45.0 (evaluation 2026-10-22, C3): each call at what it cost
+    once settled (ledger.SETTLED_COST), and what the ledger holds beyond that (a worst case not settled yet, a
+    correction of no call: its refund nets the worst case it settles) a part of its own, so the parts add up to the
+    total. Live on 10-18 the parts were the calls'
+    booked costs and the total was net of 0.39.8's refund: "API calls: $41.09 ... (planning and work $47.71, ...)"."""
+    where, params = ledger_scope.where()
+    joined, joined_params = ledger_scope.where("l")
+    total = int(
+        conn.execute(
+            "SELECT COALESCE(SUM(amount_micros), 0) FROM ledger WHERE type IN ('api_cost', 'api_cost_correction')"
+            f" AND occurred_on >= ? AND {where}",
+            (first_day, *params),
+        ).fetchone()[0]
+    )
+    by_purpose: dict[str, int] = {}
+    for purpose, micros in conn.execute(
+        f"SELECT c.purpose, COALESCE(SUM({SETTLED_COST}), 0) FROM ledger l JOIN llm_calls c ON c.id = l.llm_call_id"
+        f" LEFT JOIN {OWN_CORRECTIONS} k ON k.llm_call_id = c.id WHERE l.type = 'api_cost' AND l.occurred_on >= ?"
+        f" AND {joined} GROUP BY c.purpose",
+        (first_day, *joined_params),
+    ):
+        label = _PURPOSES.get(purpose, purpose)
+        by_purpose[label] = by_purpose.get(label, 0) + int(micros)
+    rest = total - sum(by_purpose.values())
+    parts = [f"{label} ${micros_to_usd(m):.2f}" for label, m in sorted(by_purpose.items(), key=_largest) if m]
+    if rest >= 5_000:  # half a cent: a rounding is no part
+        parts.append(f"charged beyond what the calls cost ${micros_to_usd(rest):.2f}")  # a worst case not settled yet
+    elif rest <= -5_000:
+        parts.append(f"corrections -${micros_to_usd(-rest):.2f}")
+    return micros_to_usd(total), ", ".join(parts)
 
 
 def _largest(item: tuple[str, int]) -> tuple[int, str]:

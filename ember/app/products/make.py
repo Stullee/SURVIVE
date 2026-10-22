@@ -549,7 +549,7 @@ def kdp_cover(
     made.report.append(
         f"Look at {base}-preview.png: it marks the trim, the spine's folds and the space KDP prints its barcode in."
     )
-    made.report += _fitting(wrap.scale, wrap.cut, front)
+    made.report += _fitting(wrap.scale, wrap.cut, front, front_shape(trim))
     if not spine_text and pages > kdp.SPINE_TEXT_PAGES:
         made.report.append("The spine has no text: give cover.spine (title and author) for one.")
     return made
@@ -585,11 +585,20 @@ def _kept_share(result: images.Fitted) -> float:
     return (right - left) * (bottom - top) / (source_w * source_h)
 
 
-def _fitting(scale: float, cut: float, front: str) -> list[str]:
-    """What the agent should know about how its front picture was fitted."""
+def front_shape(trim: str) -> str:
+    """0.45.0 (evaluation 2026-10-22, C6): make_image's shape nearest a paperback's front with its bleed, which a
+    front picture fits with the least cut off (live, a pin's 2:3 lost 13% at 8.5x11, and its title's room with it)."""
+    width, height = kdp.trim_size(trim)
+    ratio = float((width + kdp.BLEED) / (height + 2 * kdp.BLEED))
+    return min(images.SHAPES, key=lambda shape: abs(images.SHAPES[shape][0] / images.SHAPES[shape][1] - ratio))
+
+
+def _fitting(scale: float, cut: float, front: str, shape: str = "") -> list[str]:
+    """What the agent should know about how its front picture was fitted (``shape``: the one nearest the front's)."""
     notes = []
     if cut > CUT_NOTE:
-        notes.append(f"{cut:.0%} of {front} was cut off to fit the cover's proportions.")
+        nearest = f" (make_image's shape {shape} is nearest them)" if shape else ""
+        notes.append(f"{cut:.0%} of {front} was cut off to fit the cover's proportions{nearest}.")
     if scale > SOFT_COVER:
         notes.append(
             f"{front} is drawn {scale:.1f} times larger than it is: it may print soft (make_image's poster layout "

@@ -3,8 +3,8 @@
 Nothing the agent does reaches Etsy. The agent proposes a listing (``propose_etsy_listing``): title, description,
 price, tags, a category, the files buyers download and the listing photos, all from its workspace. The owner
 approves it (or changes the words), and Ember's code creates it through the owner's own Etsy app (Open API v3): a
-draft, its photos and files, then active. Every description ends with a fixed line saying AI helped make it, as
-Etsy's rules require, and the files must still be exactly the ones the owner approved (their SHA-256).
+draft, its photos and files, then active. Every description ends with a fixed line saying Ember, an AI agent, made
+it, as Etsy's rules require, and the files must still be exactly the ones the owner approved (their SHA-256).
 
 The connection is made once, in the dashboard, with OAuth 2.0 and PKCE. Ember sits behind Home Assistant's Ingress
 and can't receive Etsy's redirect, so the owner copies the address Etsy sends them to (the app's registered redirect
@@ -67,7 +67,10 @@ MAX_PRICE = Decimal("1000")
 QUANTITY = 999  # a digital download never sells out
 FILE_KINDS = frozenset({".pdf", ".docx", ".xlsx", ".pptx", ".png", ".jpg"})
 PHOTO_KINDS = frozenset({".png", ".jpg"})
-DISCLOSURE = "This digital product was designed with the help of AI and reviewed by the seller before listing."
+# 0.45.0 (evaluation 2026-10-22, C1): who made it, Ember; until then "This digital product was designed with the help
+# of AI and reviewed by the seller before listing." (EARLIER), which said the opposite of what happened
+DISCLOSURE = "Made by Ember, an AI agent, and checked by the seller before listing."
+EARLIER = ("This digital product was designed with the help of AI and reviewed by the seller before listing.",)
 # Etsy's API terms require this notice, word for word and prominently, wherever the application shows Etsy.
 NOTICE = (
     "The term 'Etsy' is a trademark of Etsy, Inc. This application uses the Etsy API but is not endorsed or certified"
@@ -167,8 +170,9 @@ def check_description(text: Any) -> str:
     if not isinstance(text, str) or not text.strip():
         raise EtsyError("the description is empty")
     text = text.replace("\r\n", "\n").strip()
-    if text.endswith(DISCLOSURE):  # Ember's code adds it; a copy the agent wrote isn't doubled
-        text = text[: -len(DISCLOSURE)].rstrip()
+    for line in (DISCLOSURE, *EARLIER):  # Ember's code adds it; a copy the agent wrote (or a live one's) isn't doubled
+        if text.endswith(line):
+            text = text[: -len(line)].rstrip()
     if len(text) > DESCRIPTION_CHARS:
         raise EtsyError(f"the description has more than {DESCRIPTION_CHARS:,} characters")
     if _CONTROL.search(text.replace("\n", "").replace("\t", "")):

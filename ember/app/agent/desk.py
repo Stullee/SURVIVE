@@ -25,8 +25,9 @@ URGENT_DAYS, or with little research budget left), and ``brainstorm_due`` lays o
 
 from __future__ import annotations
 
+import re
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
@@ -153,6 +154,35 @@ def brainstorm_due(rows: list[sqlite3.Row]) -> str:
         f"{waiting} idea{'s' if waiting != 1 else ''} wait and {cased} venture{'s' if cased != 1 else ''} "
         "have their numbers: brainstorm new ones"
     )
+
+
+# 0.45.0 (evaluation 2026-10-22, C4): words that say no new things start ("3) nothing new", "no new ventures", "keine
+# neuen Ideen"), not that there is nothing new to report ("if nothing new happened", "this is nothing new")
+NOTHING_NEW = re.compile(
+    r"(?<!\bif )(?<!\bwhen )(?<!\bis )(?<!\bwas )(?<!there's )\bnothing new\b"
+    r"(?!\s+(?:to|happens?|happened|came|comes|since|about|here|there)\b)"
+    r"|\bno new (?:ideas?|ventures?|products?|lines?|projects?|brainstorms?)\b"
+    r"|\bkeine neuen (?:ideen|ventures|produkte|projekte|linien)\b"
+    r"|\bnichts neues\b(?!\s+(?:zu|gibt|passiert)\b)",
+    re.IGNORECASE,
+)
+
+
+def brainstorm_stopped(rules: Iterable[Mapping[str, Any]], strategy: str) -> str:
+    """0.45.0 (evaluation 2026-10-22, C4): why no brainstorm while the owner's rulebook or the agent's strategy says
+    nothing new starts ("" when neither does). Live, the owner's rule of 10-07 "This week, ... 3) nothing new" stood
+    until 10-15, and two brainstorms (#254, #279) made 12 ideas in two days, 11 of them parked at once (V2 0%)."""
+    for rule in rules:
+        found = NOTHING_NEW.search(str(rule["text"]))
+        if found:
+            return (
+                f'your owner\'s rule #{rule["id"]} says "{found[0]}": no brainstorm while it stands (their rulebook:'
+                " they remove the rule when it no longer holds)"
+            )
+    found = NOTHING_NEW.search(strategy)
+    if found:
+        return f'your strategy says "{found[0]}": no brainstorm while it does (change your strategy first)'
+    return ""
 
 
 def brainstorm_rests(rows: list[sqlite3.Row], now: str) -> str:

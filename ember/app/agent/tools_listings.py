@@ -17,7 +17,7 @@ from ..integrations import etsy, etsy_publisher, kdp, printify, printify_publish
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
 from ..products import images, make, pagecheck
-from . import demand, plan, preconditions, store, ventures
+from . import claims, demand, plan, preconditions, store, ventures
 from .sandbox import SandboxError
 from .store import AgentScope
 from .tools_context import Drawn, EtsyAccess, KdpAccess, Outcome, PrintifyAccess, ToolContext, ToolError, _cut, _local
@@ -474,7 +474,7 @@ def _propose_printify_product(ctx: ToolContext, args: dict[str, Any], conn: Any)
         raise ToolError(f"{path} can't be used: {exc}") from None
     try:
         title = etsy.check_title(args["title"])
-        description = etsy.check_description(args["description"].replace(printify.DISCLOSURE, ""))  # added, once
+        description = etsy.check_description(_without_ai_line(args["description"]))  # added, once
         tags = etsy.check_tags(args["tags"])
     except etsy.EtsyError as exc:
         raise ToolError(str(exc)) from None
@@ -570,7 +570,7 @@ def _propose_printify_edit(ctx: ToolContext, args: dict[str, Any], conn: Any) ->
         if args.get("title") is not None:
             changes["title"] = etsy.check_title(args["title"])
         if args.get("description") is not None:  # the AI line is added, once
-            changes["description"] = etsy.check_description(args["description"].replace(printify.DISCLOSURE, ""))
+            changes["description"] = etsy.check_description(_without_ai_line(args["description"]))
         if args.get("tags") is not None:
             changes["tags"] = etsy.check_tags(args["tags"])
     except etsy.EtsyError as exc:
@@ -635,6 +635,13 @@ def _kdp(ctx: ToolContext) -> KdpAccess:
     if ctx.kdp is None:
         raise ToolError("Amazon KDP is off: your owner hasn't switched it on")
     return ctx.kdp
+
+
+def _without_ai_line(description: str) -> str:
+    """A Printify product's description without the AI line Ember's code adds (0.45.0: or the one it added before)."""
+    for line in (printify.DISCLOSURE, *printify.EARLIER):
+        description = description.replace(line, "")
+    return description
 
 
 def _read_file(ctx: ToolContext, path: str) -> bytes:
@@ -720,6 +727,7 @@ def _book(ctx: ToolContext, spec: dict[str, Any], cover_path: str) -> tuple[kdp.
         wrong = kdp.check_cover(cover_sizes[0], interior.pages, trim, paper)
         if wrong:
             raise ToolError("; ".join(wrong))
+        notes += _front(spec, cover.path, cover_data, trim, interior.pages, paper)
         price = kdp.check_price(spec["price"], form, pages=interior.pages, paper=paper, trim=trim)
         if interior.bleed:
             keep = kdp.inches(kdp.OUTSIDE_MARGIN_BLEED)
@@ -741,6 +749,37 @@ def _book(ctx: ToolContext, spec: dict[str, Any], cover_path: str) -> tuple[kdp.
         raise ToolError(str(exc)) from None
 
 
+def _front(spec: dict[str, Any], path: str, data: bytes, trim: str, pages: int, paper: str) -> list[str]:
+    """0.45.0 (evaluation 2026-10-22, C6): a paperback cover's front keeps its words kdp.SAFE_ZONE inside the trim, or
+    the book is refused with what to change; a front whose art reaches its edges is a note (Ember's code can't tell its
+    words from its picture). Live, the Haushaltsbuch's title printed 0.048 in inside the trim (a pin's 2:3 front
+    picture on an 8.5x11 front, 13% of it cut off) and the tool said KDP would take it."""
+    fold = float(kdp.BLEED + kdp.trim_size(trim)[0] + kdp.spine_width(pages, paper))
+    try:
+        plain, box = images.front_ink(data, fold, kdp.FRONT_DPI, kdp.FRONT_CONTRAST)
+    except images.ImageError as exc:
+        raise ToolError(f"{path}: {exc}") from None
+    if not plain:
+        return [
+            f"the front's picture reaches its edges, so Ember's code can't tell its words from it: look at the cover's "
+            f"preview, its words keep {kdp.inches(kdp.SAFE_ZONE)} inside the trim"
+        ]
+    close = kdp.check_front(box, trim, pages, paper)
+    if not close:
+        return []
+    cover = spec["cover"]
+    if isinstance(cover, dict):
+        shape = make.front_shape(trim)
+        fix = (
+            f"make {cover['front']} again in make_image's shape {shape} (the nearest to a front at {trim}: the least "
+            "of it is cut off) with its words 0.25 in from its edges, then propose the book again"
+        )
+    else:
+        room, edge = kdp.inches(kdp.SAFE_ZONE), kdp.inches(kdp.BLEED + kdp.SAFE_ZONE)
+        fix = f"move its words {room} inside the trim ({edge} from the cover's edges)"
+    raise ToolError(f"{path}: {close[0]}: {fix}")
+
+
 def _propose_kdp_book(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     """0.25.0: a book for Amazon KDP from the agent's .json spec: Ember's code makes its cover, checks the package and
     (without check) asks the owner, who publishes it at kdp.amazon.com from their own account (Amazon has no API for
@@ -755,6 +794,11 @@ def _propose_kdp_book(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
         raise ToolError(str(exc)) from None
     except kdp.KdpError as exc:
         raise ToolError(str(exc)) from None
+    # 0.45.0 (evaluation 2026-10-22, C1): its words and its cover's, before a cover is made or a page drawn
+    words = [spec.get(key) for key in ("title", "subtitle", "description", "keywords")]
+    said = claims.refusal(claims.texts([*words, spec["cover"] if isinstance(spec["cover"], dict) else ""]))
+    if said:
+        raise ToolError(said)
     cover_path, made = _book_cover(ctx, spec, path)
     book, notes = _book(ctx, spec, cover_path)
     cover = f"{made.text()} " if made is not None else ""

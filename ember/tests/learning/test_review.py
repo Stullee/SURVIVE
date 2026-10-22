@@ -18,11 +18,13 @@ from app.agent.fake_llm import Fail, FakeTransport, Reply, request_kind, validat
 from app.config import Settings
 from app.economy import pricing
 from app.economy.clock import to_iso
+from app.economy.costs import micros_to_usd
 from app.economy.metering import REVIEW, MeteredModel, NotSent, rough_token_count
 from tests.agent_helpers import owner, rows, run, unbraked
 from tests.channels.test_pinterest import PINNING
 from tests.channels.test_printify import EVERYWHERE
 from tests.economy_helpers import owner as owner_entry
+from tests.money import test_usage_speed as speed_tests
 from tests.plan.test_roadmap import plan
 from tests.ventures.test_venture_channels import not_set_up
 
@@ -535,3 +537,30 @@ def test_the_scorecard_quotes_the_owners_messages_and_lists_the_kdp_books(data_d
     assert '"KDP paperback: Book 2": published, no link at Amazon yet: no pin or post can link it' in text
     assert text.index("YOUR OWNER'S MESSAGES") < text.index("AMAZON KDP") < text.index("#1 [")  # before the projects
     assert "- Read your owner's messages, decisions and comments" in prompts.REVIEW_RULES
+
+
+def test_the_money_s_parts_add_up_to_its_total(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """0.45.0 (evaluation 2026-10-22, C3): live on 10-18 the review read "API calls: $41.09 ... (planning and work
+    $47.71, ...)": its parts were the calls' booked costs, its total net of 0.39.8's refund. Both come from the
+    ledger's rows of the period now: each call at what it cost once settled, and what the ledger holds beyond that a
+    part of its own."""
+    economy = speed_tests.live_economy(data_dir)
+    calls = speed_tests.booked_as_before(economy, monkeypatch, 3)  # at their worst case, as 0.39.7 booked them
+    booked, known = sum(r.cost_micros for r in calls), 3 * speed_tests.KNOWN
+    day = economy.clock.today().isoformat()
+
+    def money(economy: Any) -> tuple[float, str]:
+        with economy.db.connection() as conn:
+            return review._api_spend(conn, economy.life.scope(), day)  # noqa: SLF001
+
+    usd = micros_to_usd
+    assert money(economy) == (
+        usd(booked),
+        f"planning and work ${usd(known):.2f}, charged beyond what the calls cost ${usd(booked - known):.2f}",
+    )
+    speed_tests.owner(economy, "api-correction", "0.01", direction="decrease")  # the owner's refund counts first
+    fresh = speed_tests.restart(economy)  # 0.39.8 settles them: the refunds net their worst case
+    assert money(fresh) == (usd(known), f"planning and work ${usd(known):.2f}")
+    speed_tests.owner(fresh, "api-correction", "0.01", direction="decrease")  # a correction beyond them
+    spent, split = money(fresh)
+    assert split == f"planning and work ${usd(known):.2f}, corrections -$0.01" and spent == usd(known - 10_000)

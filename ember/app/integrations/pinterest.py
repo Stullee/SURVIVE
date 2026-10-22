@@ -49,8 +49,9 @@ BOARD_NAME_MAX = 50
 IMAGE_KINDS = frozenset({".png", ".jpg"})  # the workspace's pictures
 IMAGE_MAX_BYTES = 10 * 1024 * 1024
 CONNECT_MINUTES = 15
-# Added to every pin's description, as to every Etsy listing's.
-DISCLOSURE = "Designed with the help of AI and reviewed by the seller."
+# Added to every pin's description, as to every Etsy listing's. 0.45.0 (evaluation 2026-10-22, C1): who made it; until
+# then "Designed with the help of AI and reviewed by the seller."
+DISCLOSURE = "Made by Ember, an AI agent, and checked by the seller."
 DESCRIPTION_CHARS = DESCRIPTION_MAX - len(DISCLOSURE) - 2  # the agent's part of it
 
 
