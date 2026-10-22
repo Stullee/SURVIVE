@@ -684,8 +684,10 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   pin, post, Printify product or blog page that Ember's code hasn't begun within
   7 days of its approval (also one still waiting for its service) isn't carried
   out at all: it is closed unsent, and the agent proposes it again if it still fits
-  (`ember/app/integrations/connectors.py`). Nothing that began ages out, nor
-  the owner's Undo. A card whose file changed since it was proposed says so,
+  (`ember/app/integrations/connectors.py`); 0.42.3: also while its executor
+  can't run (an account disconnected, a refused login, no Printify shop, an
+  unreadable mailbox), as the round's last step. Nothing that began ages out,
+  nor the owner's Undo. A card whose file changed since it was proposed says so,
   and its Approve is refused. The kill switch stops whatever
   Ember's code hasn't begun, also in the middle of a round (0.37.3). A Reddit
   post becomes a link the owner opens and posts from their own account; a KDP

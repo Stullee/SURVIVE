@@ -1731,7 +1731,11 @@ no longer shown); a study that failed three times stops until you press
   it may no longer fit: Ember closes it as failed, with why ("Not listed: it
   didn't go out within 7 days of its approval ..."), and the agent hears it
   and proposes it again if it still fits (its plan gets a step for that). One
-  that waits for its service ages out too, before it is tried again.
+  that waits for its service ages out too, before it is tried again. Since
+  0.42.3 also one Ember's code can't carry out at all (your account is
+  disconnected, Bluesky refuses the login, Printify has no shop, Ember's
+  mailbox can't be read): until then its card said approved for as long as
+  that lasted.
   What Ember's code began never does, nor your Undo (it takes something down,
   which still fits), nor what you carry out yourself (a Reddit post, a KDP
   book), Pinterest's test pin or the last will.
@@ -2118,9 +2122,10 @@ included: encrypt your backups.
   approval (Ember was paused, or it waited for money, the daily limit or an
   email to be read) isn't sent any more: Ember closes it as not sent, with
   why, and the agent asks again if it still fits (until 0.40.3 it went out on
-  Resume, weeks late). Since 0.42.2 the other approved actions Ember's code
-  carries out age out after the same 7 days (see
-  [Your part](#your-part), Approved too long ago).
+  Resume, weeks late; until 0.42.3 one that waited for the mailbox to be read,
+  or whose mailbox was switched off, stayed approved until it could go out).
+  Since 0.42.2 the other approved actions Ember's code carries out age out
+  after the same 7 days (see [Your part](#your-part), Approved too long ago).
 - Ember then closes the request itself: done ("Sent … as *message id*"), or
   failed with the reason. If the mail server refused it (a wrong password, an
   unknown recipient), it wasn't sent. If the connection broke while the email

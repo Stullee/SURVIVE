@@ -15,7 +15,8 @@ Now:
   the request, what it acts on, the state before and after, how it ended, and what would undo it (``undo_of``);
 * ``halted`` (0.37.3): whether the kill switch is on, which every executor reads again before it begins an item;
 * ``stale`` / ``lapse`` (0.42.2): an approved request that didn't begin within APPROVED_DAYS of its approval, which
-  every executor of a listing, change, pin, post, product or page reads there too, is closed unsent.
+  every executor of a listing, change, pin, post, product or page reads there too, is closed unsent; ``sweep``
+  (0.42.3) closes one also when its executor doesn't run.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from ..agent.store import AgentScope
-from ..economy.clock import from_iso
+from ..economy.clock import from_iso, to_iso
 from ..economy.life import KILLED_KEY
 
 
@@ -275,7 +276,7 @@ APPROVED_DAYS = 7
 # (an Undo ends work, as a venture's park doesn't hold it: stages.hold_approved), what the owner carries out (a Reddit
 # link, a KDP book), the sandbox's test pin (only the owner sees it, and Ember's code asks it again, not the agent) nor
 # the last will (Ember is dead: nobody proposes it again, and it fits as long as the live page runs). An email ages out
-# in its own executor (executor.Executor._one).
+# in its own executor (executor.Executor._one; 0.42.3: and Executor.sweep).
 AGING = {
     "etsy_listing": "etsy_listings",
     "etsy_edit": "etsy_edits",
@@ -325,6 +326,60 @@ def lapse(conn: sqlite3.Connection, row: Mapping[str, Any], done: str, why: str,
         (now, CLOSED_BY, note[:2000], row["id"]),
     )
     return note
+
+
+# 0.42.3 (analysis-0.40.1 audit): each executor of AGING as ``sweep`` closes its request for it: what its note begins
+# with ("Not listed: ..."), its service's name in the System log, as the executor's own start transaction says them,
+# and the table it records a request's row in as it begins it (the blog's rows are made 'proposed' with the page, and
+# begin as 'running')
+LAPSED = {
+    "etsy_listing": ("Not listed", "etsy", "etsy_listings"),
+    "etsy_edit": ("Not changed", "etsy", "etsy_edits"),
+    "pinterest_pin": ("Not pinned", "pinterest", "pinterest_pins"),
+    "bluesky_post": ("Not posted", "bluesky", "bluesky_posts"),
+    "printify_product": ("Not created", "printify", "printify_products"),
+    "printify_edit": ("Not changed", "printify", "printify_edits"),
+    "site_post": ("Not uploaded", "website", "site_uploads"),
+    "site_links": ("Not uploaded", "website", "site_uploads"),
+}
+
+
+def sweep(conn: sqlite3.Connection, scope: AgentScope, now: datetime) -> list[tuple[sqlite3.Row, str]]:
+    """0.42.3 (analysis-0.40.1 audit): every approved request of AGING that ``stale`` finds too old, and that nothing
+    began (a wait for its service aside: retry.waiting), is closed unsent with ``lapse``, whether its executor runs or
+    not. An executor reads ``stale`` only as it would start a request: while an account stayed disconnected, Bluesky
+    refused the login or Printify had no shop, its approved requests kept saying "approved" until it ran. In the
+    caller's transaction (BEGIN IMMEDIATE), which reads each request's status, its executor's row and its journal again,
+    as an executor's start transaction does: one an executor began is never closed. Nothing while the kill switch is on
+    (every executor reads it before ``stale``). Returns each request closed (its approval as read), with its note."""
+    from . import retry  # here: retry imports this module
+
+    if halted(conn):
+        return []
+    where, params = scope.where()
+    marks = ", ".join("?" for _ in AGING)
+    closed = []
+    for row in conn.execute(
+        f"SELECT * FROM approvals WHERE {where} AND status IN ('approved', 'approved_with_changes')"
+        f" AND executor IN ({marks}) ORDER BY id",
+        (*params, *AGING),
+    ).fetchall():
+        why = stale(conn, row, now)
+        if why is None or (_begun(conn, row) and retry.waiting(conn, int(row["id"])) is None):
+            continue
+        closed.append((row, lapse(conn, row, LAPSED[str(row["executor"])][0], why, to_iso(now))))
+    return closed
+
+
+def _begun(conn: sqlite3.Connection, row: Mapping[str, Any]) -> bool:
+    """0.42.3: whether an executor began a request: its row in the executor's table (LAPSED), or its journal entry."""
+    table = LAPSED[str(row["executor"])][2]
+    found = conn.execute(
+        f"SELECT 1 FROM {table} WHERE approval_id = ? AND status <> 'proposed'"
+        " UNION ALL SELECT 1 FROM action_journal WHERE approval_id = ? LIMIT 1",
+        (row["id"], row["id"]),
+    ).fetchone()
+    return found is not None
 
 
 def begin(
