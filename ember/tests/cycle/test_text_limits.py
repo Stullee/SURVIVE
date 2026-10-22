@@ -29,7 +29,8 @@ def flat(text: str) -> str:
 
 
 def test_no_limit_is_typed_into_a_prompt_or_a_tool_description() -> None:
-    for name in ("prompts.py", "tools.py", "context.py"):
+    # 0.42.2 (analysis-0.40.1, 5.6): tools.py and the modules split out of it (tools_*.py)
+    for name in ("prompts.py", *sorted(p.name for p in AGENT.glob("tools*.py")), "context.py"):
         source = (AGENT / name).read_text(encoding="utf-8")
         typed = [
             f"{name}:{token.start[0]}: {token.string[:80]!r}"

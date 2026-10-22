@@ -187,9 +187,12 @@ ALLOWED = {
     ("app/agent/review.py", "r['started_at']"),  # shown: a listing's first day
     ("app/agent/roadmap.py", "str(row['created_at'])"),  # a pace's start, a day at most of weeks; rows built by hand
     ("app/agent/roadmap.py", "str(replaced['closed_at'] or '')"),  # shown
-    ("app/agent/tools.py", "list(dict.fromkeys((int(n) for n in re.findall('\\\\d{1,9}', args['numbers']))))"),
-    ("app/agent/tools.py", "str(p['updated_at'])"),  # shown: a project's last change
-    ("app/agent/tools.py", "str(r['started_at'])"),  # shown: when a question was researched
+    ("app/agent/tools_metered.py", "str(r['started_at'])"),  # shown: when a question was researched
+    ("app/agent/tools_projects.py", "str(p['updated_at'])"),  # shown: a project's last change
+    (
+        "app/agent/tools_requests.py",
+        "list(dict.fromkeys((int(n) for n in re.findall('\\\\d{1,9}', args['numbers']))))",
+    ),
     ("app/agent/ventures.py", "str(row['created_at'])"),  # shown
     ("app/agent/ventures.py", "str(row['owner_at'])"),  # shown: the owner's word's day
     ("app/agent/website.py", "p['updated_at']"),  # shown

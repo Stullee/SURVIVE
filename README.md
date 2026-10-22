@@ -694,7 +694,7 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   the text can't close. What the agent writes back can quote it word for word:
   since 0.39.4 tool-call markup in a text is only text, except in the agent's
   journal, where a call written inside it runs only when it only reads
-  (`ember/app/agent/tools.py`, `unleaked` and `run`).
+  (`unleaked` in `ember/app/agent/tools_checks.py`, `run` in `tools.py`).
 - **CSRF.** State-changing requests must carry an `X-Ember-Request: 1` header,
   which cross-site pages can't send.
 - **Strict CSP.** No inline scripts or styles; Chart.js is vendored, nothing is
