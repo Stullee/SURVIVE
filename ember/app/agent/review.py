@@ -566,7 +566,7 @@ def _decisions(conn: sqlite3.Connection, scope: AgentScope, since: str) -> str:
 def _etsy(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, since: str) -> str:
     """The Etsy listings Ember made and how they did: the clearest demand signal there is. Every live listing, top
     sellers in the period first (0.12.0: the newest 8 only, so the listings live the longest dropped out first), and
-    the newest requests that didn't become one (0.42.4: one Etsy asked to wait for as waiting, not failed)."""
+    the newest requests that didn't become one (0.42.5: one Etsy asked to wait for as waiting, not failed)."""
     where, params = scope.where()
     rows = conn.execute(f"SELECT * FROM etsy_listings WHERE {where} ORDER BY id DESC", params).fetchall()
     if not rows:

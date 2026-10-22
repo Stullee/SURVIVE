@@ -10,9 +10,10 @@ hours, hours after the last pin, a listing at most every two days) and goes out 
 request of theirs (executor 'pinterest_delete'), carried out here too, at once. The sync reads each live pin's numbers
 (impressions, saves, outbound clicks) at most every SYNC_HOURS. 0.42.0 (M3): when Pinterest asks Ember's code to come
 back later (HTTP 429, or 503 with Retry-After) at a pin on a board that exists, the pin stays approved and waits for its
-slot again, from then on (retry.py); a pin that made a new board first isn't tried again. 0.42.2 (M2): a pin not
-begun within connectors.APPROVED_DAYS of its approval, or still waiting for Pinterest then, is closed unsent, as an
-email is (connectors.stale).
+slot again, from then on (retry.py); a pin that made a new board first isn't tried again. 0.42.4: the owner's Undo of
+a pin too, at its delete, tried again then (it has no slot). 0.42.2 (M2): a pin not begun within
+connectors.APPROVED_DAYS of its approval, or still waiting for Pinterest then, is closed unsent, as an email is
+(connectors.stale); an Undo never is.
 
 0.30.2: the sandbox's test pin (executor 'pinterest_test_pin'), for the video of the owner's Standard access request:
 a request of Ember's code, put on the owner's list when they connect with the sandbox option on (``request_test``):
@@ -142,6 +143,8 @@ def execution(
     """What happened to an approved pin, to the owner's Undo of one or (0.30.2) to the sandbox's test pin, for the
     dashboard (None before approval)."""
     if row["executor"] in ("pinterest_delete", TEST_EXECUTOR):
+        if row["executor"] == "pinterest_delete" and (waits := retry.undo_execution(conn, row["id"])) is not None:
+            return waits  # 0.42.4 (M3): Pinterest asked the owner's Undo to wait
         entry = conn.execute(
             "SELECT * FROM action_journal WHERE approval_id = ? ORDER BY id DESC LIMIT 1", (row["id"],)
         ).fetchone()
@@ -221,7 +224,7 @@ def test_pin(conn: sqlite3.Connection, scope: AgentScope, workspace: Jail, now: 
 
 
 def text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, limit: int = 6) -> str:
-    """The plan's PINTEREST: Ember's boards and newest pins with their numbers ("" before the first). 0.42.4: a pin
+    """The plan's PINTEREST: Ember's boards and newest pins with their numbers ("" before the first). 0.42.5: a pin
     Pinterest asked to wait for says so, with until when (it read "failed", and the agent could propose it again)."""
     made = boards(conn, scope)
     recent = pins(conn, scope, limit)
@@ -288,6 +291,8 @@ class Publisher:
                     done.append((approval_id, outcome))
                     if outcome == connectors.HALTED:
                         return done
+                    if outcome == retry.LATER:
+                        break  # 0.42.4 (M3): Pinterest asked to wait: the other Undos wait for the next round
             for approval_id in self._approved(scope, TEST_EXECUTOR):  # with the sandbox off, it isn't made
                 outcome = self._test(sandbox, approval_id)
                 done.append((approval_id, outcome))
@@ -346,15 +351,18 @@ class Publisher:
         return made
 
     def _approved(self, scope: AgentScope, executor: str) -> list[int]:
+        """The approved requests of ``executor`` that Ember's code hasn't begun (0.42.4, M3: or, an Undo, that
+        Pinterest asked to wait until now), oldest first."""
         where, params = scope.where()
         with self.db.connection() as conn:
             return [
                 int(r[0])
                 for r in conn.execute(
                     f"SELECT id FROM approvals WHERE {where} AND executor = ? AND status IN {APPROVED}"
-                    " AND NOT EXISTS (SELECT 1 FROM action_journal j WHERE j.approval_id = approvals.id)"
-                    " AND NOT EXISTS (SELECT 1 FROM pinterest_pins p WHERE p.approval_id = approvals.id) ORDER BY id",
-                    (*params, executor),
+                    " AND ((NOT EXISTS (SELECT 1 FROM action_journal j WHERE j.approval_id = approvals.id)"
+                    " AND NOT EXISTS (SELECT 1 FROM pinterest_pins p WHERE p.approval_id = approvals.id))"
+                    f" OR {retry.retry_at_sql('approvals')} <= ?) ORDER BY id",
+                    (*params, executor, to_iso(self.clock.now())),
                 )
             ]
 
@@ -425,7 +433,7 @@ class Publisher:
         try:
             pin_id = account.create_pin(board_id, pin, image)
         except NotSent as exc:  # 0.42.0 (M3): Pinterest asking to come back later is no refusal (on a board it had)
-            waits = self._wait(approval_id, exc) if existing else None
+            waits = self._wait("pinterest_pins", approval_id, exc, board_id=None) if existing else None
             return waits or self._after(
                 approval_id, "failed", None, board_id, f"Not pinned: Pinterest refused it ({exc})", str(exc)
             )
@@ -507,16 +515,17 @@ class Publisher:
         events.record(self.db, "warning", "pinterest", f"Request #{row['id']}: {note}"[:300])
         return "failed"
 
-    def _wait(self, approval_id: int, exc: Exception) -> str | None:
+    def _wait(self, table: str | None, approval_id: int, exc: Exception, **values: Any) -> str | None:
         """0.42.0 (M3): Pinterest asked to come back later before anything changed (``pinterest.Busy``): the pin
         stays approved and waits for its slot again, from then on (retry.park; no board, so no day's pin is counted).
-        None when it may not wait (an unlock's, or it waited retry.TRIES times): it fails as before."""
+        None when it may not wait (an unlock's, or it waited retry.TRIES times): it fails as before. 0.42.4: the
+        owner's Undo of a pin too (``table`` None: it waits in its journal entry), tried again then."""
         if not isinstance(exc, pinterest.Busy):
             return None
         with self.db.transaction() as conn:
             if not retry.may_wait(conn, approval_id):
                 return None
-            note = retry.park(conn, "pinterest_pins", approval_id, exc, self.clock, "Pinterest", board_id=None)
+            note = retry.park(conn, table, approval_id, exc, self.clock, "Pinterest", **values)
         events.record(self.db, "warning", "pinterest", f"Request #{approval_id}: {note}"[:300])
         return retry.LATER
 
@@ -574,11 +583,14 @@ class Publisher:
         )
 
     def _delete(self, account: Account, scope: AgentScope, approval_id: int) -> str:
-        """The owner's Undo of a pin: Ember's code deletes it at Pinterest."""
+        """The owner's Undo of a pin: Ember's code deletes it at Pinterest. 0.42.4 (M3): when Pinterest asks to come
+        back later, nothing was deleted: the Undo stays approved and is tried again then (``_wait``), as a pin is."""
         with self.db.transaction() as conn:
             row = conn.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
-            if row is None or row["status"] not in ("approved", "approved_with_changes"):
-                return "skipped"
+            started = conn.execute("SELECT 1 FROM action_journal WHERE approval_id = ?", (approval_id,)).fetchone()
+            again = started is not None and retry.due(conn, approval_id, self.clock.now())  # 0.42.4 (M3)
+            if row is None or row["status"] not in ("approved", "approved_with_changes") or (started and not again):
+                return "skipped"  # cancelled or decided meanwhile (or Pinterest's wait isn't over)
             if connectors.halted(conn):
                 return connectors.HALTED  # 0.37.3: an Undo neither, once the kill switch is on
             try:
@@ -594,6 +606,8 @@ class Publisher:
         except Gone:
             gone = True  # deleted at Pinterest already: what the Undo wanted
         except Exception as exc:  # noqa: BLE001 - reported on the request, never raised
+            if waits := self._wait(None, approval_id, exc):  # 0.42.4 (M3): "come back later": nothing deleted
+                return waits
             error = str(exc) if isinstance(exc, PinterestError) else type(exc).__name__
             status = "failed" if isinstance(exc, NotSent) else "unclear"
             with self.db.transaction() as conn:

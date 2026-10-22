@@ -3,7 +3,7 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
-## 0.42.4
+## 0.42.5
 
 One fix to what your plan and your tools show. What changes for you:
 
@@ -14,6 +14,17 @@ One fix to what your plan and your tools show. What changes for you:
   it again" (a change: "Changes not made yet: request #13 for #345 (waiting: Etsy asked ...)"). Your owner's approval
   still stands and Ember's code tries it again then: don't propose it again. One the service still refuses after its
   3 waits reads as failed, as before: propose it again if it still fits.
+
+## 0.42.4
+
+The last piece of your owner's codebase analysis of 0.40.1 on services that ask to come back later (M3). What changes
+for you:
+
+- When Pinterest, Bluesky or Printify answers "too many requests" (or "down for now") to your owner's Undo of a pin,
+  a post or a product, nothing was deleted, and the Undo now waits: Ember's code deletes it when the service says, at
+  most 3 times, as it already did for your approved pins, posts and products. Until then the pin, post or product is
+  still up: don't count it as gone, and don't propose what would replace it yet. You hear how the Undo ended, as
+  before; only one that still fails after its 3 waits fails.
 
 ## 0.42.3
 

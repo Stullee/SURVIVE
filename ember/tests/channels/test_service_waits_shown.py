@@ -1,4 +1,4 @@
-"""0.42.4: a request that waits for its service reads as waiting in every section the agent reads.
+"""0.42.5: a request that waits for its service reads as waiting in every section the agent reads.
 
 Since 0.42.0 (Printify since 0.42.3) a listing, change, pin, post or product that Etsy, Pinterest, Bluesky or Printify
 asked to wait for (429, or 503 with Retry-After, before anything changed) stays approved and is tried again (retry.py),

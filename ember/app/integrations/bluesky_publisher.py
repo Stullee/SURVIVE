@@ -13,8 +13,9 @@ theirs (executor 'bluesky_delete'), carried out here too, at once. The sync read
 post's numbers (likes, reposts, replies, quotes, moderation's labels) at most every SYNC_HOURS. 0.42.0 (M3): when
 Bluesky asks Ember's code to come back later (HTTP 429, or 503 with Retry-After) while it posts (the login, a picture's
 upload, which nothing shows until a post uses it, or the post), the post stays approved and waits for its slot again,
-from then on (retry.py). 0.42.2 (M2): a post not begun within connectors.APPROVED_DAYS of its approval, or still
-waiting for Bluesky then, is closed unsent, as an email is (connectors.stale).
+from then on (retry.py). 0.42.4: the owner's Undo of a post too, at its delete, tried again then (it has no slot).
+0.42.2 (M2): a post not begun within connectors.APPROVED_DAYS of its approval, or still waiting for Bluesky then, is
+closed unsent, as an email is (connectors.stale); an Undo never is.
 """
 
 from __future__ import annotations
@@ -137,6 +138,8 @@ def execution(
     """What happened to an approved post, or to the owner's Undo of one, for the dashboard (None before approval).
     ``refused``: why Bluesky refuses Ember's login now ("" when it doesn't), which a waiting post waits for."""
     if row["executor"] == "bluesky_delete":
+        if (waits := retry.undo_execution(conn, row["id"])) is not None:
+            return waits  # 0.42.4 (M3): Bluesky asked the owner's Undo to wait
         entry = conn.execute(
             "SELECT * FROM action_journal WHERE approval_id = ? ORDER BY id DESC LIMIT 1", (row["id"],)
         ).fetchone()
@@ -197,7 +200,7 @@ def summary(conn: sqlite3.Connection, scope: AgentScope) -> str:
 
 def text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, limit: int = 6) -> str:
     """The plan's BLUESKY: Ember's newest posts with their numbers. 0.37.7: each by its request's number and day, as the
-    owner and the agent name it (its record key at Bluesky said nothing to either). 0.42.4: a post Bluesky asked to
+    owner and the agent name it (its record key at Bluesky said nothing to either). 0.42.5: a post Bluesky asked to
     wait for says so, with until when (it read "failed", and the agent could propose it again)."""
     recent = posts(conn, scope, limit)
     if not recent:
@@ -270,8 +273,8 @@ class Publisher:
             for approval_id in undoing:
                 outcome = self._delete(account, scope, approval_id)
                 done.append((approval_id, outcome))
-                if outcome == connectors.HALTED:
-                    break
+                if outcome in (connectors.HALTED, retry.LATER):
+                    break  # 0.42.4 (M3): or Bluesky asked to wait: the other Undos wait for the next round
             return done
         finally:
             self._lock.release()
@@ -287,15 +290,18 @@ class Publisher:
         return True
 
     def _approved(self, scope: AgentScope, executor: str) -> list[int]:
+        """The approved requests of ``executor`` that Ember's code hasn't begun (0.42.4, M3: or, an Undo, that Bluesky
+        asked to wait until now), oldest first."""
         where, params = scope.where()
         with self.db.connection() as conn:
             return [
                 int(r[0])
                 for r in conn.execute(
                     f"SELECT id FROM approvals WHERE {where} AND executor = ? AND status IN {APPROVED}"
-                    " AND NOT EXISTS (SELECT 1 FROM action_journal j WHERE j.approval_id = approvals.id)"
-                    " AND NOT EXISTS (SELECT 1 FROM bluesky_posts p WHERE p.approval_id = approvals.id) ORDER BY id",
-                    (*params, executor),
+                    " AND ((NOT EXISTS (SELECT 1 FROM action_journal j WHERE j.approval_id = approvals.id)"
+                    " AND NOT EXISTS (SELECT 1 FROM bluesky_posts p WHERE p.approval_id = approvals.id))"
+                    f" OR {retry.retry_at_sql('approvals')} <= ?) ORDER BY id",
+                    (*params, executor, to_iso(self.clock.now())),
                 )
             ]
 
@@ -423,7 +429,7 @@ class Publisher:
         try:
             made = account.create_post(post, image, thumb)
         except NotSent as exc:  # 0.42.0 (M3): Bluesky asking to come back later is no refusal: no post exists
-            waits = self._wait(approval_id, exc)
+            waits = self._wait("bluesky_posts", approval_id, exc, sent=0)
             return waits or self._after(
                 approval_id, "failed", None, f"Not posted: Bluesky refused it ({exc})", str(exc)
             )
@@ -481,16 +487,17 @@ class Publisher:
         events.record(self.db, "warning", "bluesky", f"Request #{row['id']}: {note}"[:300])
         return "failed"
 
-    def _wait(self, approval_id: int, exc: Exception) -> str | None:
+    def _wait(self, table: str | None, approval_id: int, exc: Exception, **values: Any) -> str | None:
         """0.42.0 (M3): Bluesky asked to come back later before the post was made (``bluesky.Busy``): it stays approved
         and waits for its slot again, from then on (retry.park; not sent, so the day's limit doesn't count it). None
-        when it may not wait (it waited retry.TRIES times): it fails as before."""
+        when it may not wait (it waited retry.TRIES times): it fails as before. 0.42.4: the owner's Undo of a post
+        too (``table`` None: it waits in its journal entry), tried again then."""
         if not isinstance(exc, bluesky.Busy):
             return None
         with self.db.transaction() as conn:
             if not retry.may_wait(conn, approval_id):
                 return None
-            note = retry.park(conn, "bluesky_posts", approval_id, exc, self.clock, "Bluesky", sent=0)
+            note = retry.park(conn, table, approval_id, exc, self.clock, "Bluesky", **values)
         events.record(self.db, "warning", "bluesky", f"Request #{approval_id}: {note}"[:300])
         return retry.LATER
 
@@ -557,11 +564,14 @@ class Publisher:
         )
 
     def _delete(self, account: Account, scope: AgentScope, approval_id: int) -> str:
-        """The owner's Undo of a post: Ember's code deletes it at Bluesky."""
+        """The owner's Undo of a post: Ember's code deletes it at Bluesky. 0.42.4 (M3): when Bluesky asks to come back
+        later, nothing was deleted: the Undo stays approved and is tried again then (``_wait``), as a post is."""
         with self.db.transaction() as conn:
             row = conn.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
-            if row is None or row["status"] not in ("approved", "approved_with_changes"):
-                return "skipped"
+            started = conn.execute("SELECT 1 FROM action_journal WHERE approval_id = ?", (approval_id,)).fetchone()
+            again = started is not None and retry.due(conn, approval_id, self.clock.now())  # 0.42.4 (M3)
+            if row is None or row["status"] not in ("approved", "approved_with_changes") or (started and not again):
+                return "skipped"  # cancelled or decided meanwhile (or Bluesky's wait isn't over)
             if connectors.halted(conn):
                 return connectors.HALTED  # 0.37.3: an Undo neither, once the kill switch is on
             try:
@@ -577,6 +587,8 @@ class Publisher:
         except Gone:
             gone = True  # deleted at Bluesky already: what the Undo wanted
         except Exception as exc:  # noqa: BLE001 - reported on the request, never raised
+            if waits := self._wait(None, approval_id, exc):  # 0.42.4 (M3): "come back later": nothing deleted
+                return waits
             error = str(exc) if isinstance(exc, BlueskyError) else type(exc).__name__
             status = "failed" if isinstance(exc, NotSent) else "unclear"
             with self.db.transaction() as conn:
