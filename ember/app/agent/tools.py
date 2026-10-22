@@ -4230,7 +4230,8 @@ def _on_etsy(url: str) -> bool:
 
 # 0.21.0: in a page read's question, a web address with its scheme, or a host name (shop.example.org, bücher.de)
 _SCHEME = re.compile(r"\b[a-z][a-z0-9+.-]*:/+")
-_HOST_NAME = re.compile(r"[\w-]+(?:\.[\w-]+)+")
+# 0.42.2 (analysis-0.40.1 audit): from a name's start only: tried at each of 20,000 '-', it took 4.7 s
+_HOST_NAME = re.compile(r"(?<![\w-])[\w-]+(?:\.[\w-]+)+")
 _DOTS = re.compile("[\u3002\uff0e\uff61]")  # dots IDNA reads as dots
 _UNSEEN = re.compile("[\u00ad\u034f\u180b-\u180e\u200b-\u200f\u2060-\u2064\ufe00-\ufe0f\ufeff]")
 
@@ -6115,7 +6116,8 @@ def _source_of(ctx: ToolContext, digest: str) -> tuple[str, str] | None:
 def _book_stem(path: str) -> str:
     """A file's name without its folder, its extension and a version at its end: 'interior' of 'b/interior-v15.pdf'."""
     name = path.rpartition("/")[2].rsplit(".", 1)[0]
-    return re.sub(r"[-_.]?v?\d+$", "", name, flags=re.IGNORECASE)
+    # 0.42.2 (analysis-0.40.1 audit): digits from the first of their run: tried from each, they took quadratic time
+    return re.sub(r"[-_.]?v?(?<!\d)\d+$", "", name, flags=re.IGNORECASE)
 
 
 def _page_check(ctx: ToolContext, book: kdp.Book, qa: Any, notes: list[str]) -> str:

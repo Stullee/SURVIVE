@@ -2894,8 +2894,9 @@ def _rejected(error: str | None) -> bool:
 
 
 def _first_object(text: str) -> str | None:
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    return match.group(0) if match else None
+    # 0.42.2 (analysis-0.40.1 audit): as review's; re.search(r"\{.*\}", text, re.DOTALL) tried each '{' (quadratic)
+    start, end = text.find("{"), text.rfind("}")
+    return text[start : end + 1] if 0 <= start < end else None
 
 
 def _step_growth(state: tools.CycleTools, turns: list[dict[str, Any]]) -> int:

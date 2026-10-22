@@ -77,7 +77,8 @@ MIME_TYPES = {
 _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 _WORD = re.compile(r"[a-z0-9]+")
 # 0.15.0: the file names a helper's answer mentions (it said it made a poster that never came back).
-_NAMED = re.compile(r"[\w./-]+\.(?:png|jpe?g|pdf|docx|xlsx|pptx|csv|txt|md|json|html)\b", re.IGNORECASE)
+# 0.42.2 (analysis-0.40.1 audit): from a name's start only, as _PATH: tried from each of 10,000 dots, it took 3.6 s
+_NAMED = re.compile(r"(?<![\w./-])[\w./-]+\.(?:png|jpe?g|pdf|docx|xlsx|pptx|csv|txt|md|json|html)\b", re.IGNORECASE)
 # 0.24.0: a workspace path in a task: a folder, then a file
 _PATH = re.compile(
     r"(?<![\w./-])(?:[\w-][\w.-]*/)+[\w.-]+\.(?:png|jpe?g|pdf|docx|xlsx|pptx|csv|txt|md|json|html|py)\b", re.IGNORECASE
