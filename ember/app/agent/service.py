@@ -1082,6 +1082,8 @@ class Agent:
                 ("pins' undos", lambda: self.pins.run(undos=True)),
                 ("Printify products' undos", lambda: self._pod_run(undos=True)),
                 ("Bluesky posts' undos", lambda: self._bluesky_run(undos=True)),
+                # 0.42.3: the owner's Undo of an upload was accepted while paused (Owner.undo) but waited for Resume
+                ("the website's undos", lambda: self._blog_run(undos=True)),
             ]
         else:
             runs = [
@@ -1116,10 +1118,10 @@ class Agent:
         with netguard.sealed() if account.simulated else contextlib.nullcontext():
             return self.pod.run(undos)
 
-    def _blog_run(self) -> list[tuple[int, str]]:
+    def _blog_run(self, undos: bool = False) -> list[tuple[int, str]]:
         """0.14.0: the approved uploads to the owner's website (the fake server of a dry run needs no network)."""
         with netguard.sealed() if self.mode == "dry_run" else contextlib.nullcontext():
-            return self.blog.run()
+            return self.blog.run(undos)
 
     def publish_live(self) -> str | None:
         """0.16.0: upload the live view to the owner's website when it is due (every live.UPLOAD_MINUTES, at once when
