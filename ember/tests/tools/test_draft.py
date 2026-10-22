@@ -12,8 +12,7 @@ from pathlib import Path
 from app.agent import loop, prompts, tools
 from app.agent.fake_llm import FakeTransport, Reply, ToolCalls, request_kind
 from app.agent.service import Agent
-from tests.cycle.test_agent import rows
-from tests.cycle.test_loop_shapes import JOURNAL, run
+from tests.agent_helpers import JOURNAL, rows, run
 from tests.plan.test_roadmap import plan
 
 GUIDE = "# Weekly planning for students\n\n" + "## Part\n\nPlan the week on Sunday evening. " * 150

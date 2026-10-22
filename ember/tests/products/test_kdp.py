@@ -25,10 +25,8 @@ from app.agent.sandbox import Jail
 from app.economy.clock import to_iso
 from app.integrations import connectors, kdp
 from app.products import images, make, markup, pdf
-from tests.channels.test_etsy import call, views_approval
-from tests.cycle.test_agent import ROOMY, rows
-from tests.cycle.test_loop_shapes import run
-from tests.owner.test_owner_loop import owner
+from tests.agent_helpers import ROOMY, owner, rows, run
+from tests.etsy_helpers import call, views_approval
 from tests.plan.test_plan_tree import request
 
 PUBLISHING = ROOMY.model_copy(update={"kdp_enabled": True, "kdp_author": "Jane Doe"})

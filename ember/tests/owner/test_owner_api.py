@@ -7,17 +7,8 @@ from collections.abc import Callable
 
 from fastapi.testclient import TestClient
 
+from tests.api_helpers import grant, post
 from tests.conftest import HA_CORE
-
-CSRF = {"X-Ember-Request": "1", "X-Remote-User-Display-Name": "Stefan"}
-
-
-def post(client: TestClient, path: str, body: dict | None = None, headers: dict | None = None):  # noqa: ANN201
-    return client.post(path, json=body, headers=CSRF if headers is None else headers)
-
-
-def grant(amount: str = "5", **extra: object) -> dict:
-    return {"amount": amount, "idempotency_key": uuid.uuid4().hex, **extra}
 
 
 def test_grant_round_trip(ingress_client: TestClient) -> None:

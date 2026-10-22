@@ -16,8 +16,7 @@ from app.agent.fake_llm import FakeTransport, ToolCalls
 from app.config import Settings
 from app.economy.estimate import expected_micros, plan_request, worst_case_micros
 from app.economy.metering import CallRefused, Completed
-from tests.cycle.test_agent import rows
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import rows, run
 from tests.economy_helpers import ScriptedTransport, make_economy, message, metered, request
 from tests.plan.test_roadmap import JOURNAL, plan
 

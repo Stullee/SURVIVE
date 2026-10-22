@@ -5,7 +5,6 @@ Also tests from 0.12.0 and 0.19.2 (formerly test_small_defects.py, test_fixes_01
 from __future__ import annotations
 
 import ast
-import json
 import math
 import sqlite3
 from dataclasses import replace
@@ -18,38 +17,11 @@ from fastapi.testclient import TestClient
 from app import paths
 from app.agent import news, store
 from app.agent.news import News
-from app.agent.owner import Owner, apply_kill_switch_reset, kill
-from app.agent.service import Agent
+from app.agent.owner import apply_kill_switch_reset, kill
 from app.economy.clock import to_iso
 from app.economy.life import KILLED_KEY
-from tests.cycle.test_agent import make_agent, plan, rows, text, tools
-from tests.owner.test_owner_api import CSRF, post
-
-APPROVAL = {
-    "type": "publish",
-    "title": "Post the guide",
-    "description": "Publish the guide on my blog.",
-    "payload": "Hello world, written by an AI.",
-    "expected_cost": "none",
-    "expected_benefit": "first readers",
-}
-
-
-def owner(agent: Agent) -> Owner:
-    return Owner(agent.db, agent.clock, agent.economy, agent.scope(), agent.settings.agent_name)
-
-
-def sent_text(request: dict[str, Any]) -> str:
-    return json.dumps(request["messages"], ensure_ascii=False)
-
-
-def cycle_with_approval() -> list[Any]:
-    return [
-        plan(steps=["ask to publish"]),
-        tools(("request_approval", APPROVAL), ("message_owner", {"text": "Please look at request 1."})),
-        text("Asked."),
-        tools(("write_journal", {"summary": "Asked to publish", "entry": "Waiting."})),
-    ]
+from tests.agent_helpers import APPROVAL, cycle_with_approval, make_agent, owner, plan, rows, sent_text, text, tools
+from tests.api_helpers import CSRF, post
 
 
 def test_a_decision_reaches_the_next_plan_once(data_dir: Path) -> None:

@@ -15,7 +15,7 @@ pytest.importorskip("httpx2")
 from app.agent import tools  # noqa: E402
 from app.agent.sandbox import Jail  # noqa: E402
 from app.products import make, markup, pdf  # noqa: E402
-from tests.channels.test_etsy import call  # noqa: E402
+from tests.etsy_helpers import call  # noqa: E402
 from tests.plan.test_cycle_line import lined, working  # noqa: E402
 
 # --- From 0.39.1 (formerly test_fixes_0391.py) ---

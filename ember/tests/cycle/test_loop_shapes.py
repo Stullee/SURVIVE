@@ -6,24 +6,13 @@ records a rejected one in its trace as ``(n, "invalid", reason)``.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager, nullcontext
 from pathlib import Path
-from typing import Any
-from unittest import mock
 
 import pytest
 
-from app.agent import plan as plan_tree
 from app.agent.fake_llm import SCENARIOS, Fail, FakeTransport, Plan, Raw, Reply, ToolCalls
-from app.agent.service import Agent
-from app.config import LoadedSettings, Settings
 from app.economy.metering import Rejected
-from tests.cycle.test_agent import ROOMY
-from tests.economy_helpers import make_economy
-
-PLAN = {"assessment": "ok", "goal": "Look around", "focus_project_id": None, "steps": ["look"], "sleep_minutes": 120}
-JOURNAL = ToolCalls([("write_journal", {"summary": "Looked around", "entry": "Nothing yet."})])
+from tests.agent_helpers import JOURNAL, PLAN, run
 
 
 def empty(stop: str = "end_turn") -> Raw:
@@ -39,46 +28,6 @@ def empty(stop: str = "end_turn") -> Raw:
             "usage": {"input_tokens": 500, "output_tokens": 1},
         }
     )
-
-
-def run(
-    data_dir: Path,
-    fake: FakeTransport,
-    cycles: int = 1,
-    before: Callable[[Agent], None] | None = None,
-    settings: Settings = ROOMY,
-    brake: bool = True,
-) -> tuple[Agent, list[Any]]:
-    """Run ``cycles`` cycles against ``fake``; ``before`` prepares the new agent (files, rows) first. ``brake`` False:
-    without the plan's brake (``unbraked``), for a test that builds its state with the fake model's founder routine."""
-    economy = make_economy(data_dir, settings)
-    agent = Agent(economy.db, LoadedSettings(settings), economy, transport=fake, cycles_enabled=True)
-    agent.recover()
-    if before is not None:
-        before(agent)
-    with unbraked() if not brake else nullcontext():
-        ends = [agent.run_cycle("schedule") for _ in range(cycles)]
-    invalid = [t for t in fake.trace if t[1] == "invalid"]
-    assert invalid == [], invalid
-    return agent, ends
-
-
-@contextmanager
-def unbraked() -> Iterator[None]:
-    """0.37.6: cycles without the plan's brake (a step a cycle took with nothing moving waits until tomorrow; only steps
-    a cycle can advance cut the sleep), as until 0.37.5. For tests that build their state with the fake model's founder
-    routine, which works on its line by its cycle's number rather than doing what YOUR STEP asks: under the brake its
-    line's step waits after the first cycle that didn't advance it (the fourth cycle's listing, then, has no line to
-    belong to). The brake's own tests run consecutive cycles with it (test_fixes_0376)."""
-
-    def busy(conn: Any, scope: Any, steered: plan_tree.Steer, now: str, cycle_id: int | None = None) -> bool:
-        return bool(steered.pick.ranked)  # 0.35.1: any step ready cuts the sleep
-
-    with (
-        mock.patch.object(plan_tree, "_stale", lambda facts, row, picks: None),
-        mock.patch.object(plan_tree, "busy", busy),
-    ):
-        yield
 
 
 def test_a_reply_cut_off_without_a_tool_call(data_dir: Path) -> None:

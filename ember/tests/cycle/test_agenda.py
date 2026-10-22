@@ -17,9 +17,9 @@ from app.agent import agenda, roadmap  # noqa: E402
 from app.agent.fake_llm import request_kind  # noqa: E402
 from app.economy import metering  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
-from tests.channels.test_etsy import listed  # noqa: E402
+from tests.agent_helpers import rows  # noqa: E402
 from tests.channels.test_etsy_revenue import order, shop_with  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
+from tests.etsy_helpers import listed  # noqa: E402
 
 
 def sold(agent: Any, *receipts: int) -> None:

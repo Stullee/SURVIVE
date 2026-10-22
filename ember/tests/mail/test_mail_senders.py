@@ -27,8 +27,15 @@ from app.db import Database, discover_migrations, migrate  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from app.integrations import mail, mailstore  # noqa: E402
 from app.integrations.optout import opt_out  # noqa: E402
-from tests.cycle.test_agent import make_agent, plan, reply, rows, text  # noqa: E402
-from tests.cycle.test_agent import tools as calls  # noqa: E402
+from tests.agent_helpers import (  # noqa: E402
+    make_agent,
+    owner,
+    plan,
+    reply,
+    rows,
+    text,
+)
+from tests.agent_helpers import tools as calls  # noqa: E402
 from tests.mail.test_executor import REPLY  # noqa: E402
 from tests.mail.test_mail import (  # noqa: E402
     JOURNAL,
@@ -40,7 +47,6 @@ from tests.mail.test_mail import (  # noqa: E402
     mail_cycle,
     raw_mail,
 )
-from tests.owner.test_owner_loop import owner  # noqa: E402
 from tests.owner.test_policy import a_milestone  # noqa: E402
 from tests.ventures.test_ventures import tool_results  # noqa: E402
 

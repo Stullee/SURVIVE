@@ -29,9 +29,8 @@ from app.economy.estimate import MAX_SERVER_ITERATIONS, plan_request, worst_case
 from app.economy.metering import OVERRUN_STOP, REVIEW, WORKSHOP, CallFailed, CallRefused, Completed, Interrupted
 from app.economy.pricing import safety_factor
 from tests import economy_helpers
-from tests.cycle.test_agent import ROOMY, make_agent, plan, rows, text, tools
+from tests.agent_helpers import APPROVAL, ROOMY, make_agent, plan, rows, text, tools
 from tests.economy_helpers import FakeClock, ScriptedTransport, make_economy, message, metered, request, restart
-from tests.owner.test_owner_loop import APPROVAL
 
 MODEL = "claude-sonnet-5"
 # The owner's live options at 0.13.0 (the workshop's cap per run raised to $1.50 after #423)

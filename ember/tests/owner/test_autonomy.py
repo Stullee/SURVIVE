@@ -28,12 +28,10 @@ from app.agent.store import AgentScope
 from app.config import LoadedSettings, Settings
 from app.economy.clock import to_iso
 from app.economy.metering import Outcome
-from tests.cycle.test_agent import ROOMY, make_agent, plan, rows, text, tools
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import ROOMY, make_agent, owner, plan, rows, run, text, tools
+from tests.api_helpers import post
 from tests.cycle.test_owner_news import first_text, section, snapshot_with
 from tests.economy_helpers import ScriptedTransport, make_economy
-from tests.owner.test_owner_api import post
-from tests.owner.test_owner_loop import owner
 
 HEADING = context.RULES_HEADING
 GUIDANCE = "Work on your own.\nAsk me only for money or approvals. Keep 2-3 experiments going."

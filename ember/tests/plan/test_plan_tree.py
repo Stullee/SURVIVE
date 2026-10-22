@@ -22,8 +22,8 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.agent import obligations, plan, store, templates  # noqa: E402
 from app.agent.fake_llm import Reply, ToolCalls  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
-from tests.owner.test_owner_api import post  # noqa: E402
+from tests.agent_helpers import rows  # noqa: E402
+from tests.api_helpers import post  # noqa: E402
 from tests.plan.test_cycle_line import cycle, lined, now, take  # noqa: E402
 from tests.ventures.test_ventures import JOURNAL  # noqa: E402
 

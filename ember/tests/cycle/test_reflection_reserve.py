@@ -10,7 +10,7 @@ from app.agent import loop, tools
 from app.agent.memory import Memory
 from app.config import Settings
 from app.economy.metering import WORKSHOP
-from tests.cycle.test_agent import make_agent, plan, rows
+from tests.agent_helpers import make_agent, plan, rows
 
 
 def runner_and_cycle(agent):  # type: ignore[no-untyped-def]

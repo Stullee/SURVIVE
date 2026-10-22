@@ -28,17 +28,13 @@ import pytest
 pytest.importorskip("httpx2")
 
 from app.agent import (  # noqa: E402
-    prompts,  # noqa: E402
+    prompts,
     store,
     tools,
 )
-from tests.channels.test_etsy import (  # noqa: E402
-    call,
-    shop_context,
-    started,  # noqa: E402
-)
-from tests.cycle.test_agent import make_agent, plan, rows, text  # noqa: E402
-from tests.cycle.test_agent import tools as calls  # noqa: E402
+from tests.agent_helpers import make_agent, plan, rows, text  # noqa: E402
+from tests.agent_helpers import tools as calls  # noqa: E402
+from tests.etsy_helpers import call, shop_context, started  # noqa: E402
 
 # The analysis' own check (repro/tools/test_quoted_email_runs_a_call.py): a buyer's email that carries a call.
 EMAIL = (

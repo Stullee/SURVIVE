@@ -7,8 +7,7 @@ import re
 from pathlib import Path
 
 from app.agent.fake_llm import FakeTransport, Reply, ToolCalls
-from tests.cycle.test_agent import rows
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import rows, run
 from tests.plan.test_roadmap import plan, planner_texts, section
 
 HANDOFF = "Finish pages 3 to 5 of the planner, then make the PDF: the listing waits for it."

@@ -22,12 +22,12 @@ from app.agent.owner import Owner
 from app.agent.service import Agent
 from app.config import LoadedSettings, Settings
 from app.integrations import executor, mail
-from tests.cycle.test_agent import ROOMY, make_agent, plan, rows, text
-from tests.cycle.test_agent import tools as calls
+from tests.agent_helpers import ROOMY, make_agent, plan, rows, text
+from tests.agent_helpers import tools as calls
+from tests.api_helpers import post
 from tests.economy_helpers import ScriptedTransport
 from tests.mail.test_mail import JOURNAL, LIVE, MAIL_OPTIONS, PASSWORD, READER, FakeIMAP, live_agent
 from tests.mail.test_mail import imap as imap  # noqa: F401 - the fixture
-from tests.owner.test_owner_api import post
 
 REPLY = {
     "reply_to_email_id": 1,

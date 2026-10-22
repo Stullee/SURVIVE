@@ -16,7 +16,7 @@ from pathlib import Path  # noqa: E402
 
 from app.agent import tools  # noqa: E402
 from app.products import markup, pdf, word  # noqa: E402
-from tests.channels.test_etsy import call  # noqa: E402
+from tests.etsy_helpers import call  # noqa: E402
 from tests.plan.test_cycle_line import lined, working  # noqa: E402
 from tests.products.test_fill_in_pages import page_texts  # noqa: E402
 

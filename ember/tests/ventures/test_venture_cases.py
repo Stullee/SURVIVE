@@ -13,8 +13,7 @@ import pytest
 
 from app.agent import econ, tools, views
 from app.agent.fake_llm import FakeTransport, Reply, ToolCalls, request_kind
-from tests.cycle.test_agent import rows
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import rows, run
 from tests.ventures.test_ventures import DROPSHIPPING, JOURNAL, NUMBERS, VENTURING, aim, plan, tool_results
 
 

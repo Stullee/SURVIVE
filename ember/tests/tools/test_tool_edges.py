@@ -27,8 +27,8 @@ pytest.importorskip("httpx2")
 
 from app.agent import netguard, store, tools  # noqa: E402
 from app.products import make  # noqa: E402
-from tests.channels.test_etsy import call, shop_context  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
+from tests.agent_helpers import rows  # noqa: E402
+from tests.etsy_helpers import call, shop_context  # noqa: E402
 from tests.tools.test_calls_in_texts import quiet  # noqa: E402
 from tests.tools.test_workshop import result, workshop_cycle  # noqa: E402
 

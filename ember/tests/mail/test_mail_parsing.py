@@ -30,7 +30,7 @@ import pytest
 from app.agent import agenda
 from app.integrations import executor, mail, mailstore
 from app.integrations.optout import opt_out
-from tests.cycle.test_agent import rows
+from tests.agent_helpers import rows
 from tests.mail.test_executor import FakeSMTP, approval, dashboard_row, live_approved
 from tests.mail.test_executor import smtp as smtp  # noqa: F401 - the fixture
 from tests.mail.test_mail import LIVE, FakeIMAP, raw_mail

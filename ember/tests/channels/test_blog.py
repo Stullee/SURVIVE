@@ -29,12 +29,10 @@ from app.economy.clock import to_iso
 from app.integrations import connectors, sftp, site_publisher
 from app.logging_setup import redact
 from app.products import blog
-from tests.channels.test_etsy import call, shop_context, views_approval
+from tests.agent_helpers import ROOMY, owner, rows, run
+from tests.api_helpers import CSRF
 from tests.channels.test_site import texts
-from tests.cycle.test_agent import ROOMY, rows
-from tests.cycle.test_loop_shapes import run
-from tests.owner.test_owner_api import CSRF
-from tests.owner.test_owner_loop import owner
+from tests.etsy_helpers import call, shop_context, views_approval
 
 SITE_DATA = {
     "site_url": "https://example.org",

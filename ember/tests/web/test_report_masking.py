@@ -34,9 +34,8 @@ from app.config import LoadedSettings, Settings, load_settings
 from app.integrations import kdp
 from app.products import site
 from app.web import router
-from tests.cycle.test_agent import ROOMY, make_agent
-from tests.cycle.test_agent import plan as scripted_plan
-from tests.owner.test_owner_loop import owner
+from tests.agent_helpers import ROOMY, make_agent, owner
+from tests.agent_helpers import plan as scripted_plan
 from tests.web.test_report_privacy import LABEL, section, shared_and_full, state_of
 
 CSRF = {"X-Ember-Request": "1"}

@@ -19,9 +19,8 @@ from app.agent.fake_llm import FakeTransport, Plan, Reply, ToolCalls
 from app.agent.service import Agent
 from app.economy.clock import to_iso
 from app.integrations import etsy
-from tests.channels.test_etsy import live_shop
-from tests.cycle.test_agent import ROOMY, rows
-from tests.cycle.test_loop_shapes import JOURNAL, PLAN, run
+from tests.agent_helpers import JOURNAL, PLAN, ROOMY, rows, run
+from tests.etsy_helpers import live_shop
 from tests.ventures.test_ventures import found
 
 LISTING = {

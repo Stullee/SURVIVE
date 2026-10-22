@@ -40,16 +40,16 @@ from app.integrations.printify import (  # noqa: E402
 from app.integrations.printify_live import LiveAccount, _Allowlist  # noqa: E402
 from app.logging_setup import redact  # noqa: E402
 from app.products import images  # noqa: E402
-from tests.channels import test_pinterest, test_printify  # noqa: E402
-from tests.channels.test_etsy import Etsy, call, shop_context, views_approval  # noqa: E402
-from tests.cycle.test_agent import (  # noqa: E402
+from tests.agent_helpers import (  # noqa: E402
     ROOMY,
-    make_agent,  # noqa: E402
+    make_agent,
+    owner,
     rows,
+    run,
 )
-from tests.cycle.test_loop_shapes import run  # noqa: E402
+from tests.channels import test_pinterest, test_printify  # noqa: E402
 from tests.economy_helpers import owner as owner_entry  # noqa: E402
-from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.etsy_helpers import Etsy, call, shop_context, views_approval  # noqa: E402
 from tests.queue_helpers import slot_comes  # noqa: E402
 
 PRINTING = ROOMY.model_copy(update={"printify_enabled": True})

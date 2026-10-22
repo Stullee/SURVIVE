@@ -40,15 +40,21 @@ from app.economy.clock import from_iso, to_iso  # noqa: E402
 from app.integrations import mailstore  # noqa: E402
 from app.privacy import Masker  # noqa: E402
 from app.state import AppState  # noqa: E402
-from tests.cycle.test_agent import ROOMY, make_agent, reply, rows, text  # noqa: E402
-from tests.cycle.test_agent import plan as scripted_plan  # noqa: E402
-from tests.cycle.test_agent import tools as calls  # noqa: E402
-from tests.cycle.test_loop_shapes import run  # noqa: E402
+from tests.agent_helpers import (  # noqa: E402
+    ROOMY,
+    make_agent,
+    owner,
+    reply,
+    rows,
+    run,
+    text,
+)
+from tests.agent_helpers import plan as scripted_plan  # noqa: E402
+from tests.agent_helpers import tools as calls  # noqa: E402
 from tests.learning.test_library import add  # noqa: E402
 from tests.mail.test_executor import REPLY  # noqa: E402
 from tests.mail.test_inquiries import inbound  # noqa: E402
 from tests.mail.test_mail import JOURNAL, READER, mail_cycle  # noqa: E402
-from tests.owner.test_owner_loop import owner  # noqa: E402
 from tests.owner.test_policy import a_milestone  # noqa: E402
 from tests.plan.test_roadmap import JOURNAL as FAKE_JOURNAL  # noqa: E402
 from tests.plan.test_roadmap import plan  # noqa: E402

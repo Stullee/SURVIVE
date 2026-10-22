@@ -12,8 +12,8 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.economy.ledger import Scope
+from tests.api_helpers import grant, post
 from tests.economy_helpers import FakeClock, make_economy, metered, owner, request
-from tests.owner.test_owner_api import grant, post
 
 
 def key() -> str:

@@ -17,10 +17,8 @@ from app.agent import news, prompts, review, roadmap, tools
 from app.agent.fake_llm import FakeTransport, Plan, Reply, ToolCalls, request_kind
 from app.agent.service import Agent
 from app.config import Settings
-from tests.cycle.test_agent import rows
-from tests.cycle.test_loop_shapes import run
-from tests.owner.test_owner_api import post
-from tests.owner.test_owner_loop import owner
+from tests.agent_helpers import owner, rows, run
+from tests.api_helpers import post
 
 TODAY = date(2026, 9, 1)  # the test clock's day, a Tuesday
 NOW = "2026-09-01T10:00:00Z"

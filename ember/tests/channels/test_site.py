@@ -24,9 +24,8 @@ from app.agent import tools, website
 from app.agent.fake_llm import FakeTransport, request_kind
 from app.config import LoadedSettings, Settings
 from app.products import site
-from tests.channels.test_etsy import call, shop_context
-from tests.cycle.test_agent import ROOMY, rows
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import ROOMY, rows, run
+from tests.etsy_helpers import call, shop_context
 
 OWNER = {
     "site_enabled": True,

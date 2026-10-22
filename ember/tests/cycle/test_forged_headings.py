@@ -14,7 +14,7 @@ from app.agent import context, loop, obligations, roadmap, ventures
 from app.agent import plan as plan_tree
 from app.agent.memory import heading_like
 from app.agent.news import News
-from tests.cycle.test_agent import make_agent, plan, rows, text, tools
+from tests.agent_helpers import make_agent, plan, rows, text, tools
 from tests.cycle.test_agent_requests import biggest_milestone, biggest_venture, overflowing_snapshot
 from tests.cycle.test_owner_news import first_text
 

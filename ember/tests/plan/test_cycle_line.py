@@ -24,15 +24,14 @@ from app.agent import (  # noqa: E402
     roadmap,
     store,
     tools,
-    ventures,  # noqa: E402
+    ventures,
     weekly,
 )
 from app.agent.fake_llm import FakeTransport, Plan, request_kind  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
-from tests.channels.test_etsy import call  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
-from tests.cycle.test_loop_shapes import run  # noqa: E402
+from tests.agent_helpers import rows, run  # noqa: E402
+from tests.etsy_helpers import call  # noqa: E402
 
 IDLE = {"assessment": "ok", "goal": "Wait", "focus_project_id": None, "steps": [], "sleep_minutes": 120}
 

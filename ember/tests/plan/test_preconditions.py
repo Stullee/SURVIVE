@@ -29,7 +29,7 @@ from app.agent import plan, preconditions, store, tools  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from app.integrations import etsy, etsy_publisher  # noqa: E402
-from tests.channels.test_etsy import call  # noqa: E402
+from tests.etsy_helpers import call  # noqa: E402
 from tests.plan.test_cycle_line import cycle, lined, now, working  # noqa: E402
 from tests.plan.test_limit_waits import full_queue, launched, refused_by  # noqa: E402
 from tests.plan.test_marketing_order import PINS  # noqa: E402

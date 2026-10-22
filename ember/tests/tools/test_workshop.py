@@ -29,8 +29,7 @@ from app.economy import pricing
 from app.economy.estimate import CODE_RESULT_ALLOWANCE_TOKENS, MAX_SERVER_ITERATIONS, Unpriceable, plan_request
 from app.economy.metering import rough_token_count
 from app.products import checks, markup, pdf, word
-from tests.cycle.test_agent import ROOMY, rows
-from tests.cycle.test_loop_shapes import JOURNAL, PLAN, run
+from tests.agent_helpers import JOURNAL, PLAN, ROOMY, rows, run
 from tests.cycle.test_owner_news import snapshot_with
 
 # --- the checks every workshop file passes ------------------------------------------

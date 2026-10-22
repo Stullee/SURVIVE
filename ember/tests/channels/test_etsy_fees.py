@@ -12,8 +12,8 @@ import pytest
 pytest.importorskip("httpx2")
 
 from app.integrations import etsy, etsy_publisher  # noqa: E402
-from tests.channels.test_etsy import listed, live_shop  # noqa: E402
 from tests.economy_helpers import owner as owner_entry  # noqa: E402
+from tests.etsy_helpers import listed, live_shop  # noqa: E402
 
 LINES = [
     {"listing_id": 900_000_001, "title": "Ember's planner", "quantity": 1, "price_cents": 450},

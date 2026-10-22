@@ -14,7 +14,7 @@ from pathlib import Path
 
 from app.agent import context, memory, obligations, prompts, review, tools, ventures
 from app.config import Settings
-from tests.cycle.test_agent import rows
+from tests.agent_helpers import rows
 from tests.learning.test_lessons import lessons
 from tests.learning.test_review import next_day
 

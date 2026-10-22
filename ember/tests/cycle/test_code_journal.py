@@ -8,8 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.agent.fake_llm import FakeTransport, Reply, ToolCalls
-from tests.cycle.test_agent import rows
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import rows, run
 from tests.plan.test_roadmap import plan, tool_results
 
 JOURNAL = ("write_journal", {"summary": "Looked around", "entry": "Listed the workspace."})

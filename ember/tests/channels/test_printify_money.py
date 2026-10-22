@@ -31,7 +31,7 @@ from app.db import Database, discover_migrations, migrate  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from app.integrations import etsy, etsy_live, printify, printify_publisher  # noqa: E402
 from app.integrations.printify import Gone, NotSent, Unclear  # noqa: E402
-from tests.channels.test_etsy import call  # noqa: E402
+from tests.agent_helpers import owner, rows  # noqa: E402
 from tests.channels.test_printify import (  # noqa: E402
     LARGE,
     POSTER,
@@ -45,9 +45,8 @@ from tests.channels.test_printify import (  # noqa: E402
     proposed,
     read_catalog,
 )
-from tests.cycle.test_agent import rows  # noqa: E402
 from tests.economy_helpers import owner as owner_entry  # noqa: E402
-from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.etsy_helpers import call  # noqa: E402
 
 APP = Path(__file__).parents[2] / "app"
 

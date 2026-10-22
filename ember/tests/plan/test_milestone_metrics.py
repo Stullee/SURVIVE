@@ -18,10 +18,9 @@ import pytest
 pytest.importorskip("httpx2")
 
 from app.agent import metrics, roadmap, tools, ventures  # noqa: E402
-from tests.channels.test_etsy import listed, proposed, shop_context  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
+from tests.agent_helpers import owner, rows  # noqa: E402
 from tests.economy_helpers import owner as owner_entry  # noqa: E402
-from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.etsy_helpers import listed, proposed, shop_context  # noqa: E402
 from tests.roadmap_helpers import led_to_goal, set_milestone  # noqa: E402
 
 

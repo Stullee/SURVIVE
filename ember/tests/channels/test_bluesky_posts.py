@@ -26,9 +26,9 @@ from app.agent.fake_llm import request_kind  # noqa: E402
 from app.economy.clock import from_iso, to_iso  # noqa: E402
 from app.integrations import bluesky_publisher  # noqa: E402
 from app.integrations.bluesky import FakeBluesky  # noqa: E402
+from tests.agent_helpers import rows  # noqa: E402
 from tests.channels.test_bluesky import a_post, post_context, posted  # noqa: E402
-from tests.channels.test_etsy import call  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
+from tests.etsy_helpers import call  # noqa: E402
 
 EVERY = {"mail": True, "workshop": True, "etsy": True, "venture": False, "library": True, "pinterest": True}
 EVERY |= {"bluesky": True, "blog": True, "printify": True, "site": True, "kdp": True}

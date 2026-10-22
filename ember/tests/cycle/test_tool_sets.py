@@ -15,9 +15,8 @@ import pytest
 
 from app.agent import prompts, tools
 from app.agent.fake_llm import FakeTransport, Reply, ToolCalls, request_kind
-from tests.cycle.test_agent import rows
+from tests.agent_helpers import rows, run
 from tests.cycle.test_agent_requests import SETTINGS
-from tests.cycle.test_loop_shapes import run
 from tests.ventures.test_ventures import JOURNAL, VENTURING, plan
 
 EVERYTHING = {

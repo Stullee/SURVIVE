@@ -11,7 +11,7 @@ import pytest
 pytest.importorskip("httpx2")
 
 from app.agent import plan, weights  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
+from tests.agent_helpers import rows  # noqa: E402
 from tests.plan.test_cycle_line import lined, now  # noqa: E402
 from tests.plan.test_plan_tree import keep  # noqa: E402
 

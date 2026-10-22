@@ -9,7 +9,7 @@ from typing import Any
 from app.agent import plan as plan_tree
 from app.agent import store, workfiles
 from app.economy.clock import to_iso
-from tests.cycle.test_agent import make_agent, plan, rows, text, tools
+from tests.agent_helpers import make_agent, plan, rows, text, tools
 
 PROJECT = {"title": "Meal planners", "hypothesis": "Families pay 4 EUR", "status": "active"}
 OTHER = {"title": "CV templates", "hypothesis": "Job seekers pay 6 EUR", "status": "active"}

@@ -37,11 +37,16 @@ from app.config import Settings  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from app.integrations import etsy_publisher  # noqa: E402
 from app.integrations.etsy import NotSent  # noqa: E402
-from tests.channels.test_etsy import call, shop_context, started  # noqa: E402
+from tests.agent_helpers import (  # noqa: E402
+    make_agent,
+    owner,
+    plan,
+    rows,
+    text,
+)
+from tests.agent_helpers import tools as calls  # noqa: E402
 from tests.channels.test_printify import proposed  # noqa: E402
-from tests.cycle.test_agent import make_agent, plan, rows, text  # noqa: E402
-from tests.cycle.test_agent import tools as calls  # noqa: E402
-from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.etsy_helpers import call, shop_context, started  # noqa: E402
 
 # The default sleeps (without venture cycles, as the tests' ROOMY)
 DEFAULTS = Settings(starting_balance_usd=50, daily_spend_cap_usd=5, cycle_spend_cap_usd=1)

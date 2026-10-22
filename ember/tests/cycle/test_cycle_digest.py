@@ -16,8 +16,7 @@ from app.agent import views
 from app.agent.fake_llm import Fail, FakeTransport, Reply, ToolCalls, request_kind
 from app.agent.prompts import REFLECT_MARKER
 from app.economy.metering import Rejected
-from tests.cycle.test_agent import rows
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import rows, run
 from tests.plan.test_roadmap import JOURNAL, create, day, plan, planner_texts, section
 
 WRITE = ("workspace_write", {"path": "drafts/planner.md", "mode": "create", "content": "Page 1"})

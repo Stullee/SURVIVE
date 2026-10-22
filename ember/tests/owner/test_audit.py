@@ -17,9 +17,8 @@ pytest.importorskip("httpx2")
 from app.agent import audit, news, policy, store  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from app.integrations import connectors, etsy  # noqa: E402
-from tests.channels.test_etsy import listed  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
-from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.agent_helpers import owner, rows  # noqa: E402
+from tests.etsy_helpers import listed  # noqa: E402
 from tests.owner.test_policy import a_milestone, change, price_of, reject, work_on  # noqa: E402
 
 

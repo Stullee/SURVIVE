@@ -27,8 +27,8 @@ from app.db import Database, discover_migrations, migrate
 from app.economy.metering import Rejected
 from app.integrations import mail, mailstore, reddit
 from app.state import AppState
-from tests.cycle.test_agent import make_agent, plan, reply, rows, text
-from tests.cycle.test_agent import tools as calls
+from tests.agent_helpers import make_agent, plan, reply, rows, text
+from tests.agent_helpers import tools as calls
 from tests.economy_helpers import ScriptedTransport, make_economy
 
 PASSWORD = "app-pass-7Hq2-zK9w-secret"

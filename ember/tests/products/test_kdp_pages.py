@@ -30,9 +30,8 @@ from app.agent import loop, tools
 from app.agent.sandbox import Jail
 from app.integrations import kdp
 from app.products import make, markup, pagecheck, pdf, word
-from tests.channels.test_etsy import call
-from tests.cycle.test_agent import rows
-from tests.owner.test_owner_loop import owner
+from tests.agent_helpers import owner, rows
+from tests.etsy_helpers import call
 from tests.products.test_kdp import front, next_reply, project, publishing
 from tests.products.test_kdp import project as book_line
 

@@ -19,10 +19,8 @@ from app.agent import context, memory, news, tools
 from app.agent.fake_llm import FakeTransport, request_kind
 from app.agent.service import Agent
 from app.economy.clock import to_iso
-from tests.cycle.test_agent import rows
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import owner, rows, run
 from tests.learning.test_review import next_day
-from tests.owner.test_owner_loop import owner
 from tests.plan.test_roadmap import plan, planner_texts, section
 from tests.plan.test_roadmap import plan as fake_plan
 

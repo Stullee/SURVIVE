@@ -13,8 +13,8 @@ from PIL import Image
 from app.agent.sandbox import Jail
 from app.integrations import etsy, qa
 from app.products import images, make
-from tests.channels.test_etsy import a_listing, listed
-from tests.owner.test_owner_loop import owner
+from tests.agent_helpers import owner
+from tests.etsy_helpers import a_listing, listed
 from tests.products.test_pictures import a_cv, three_sheets
 from tests.products.test_product_tools import make_agent
 from tests.products.test_products import jail

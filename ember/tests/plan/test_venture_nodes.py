@@ -27,14 +27,13 @@ from app import paths  # noqa: E402
 from app.agent import desk, obligations, plan, ventures, views, weights  # noqa: E402  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from app.db import discover_migrations, migrate  # noqa: E402
-from tests.channels.test_etsy import call  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
-from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.agent_helpers import owner, rows  # noqa: E402
+from tests.etsy_helpers import call  # noqa: E402
 from tests.plan.test_cycle_line import cycle, lined, now, working  # noqa: E402  # noqa: E402
 from tests.plan.test_exploring import NOW, explored, exploring_agent  # noqa: E402
 from tests.plan.test_plan_tree import (  # noqa: E402
     TRACKER,
-    keep,  # noqa: E402
+    keep,
     project,
 )
 from tests.plan.test_promises import promise, steered  # noqa: E402

@@ -16,8 +16,7 @@ import pytest
 from app.agent import roadmap
 from app.agent.fake_llm import FakeTransport, Plan, Reply
 from app.agent.service import Agent
-from tests.cycle.test_agent import rows
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import rows, run
 from tests.plan.test_money_goal import call
 from tests.plan.test_roadmap import JOURNAL, create, day, plan
 from tests.roadmap_helpers import set_milestone

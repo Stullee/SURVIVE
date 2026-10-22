@@ -19,10 +19,9 @@ from app.agent.fake_llm import request_kind  # noqa: E402
 from app.integrations import pinterest  # noqa: E402
 from app.integrations.pinterest import NotSent, Pin, TokenFile  # noqa: E402
 from app.integrations.pinterest_live import NEEDS_STANDARD, LiveAccount  # noqa: E402
-from tests.channels.test_etsy import views_approval  # noqa: E402
+from tests.agent_helpers import owner, rows  # noqa: E402
 from tests.channels.test_pinterest import LIVE, live_account, mock, proposed, some_tokens  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
-from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.etsy_helpers import views_approval  # noqa: E402
 
 BOARD = "5550001"
 

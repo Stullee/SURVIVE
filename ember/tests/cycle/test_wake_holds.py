@@ -32,9 +32,8 @@ from app.economy import burn, metering, pricing
 from app.economy.clock import to_iso
 from app.economy.metering import NotSent
 from tests import economy_helpers
-from tests.cycle.test_agent import ROOMY, make_agent, plan, rows, text, tools
+from tests.agent_helpers import ROOMY, make_agent, plan, rows, run, text, tools
 from tests.cycle.test_fake_llm import RESULT, TEXT, USE, turn, usage_of
-from tests.cycle.test_loop_shapes import run
 
 # --- C1: the holds are worked out again at every decision ---
 

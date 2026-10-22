@@ -21,9 +21,8 @@ from app.agent import loop, netguard, prompts, tools
 from app.agent.fake_llm import FakeTransport, validate_request
 from app.economy.metering import picture_tokens, rough_token_count
 from app.products import make
-from tests.cycle.test_agent import check_conversations, make_agent, plan, rows, text
-from tests.cycle.test_agent import tools as tool_calls
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import check_conversations, make_agent, plan, rows, run, text
+from tests.agent_helpers import tools as tool_calls
 
 PAGE = "# Weekly planner\n\n- [ ] Plan the week\n\n::: lines 4\n"
 

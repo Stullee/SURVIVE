@@ -13,7 +13,7 @@ from typing import Any
 
 from app.agent import review, roadmap
 from app.agent.fake_llm import Reply
-from tests.cycle.test_agent import rows
+from tests.agent_helpers import rows
 from tests.learning.test_review import next_day
 
 

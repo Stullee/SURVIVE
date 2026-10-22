@@ -15,10 +15,8 @@ from app.agent import context, prompts, tools
 from app.agent.fake_llm import FakeTransport
 from app.integrations import etsy_publisher
 from app.integrations.etsy import FakeShop, NotSent
-from tests.channels.test_etsy import listed, proposed
-from tests.cycle.test_agent import rows
-from tests.cycle.test_loop_shapes import run
-from tests.owner.test_owner_loop import owner
+from tests.agent_helpers import owner, rows, run
+from tests.etsy_helpers import listed, proposed
 from tests.plan.test_money_goal import call
 from tests.plan.test_roadmap import plan as idle
 

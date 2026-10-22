@@ -31,8 +31,7 @@ import pytest
 
 from app.agent.fake_llm import FakeTransport
 from app.products import images, make, sheets
-from tests.cycle.test_agent import ROOMY
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import ROOMY, run
 from tests.products.test_pictures import three_sheets
 from tests.products.test_products import jail
 from tests.tools.test_workspace_tools import a_spec, calling

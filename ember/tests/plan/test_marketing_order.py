@@ -30,7 +30,7 @@ from app import diagnostics  # noqa: E402
 from app.agent import (  # noqa: E402
     plan,
     quality,
-    reach,  # noqa: E402
+    reach,
     store,
     weights,
 )
@@ -38,8 +38,8 @@ from app.agent import plan as plan_tree  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from app.config import LoadedSettings  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
-from tests.channels.test_etsy import started  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
+from tests.agent_helpers import rows  # noqa: E402
+from tests.etsy_helpers import started  # noqa: E402
 from tests.plan.test_cycle_line import cycle, now  # noqa: E402
 from tests.plan.test_plan_tree import ALL, keep  # noqa: E402
 from tests.plan.test_promises import promise  # noqa: E402

@@ -34,11 +34,11 @@ from app.agent import (  # noqa: E402
     plan,
     store,
     tools,
-    weights,  # noqa: E402
+    weights,
 )
 from app.agent.fake_llm import Plan, Reply, ToolCalls  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
+from tests.agent_helpers import rows  # noqa: E402
 from tests.plan.test_cycle_line import cycle, lined, now  # noqa: E402
 from tests.plan.test_exploring import exploring_agent  # noqa: E402
 from tests.plan.test_marketing_order import PINS  # noqa: E402

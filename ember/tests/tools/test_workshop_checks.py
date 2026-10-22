@@ -25,7 +25,7 @@ from PIL import Image
 
 from app.agent import library, tools
 from app.products import checks, images, make, sheets
-from tests.owner.test_owner_loop import owner
+from tests.agent_helpers import owner
 from tests.products.test_pictures import three_sheets
 from tests.products.test_product_tools import ctx_for, make_agent
 from tests.tools.test_workshop import a_docx, a_pdf, with_parts

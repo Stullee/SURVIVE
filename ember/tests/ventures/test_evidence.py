@@ -15,8 +15,7 @@ import pytest
 from app.agent import evidence, tools, views
 from app.agent.fake_llm import FakeTransport, Reply, ToolCalls, request_kind
 from app.agent.service import Agent
-from tests.cycle.test_agent import rows
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import rows, run
 from tests.ventures.test_ventures import DROPSHIPPING, JOURNAL, VENTURING, aim, found, plan, tool_results
 
 NOW = "2026-09-30T12:00:00Z"

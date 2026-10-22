@@ -16,9 +16,8 @@ pytest.importorskip("httpx2")
 
 from app.agent import demand, tools, ventures  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
-from tests.channels.test_etsy import call, listed, proposed, shop_context  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
-from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.agent_helpers import owner, rows  # noqa: E402
+from tests.etsy_helpers import call, listed, proposed, shop_context  # noqa: E402
 
 
 def line_of(agent: Any) -> tuple[int, int]:

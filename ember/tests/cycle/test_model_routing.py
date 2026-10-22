@@ -13,8 +13,7 @@ from app.agent.fake_llm import FakeTransport, Raw, Reply, ToolCalls
 from app.agent.service import Agent
 from app.config import Settings
 from app.economy import pricing
-from tests.cycle.test_agent import rows
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import rows, run
 from tests.ventures.test_ventures import JOURNAL, found, plan
 
 HAIKU = "claude-haiku-4-5"

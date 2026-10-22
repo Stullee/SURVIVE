@@ -19,10 +19,8 @@ from app.agent.owner import Owner  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from app.integrations.pinterest import FakePinterest  # noqa: E402
 from app.integrations.printify import PrintifyError  # noqa: E402
+from tests.agent_helpers import owner, rows, run  # noqa: E402
 from tests.channels.test_pinterest import PINNING  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
-from tests.cycle.test_loop_shapes import run  # noqa: E402
-from tests.owner.test_owner_loop import owner  # noqa: E402
 from tests.ventures.test_ventures import PINTEREST, VENTURING, plan, planner_texts, venture  # noqa: E402
 
 # --- From 0.15.0 (formerly test_fixes_0140_channels.py) ---

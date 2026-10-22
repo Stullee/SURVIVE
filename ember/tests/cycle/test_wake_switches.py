@@ -18,7 +18,7 @@ from app.agent.service import Agent
 from app.config import WAKING_DECISIONS, WAKING_EVENTS, LoadedSettings, Settings
 from app.economy import metering
 from app.economy.clock import to_iso
-from tests.cycle.test_agent import ROOMY, make_agent, plan, rows
+from tests.agent_helpers import ROOMY, make_agent, plan, rows
 from tests.cycle.test_decision_wakes import asks_and_sleeps
 from tests.cycle.test_wake_guards import urgent_milestone
 from tests.owner.test_autonomy import request_for, send

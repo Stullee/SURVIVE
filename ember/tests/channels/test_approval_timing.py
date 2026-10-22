@@ -25,15 +25,14 @@ from app.agent.service import Agent
 from app.economy.clock import to_iso
 from app.integrations import connectors, executor, mail, mailstore
 from app.products import live
-from tests.channels.test_etsy import a_change, listed, shop_context
+from tests.agent_helpers import owner, rows
+from tests.agent_helpers import tools as calls
 from tests.channels.test_live_view import agent_with
-from tests.cycle.test_agent import rows
-from tests.cycle.test_agent import tools as calls
+from tests.etsy_helpers import a_change, listed, shop_context
 from tests.mail.test_executor import REPLY, FakeSMTP, approval, approve, dashboard_row, ids, live_approved, proposing
 from tests.mail.test_executor import smtp as smtp  # noqa: F401 - the fixture
 from tests.mail.test_mail import PASSWORD, FakeIMAP, live_agent, mail_cycle
 from tests.mail.test_mail import imap as imap  # noqa: F401 - the fixture
-from tests.owner.test_owner_loop import owner
 from tests.owner.test_policy import a_milestone
 from tests.owner.test_unlock_safety import answer, status_of, unlock
 

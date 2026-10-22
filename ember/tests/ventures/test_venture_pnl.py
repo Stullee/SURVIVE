@@ -12,7 +12,7 @@ import pytest
 from app.agent import review, ventures, views
 from app.agent.fake_llm import FakeTransport
 from app.config import Settings
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import run
 from tests.economy_helpers import make_economy, owner
 from tests.money.test_life import spend
 from tests.ventures.test_ventures import DROPSHIPPING, VENTURING, plan

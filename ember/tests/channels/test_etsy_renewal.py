@@ -16,9 +16,8 @@ pytest.importorskip("httpx2")
 
 from app.economy.clock import from_iso, to_iso  # noqa: E402
 from app.integrations import etsy, etsy_publisher  # noqa: E402
-from tests.channels.test_etsy import a_change, call, listed, live_shop, shop_context, views_approval  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
-from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.agent_helpers import owner, rows  # noqa: E402
+from tests.etsy_helpers import a_change, call, listed, live_shop, shop_context, views_approval  # noqa: E402
 
 LISTING = "900000001"
 

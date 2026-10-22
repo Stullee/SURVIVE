@@ -25,10 +25,9 @@ import pytest
 
 from app.agent import loop, tools
 from app.agent.fake_llm import FakeTransport, Plan, Reply, ToolCalls, request_kind
-from tests.channels.test_etsy import call
-from tests.cycle.test_agent import check_conversations, make_agent, plan, rows, text
-from tests.cycle.test_agent import tools as replied
-from tests.cycle.test_loop_shapes import JOURNAL, PLAN, run
+from tests.agent_helpers import JOURNAL, PLAN, check_conversations, make_agent, plan, rows, run, text
+from tests.agent_helpers import tools as replied
+from tests.etsy_helpers import call
 from tests.plan.test_cycle_line import lined, working
 from tests.plan.test_plan_tree import keep
 from tests.products.test_kdp import next_reply, project, publishing

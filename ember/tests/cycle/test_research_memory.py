@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from app.agent import context, prompts, store
-from tests.cycle.test_agent import make_agent, plan, rows, text, tools
+from tests.agent_helpers import make_agent, plan, rows, text, tools
 from tests.cycle.test_owner_news import first_text, section, snapshot_with
 
 QUESTION = "Which printable meal-planning templates sell best online, and at what prices?"

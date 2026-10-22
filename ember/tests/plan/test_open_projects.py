@@ -15,9 +15,8 @@ import pytest
 from app.agent import learning, review, store
 from app.agent.fake_llm import FakeTransport
 from app.economy.clock import to_iso
-from tests.channels.test_etsy import call, shop_context
-from tests.cycle.test_agent import rows
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import rows, run
+from tests.etsy_helpers import call, shop_context
 
 OPEN = 12
 

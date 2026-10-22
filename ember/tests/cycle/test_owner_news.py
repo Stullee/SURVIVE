@@ -15,8 +15,7 @@ from app.agent import context, loop, news, store, views
 from app.agent.news import News
 from app.config import Settings
 from app.economy.life import LifeStatus
-from tests.cycle.test_agent import make_agent, plan, rows, text, tools
-from tests.owner.test_owner_loop import cycle_with_approval, owner
+from tests.agent_helpers import cycle_with_approval, make_agent, owner, plan, rows, text, tools
 
 QUESTION = "will you create them by image generation?"
 JOURNAL = tools(("write_journal", {"summary": "Answered my owner", "entry": "Said what I can do."}))
@@ -633,7 +632,7 @@ def test_a_0_9_database_keeps_only_the_questions_that_were_never_answered(tmp_pa
 
 def test_the_dry_runs_fake_answers_and_names_the_message(data_dir: Path) -> None:
     from app.agent.fake_llm import FakeTransport  # noqa: PLC0415
-    from tests.cycle.test_loop_shapes import run  # noqa: PLC0415
+    from tests.agent_helpers import run  # noqa: PLC0415
 
     def asked(agent: Any) -> None:
         assert owner(agent).send_message({"text": QUESTION}, "Stefan").status == 201

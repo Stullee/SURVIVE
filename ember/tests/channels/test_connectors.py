@@ -17,10 +17,10 @@ pytest.importorskip("httpx2")
 
 from app.agent import tools  # noqa: E402
 from app.integrations import connectors, etsy, qa  # noqa: E402
-from tests.channels.test_etsy import a_change, listed, shop_context, views_approval  # noqa: E402
+from tests.agent_helpers import make_agent, plan, rows, text  # noqa: E402 # noqa: E402
+from tests.agent_helpers import tools as calls  # noqa: E402
 from tests.channels.test_etsy_revenue import order, shop_with  # noqa: E402
-from tests.cycle.test_agent import make_agent, plan, rows, text  # noqa: E402 # noqa: E402
-from tests.cycle.test_agent import tools as calls  # noqa: E402
+from tests.etsy_helpers import a_change, listed, shop_context, views_approval  # noqa: E402
 from tests.mail.test_executor import REPLY, approve, ids  # noqa: E402
 from tests.mail.test_executor import owner as owner_of  # noqa: E402
 from tests.mail.test_mail import JOURNAL, READER  # noqa: E402

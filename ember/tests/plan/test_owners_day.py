@@ -28,9 +28,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.agent import demand, desk, obligations, plan, quality, store, tools, ventures, weights  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from app.economy.clock import Clock, local_date, to_iso  # noqa: E402
-from tests.channels.test_etsy import call, started  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
-from tests.owner.test_owner_api import post  # noqa: E402
+from tests.agent_helpers import rows  # noqa: E402
+from tests.api_helpers import post  # noqa: E402
+from tests.etsy_helpers import call, started  # noqa: E402
 from tests.plan.test_channel_worth import FLOORED  # noqa: E402
 from tests.plan.test_cycle_line import cycle, lined, now, working  # noqa: E402
 from tests.plan.test_marketing_order import launched  # noqa: E402

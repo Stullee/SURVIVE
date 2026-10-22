@@ -29,9 +29,8 @@ pytest.importorskip("httpx2")
 from app.agent import plan, weights  # noqa: E402
 from app.agent.fake_llm import Plan, Reply, ToolCalls  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
-from tests.channels.test_etsy import call  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
-from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.agent_helpers import owner, rows  # noqa: E402
+from tests.etsy_helpers import call  # noqa: E402
 from tests.plan.test_cycle_line import lined, now, texts, working  # noqa: E402
 from tests.plan.test_exploring import exploring_agent  # noqa: E402
 from tests.plan.test_marketing_order import CRITIC, PINS, critic, launched, urgencies  # noqa: E402

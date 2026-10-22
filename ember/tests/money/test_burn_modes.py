@@ -25,10 +25,8 @@ from app.economy.life import LifeStatus, Runway
 from app.economy.metering import Completed, MeteredModel
 from app.economy.service import Economy
 from tests import economy_helpers
-from tests.cycle.test_agent import rows
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import owner, rows, run
 from tests.economy_helpers import START, FakeClock, ScriptedTransport, make_economy, message, metered, request
-from tests.owner.test_owner_loop import owner
 from tests.plan.test_roadmap import planner_texts
 from tests.ventures.test_ventures import DROPSHIPPING, JOURNAL, VENTURING, plan
 

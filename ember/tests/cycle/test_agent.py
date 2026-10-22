@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import itertools
 import json
 import os
 import sqlite3
@@ -19,82 +18,13 @@ from app.config import LoadedSettings, Settings
 from app.economy import metering
 from app.economy.costs import micros_to_usd
 from app.economy.life import LifeStatus
-from app.economy.metering import STALE_NOTE, Completed, NotSent, usd_cap_to_micros
+from app.economy.metering import STALE_NOTE, NotSent, usd_cap_to_micros
 from app.economy.pricing import opening_cost, working_cycle_cost
-from tests.economy_helpers import ScriptedTransport, make_economy
+from tests.agent_helpers import ROOMY, check_conversations, make_agent, plan, reply, rows, text, tools
+from tests.economy_helpers import ScriptedTransport
 
-_ids = itertools.count(1)
 # No venture cycles (0.10.0): these tests follow the ordinary cycle; tests/ventures/test_ventures.py has the venture
 # ones.
-# 0.15.0: an owner named in owner_user_ids, as the owner's unlocks act only then.
-ROOMY = Settings(
-    starting_balance_usd=50,
-    daily_spend_cap_usd=5,
-    cycle_spend_cap_usd=1,
-    owner_user_ids=("8f14e45fceea167a5a36dedd4bea2543",),
-)
-
-
-def reply(content: list[dict[str, Any]], stop: str, output_tokens: int = 100) -> Completed:
-    body = {
-        "id": f"msg_{next(_ids)}",
-        "type": "message",
-        "role": "assistant",
-        "model": "claude-sonnet-5",
-        "content": content,
-        "stop_reason": stop,
-        "usage": {"input_tokens": 900, "output_tokens": output_tokens},
-    }
-    return Completed(body, f"req_{next(_ids)}")
-
-
-def plan(steps: list[str] | None = None, focus: int | None = None, sleep: int = 120) -> Completed:
-    data = {
-        "assessment": "Fresh start.",
-        "goal": "Try one idea",
-        "focus_project_id": focus,
-        "steps": ["look around", "start a project"] if steps is None else steps,
-        "sleep_minutes": sleep,
-    }
-    return reply([{"type": "text", "text": json.dumps(data)}], "end_turn")
-
-
-def tools(*calls: tuple[str, dict[str, Any]], stop: str = "tool_use") -> Completed:
-    return reply([{"type": "tool_use", "id": f"toolu_{next(_ids)}", "name": n, "input": i} for n, i in calls], stop)
-
-
-def text(words: str) -> Completed:
-    return reply([{"type": "text", "text": words}], "end_turn")
-
-
-def make_agent(data_dir: Path, outcomes: list[Any], settings: Settings = ROOMY) -> tuple[Agent, ScriptedTransport]:
-    economy = make_economy(data_dir, settings)
-    transport = ScriptedTransport(simulated=True, outcomes=outcomes)
-    agent = Agent(economy.db, LoadedSettings(settings), economy, transport=transport, cycles_enabled=True)
-    agent.recover()
-    return agent, transport
-
-
-def check_conversations(sent: list[dict[str, Any]]) -> None:
-    """What the real API requires: alternating roles, and every tool_use answered first thing, in order."""
-    for request in sent:
-        messages = request["messages"]
-        roles = [m["role"] for m in messages]
-        assert roles[0] == "user" and all(a != b for a, b in itertools.pairwise(roles)), roles
-        for before, after in itertools.pairwise(messages):
-            if before["role"] != "assistant":
-                continue
-            uses = [b["id"] for b in before["content"] if b.get("type") == "tool_use"]
-            if not uses:
-                continue
-            results = [b for b in after["content"] if b.get("type") == "tool_result"]
-            assert [r["tool_use_id"] for r in results] == uses
-            assert after["content"][: len(results)] == results
-
-
-def rows(agent: Agent, sql: str) -> list[dict[str, Any]]:
-    with agent.db.connection() as conn:
-        return [dict(r) for r in conn.execute(sql)]
 
 
 def test_a_full_cycle(data_dir: Path) -> None:

@@ -10,7 +10,7 @@ import pytest
 from app.agent.fake_llm import Fail, FakeTransport, Reply, ToolCalls
 from app.config import Settings
 from app.economy.metering import Interrupted
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import run
 from tests.ventures.test_ventures import JOURNAL, VENTURING, plan, tool_results
 
 RESEARCH = ("research", {"question": "What do CV templates sell for?"})

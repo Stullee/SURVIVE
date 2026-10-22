@@ -30,11 +30,10 @@ from app.agent.service import Agent, Decision
 from app.config import LoadedSettings, Settings
 from app.economy import burn, metering
 from app.economy.clock import from_iso, to_iso
-from tests.cycle.test_agent import ROOMY, make_agent, plan, reply, rows, text
+from tests.agent_helpers import ROOMY, make_agent, owner, plan, reply, rows, text
 from tests.cycle.test_decision_wakes import asks_and_sleeps
 from tests.economy_helpers import FakeClock, ScriptedTransport, make_economy
 from tests.owner.test_autonomy import request_for, send
-from tests.owner.test_owner_loop import owner
 
 BERLIN = ZoneInfo("Europe/Berlin")
 
@@ -146,8 +145,8 @@ def test_the_owner_can_switch_event_wake_ups_off(data_dir: Path) -> None:
 
 
 def test_orders_favorites_and_the_milestones_code_checks_are_noted_without_a_wake(data_dir: Path) -> None:
-    from tests.channels.test_etsy import listed
     from tests.cycle.test_agenda import sold
+    from tests.etsy_helpers import listed
 
     agent, listing = listed(data_dir)
     agent.check_events()

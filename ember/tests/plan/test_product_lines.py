@@ -13,30 +13,27 @@ import pytest
 pytest.importorskip("httpx2")
 
 from app.agent import (  # noqa: E402
-    plan,  # noqa: E402
+    plan,
     reach,
-    templates,  # noqa: E402
-    tools,  # noqa: E402
+    templates,
+    tools,
     ventures,
 )
 from app.agent.service import Agent  # noqa: E402
 from app.agent.tools import Outcome  # noqa: E402
-from tests.channels.test_etsy import (
-    call,  # noqa: E402
-    shop_context,  # noqa: E402
-)
-from tests.cycle.test_agent import rows  # noqa: E402
+from tests.agent_helpers import rows  # noqa: E402
+from tests.etsy_helpers import call, shop_context  # noqa: E402
 from tests.plan.test_cycle_line import (  # noqa: E402
-    cycle,  # noqa: E402
+    cycle,
     lined,
     now,
-    working,  # noqa: E402
+    working,
 )
 from tests.plan.test_marketing_order import critic, launched  # noqa: E402
 from tests.plan.test_owner_holds import first_marketing_out, waits, weekly  # noqa: E402
 from tests.plan.test_plan_tree import (  # noqa: E402
     ALL,
-    keep,  # noqa: E402
+    keep,
     project,
 )
 from tests.plan.test_step_brake import made as used  # noqa: E402
@@ -48,7 +45,7 @@ from tests.plan.test_step_brake import made as used  # noqa: E402
 
 
 def test_a_focus_project_of_another_venture_doesnt_take_the_cycles_listing(data_dir: Path) -> None:
-    from tests.channels.test_etsy import listed as etsy_listed  # noqa: PLC0415
+    from tests.etsy_helpers import listed as etsy_listed  # noqa: PLC0415
 
     agent, _ = etsy_listed(data_dir)
     ctx = shop_context(agent)

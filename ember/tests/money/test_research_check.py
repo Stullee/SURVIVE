@@ -25,7 +25,7 @@ from app.economy import pricing
 from app.economy.costs import micros_to_usd
 from app.economy.metering import RESEARCH, RESEARCH_CHECK, CallRefused, Completed, server_tool_room
 from app.economy.service import Economy
-from tests.cycle.test_agent import make_agent, rows
+from tests.agent_helpers import make_agent, rows
 from tests.cycle.test_reflection_reserve import runner_and_cycle
 from tests.economy_helpers import ScriptedTransport, make_economy, message, metered, owner
 

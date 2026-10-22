@@ -35,8 +35,8 @@ from app.agent.fake_llm import FakeTransport  # noqa: E402
 from app.agent.sandbox import Jail, QuotaError  # noqa: E402
 from app.agent.service import Decision  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
-from tests.channels.test_etsy import call  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
+from tests.agent_helpers import rows  # noqa: E402
+from tests.etsy_helpers import call  # noqa: E402
 from tests.tools.test_calls_in_texts import quiet  # noqa: E402
 from tests.tools.test_workshop import result, workshop_cycle  # noqa: E402
 from tests.web.test_diagnostics import report, section  # noqa: E402

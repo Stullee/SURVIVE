@@ -18,9 +18,8 @@ from app.agent import netguard, tools
 from app.agent.fake_llm import FakeTransport
 from app.products import make
 from app.version import app_version
-from tests.channels.test_etsy import call
-from tests.cycle.test_agent import ROOMY, rows
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import ROOMY, rows, run
+from tests.etsy_helpers import call
 from tests.plan.test_cycle_line import lined, working
 from tests.products.test_kdp import publishing
 from tests.products.test_pictures import a_cv, three_sheets

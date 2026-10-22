@@ -29,8 +29,8 @@ from PIL import Image
 from app.agent import tools
 from app.agent.sandbox import Jail
 from app.products import checks, images, make, sheets, statement
-from tests.cycle.test_agent import make_agent, plan, rows, text
-from tests.cycle.test_agent import tools as tool_calls
+from tests.agent_helpers import make_agent, plan, rows, text
+from tests.agent_helpers import tools as tool_calls
 
 # The live product's numbers (drafts/nebenkosten_de.json and its cover, 2026-10-05): two tenants of four units.
 LIVE = {

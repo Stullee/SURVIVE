@@ -14,8 +14,8 @@ from app.config import Settings
 from app.economy import pricing
 from app.economy.metering import Completed
 from app.economy.pricing import SAFETY_DECAY_AFTER, safety_factor, working_cycle_cost
+from tests.api_helpers import post
 from tests.economy_helpers import ScriptedTransport, make_economy, message, metered, request
-from tests.owner.test_owner_api import post
 
 GENEROUS = Settings(starting_balance_usd=50, daily_spend_cap_usd=10, cycle_spend_cap_usd=5)
 MODEL = "claude-sonnet-5"

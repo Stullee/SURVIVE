@@ -22,17 +22,10 @@ pytest.importorskip("httpx2")
 from datetime import timedelta  # noqa: E402
 
 from app.agent import plan, weights  # noqa: E402
-from tests.channels.test_etsy import call  # noqa: E402
-from tests.plan.test_cycle_line import (
-    lined,  # noqa: E402
-    now,  # noqa: E402
-    working,  # noqa: E402
-)
+from tests.etsy_helpers import call  # noqa: E402
+from tests.plan.test_cycle_line import lined, now, working  # noqa: E402
 from tests.plan.test_marketing_order import CRITIC, PINS, launched  # noqa: E402
-from tests.plan.test_plan_tree import (
-    TRACKER,  # noqa: E402
-    keep,  # noqa: E402
-)
+from tests.plan.test_plan_tree import TRACKER, keep  # noqa: E402
 from tests.plan.test_plan_tree import project as line  # noqa: E402
 from tests.plan.test_promises import promise  # noqa: E402
 from tests.plan.test_step_brake import asked, decided  # noqa: E402

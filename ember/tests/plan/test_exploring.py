@@ -26,9 +26,9 @@ from app.agent import plan, quality, store, weights  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.db import discover_migrations, migrate  # noqa: E402
-from tests.channels.test_etsy import a_change, call, listed, shop_context  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
-from tests.owner.test_owner_api import post  # noqa: E402
+from tests.agent_helpers import rows  # noqa: E402
+from tests.api_helpers import post  # noqa: E402
+from tests.etsy_helpers import a_change, call, listed, shop_context  # noqa: E402
 from tests.plan.test_cycle_line import cycle, lined, now, working  # noqa: E402
 from tests.plan.test_plan_tree import ALL, BOOK, TRACKER, keep, project  # noqa: E402
 from tests.plan.test_tree_steers import changes, plan_step, steered  # noqa: E402

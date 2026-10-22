@@ -19,10 +19,13 @@ from app import paths  # noqa: E402
 from app.agent import context, policy, roadmap, stages, store, tools, ventures  # noqa: E402
 from app.agent.fake_llm import FakeTransport, request_kind  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
-from tests.channels.test_etsy import call, listed, shop_context  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
-from tests.cycle.test_loop_shapes import run  # noqa: E402
-from tests.owner.test_owner_loop import owner, sent_text  # noqa: E402
+from tests.agent_helpers import (  # noqa: E402
+    owner,
+    rows,
+    run,
+    sent_text,
+)
+from tests.etsy_helpers import call, listed, shop_context  # noqa: E402
 from tests.roadmap_helpers import set_milestone  # noqa: E402
 from tests.ventures.test_ventures import plan  # noqa: E402
 

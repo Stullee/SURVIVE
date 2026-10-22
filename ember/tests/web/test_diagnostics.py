@@ -20,9 +20,9 @@ from app.agent.sandbox import Jail
 from app.agent.store import canonical
 from app.config import LoadedSettings, Settings
 from app.economy import clock
-from tests.cycle.test_agent import plan, reply, text, tools
+from tests.agent_helpers import plan, reply, text, tools
+from tests.api_helpers import post
 from tests.economy_helpers import ScriptedTransport
-from tests.owner.test_owner_api import post
 from tests.products.test_kdp_pages import week
 
 QUESTION = "Printable meal-planning templates sounds like a good idea, will you create them by image generation"

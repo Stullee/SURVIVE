@@ -18,9 +18,7 @@ from app.agent.fake_llm import FakeTransport
 from app.agent.service import Agent
 from app.db import Database, discover_migrations, migrate
 from app.economy.clock import to_iso
-from tests.cycle.test_agent import rows
-from tests.cycle.test_loop_shapes import run
-from tests.owner.test_owner_loop import owner
+from tests.agent_helpers import owner, rows, run
 from tests.roadmap_helpers import (
     led_to_goal,
     set_milestone,  # noqa: E402

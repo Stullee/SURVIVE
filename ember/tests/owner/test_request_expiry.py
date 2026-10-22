@@ -7,9 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from app.agent import store
-from tests.cycle.test_agent import make_agent, plan, rows, text, tools
+from tests.agent_helpers import make_agent, owner, plan, rows, text, tools
 from tests.cycle.test_owner_news import first_text, section
-from tests.owner.test_owner_loop import owner
 
 
 def ask(kind: str, n: int) -> tuple[str, dict[str, Any]]:

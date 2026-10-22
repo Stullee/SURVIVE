@@ -32,9 +32,8 @@ from app.config import DEFAULT_PRICE_TABLE, LoadedSettings, Settings
 from app.diagnostics import cache_line
 from app.economy.estimate import Unpriceable, expected_micros, plan_request, prefix_request, worst_case_micros
 from app.economy.metering import CallRefused, Completed, MeteredModel, Rejected
-from tests.cycle.test_agent import ROOMY, rows
+from tests.agent_helpers import JOURNAL, PLAN, ROOMY, rows
 from tests.cycle.test_fake_llm import usage_of
-from tests.cycle.test_loop_shapes import JOURNAL, PLAN
 from tests.economy_helpers import FakeClock, ScriptedTransport, make_economy, message
 
 SONNET = DEFAULT_PRICE_TABLE[0]  # claude-sonnet-5: input 2, output 10, cache write 2.5 (5 min) / 4 (1 h), read 0.2

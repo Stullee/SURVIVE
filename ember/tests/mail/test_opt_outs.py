@@ -16,11 +16,11 @@ from fastapi.testclient import TestClient
 from app.agent.service import Agent
 from app.integrations import mail, mailstore
 from app.integrations.optout import opt_out
-from tests.cycle.test_agent import make_agent, plan, rows
-from tests.cycle.test_agent import tools as calls
+from tests.agent_helpers import make_agent, plan, rows
+from tests.agent_helpers import tools as calls
+from tests.api_helpers import post
 from tests.cycle.test_decision_wakes import asks_and_sleeps
 from tests.mail.test_mail import mail_cycle, raw_mail, tool_results
-from tests.owner.test_owner_api import post
 
 ASKS = [
     ("Re: hi", "Stop"),

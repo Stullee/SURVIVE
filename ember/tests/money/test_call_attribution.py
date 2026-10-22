@@ -14,8 +14,7 @@ import pytest
 from app.agent import roadmap, ventures
 from app.agent.fake_llm import FakeTransport, Plan, Reply, ToolCalls
 from app.db import Database, discover_migrations, migrate
-from tests.cycle.test_agent import rows
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import rows, run
 from tests.ventures.test_ventures import DROPSHIPPING, JOURNAL, PRINT, RESEARCH, VENTURING, aim, found
 
 

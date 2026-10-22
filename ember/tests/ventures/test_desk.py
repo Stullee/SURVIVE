@@ -18,9 +18,7 @@ from app.agent import plan as plan_tree
 from app.agent.fake_llm import FakeTransport, Reply, request_kind
 from app.agent.service import Agent
 from app.economy.clock import to_iso
-from tests.cycle.test_agent import rows
-from tests.cycle.test_loop_shapes import run
-from tests.owner.test_owner_loop import owner
+from tests.agent_helpers import owner, rows, run
 from tests.ventures.test_critic import proposed
 from tests.ventures.test_ventures import (
     COMPANION,

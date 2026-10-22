@@ -16,15 +16,15 @@ from typing import Any  # noqa: E402
 from app.agent import (  # noqa: E402
     plan,
     review,
-    weights,  # noqa: E402
+    weights,
 )
 from app.agent.service import Agent  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
+from tests.agent_helpers import rows  # noqa: E402
 from tests.learning.test_weekly_look import judged  # noqa: E402
 from tests.plan.test_cycle_line import lined, now  # noqa: E402
 from tests.plan.test_marketing_order import launched  # noqa: E402
 from tests.plan.test_plan_tree import (  # noqa: E402
-    ALL,  # noqa: E402
+    ALL,
     TRACKER,
     keep,
     project,

@@ -15,10 +15,10 @@ from app.agent import prompts, tools
 from app.agent.owner import REMOVED_TEXT, Owner
 from app.agent.service import Agent
 from app.config import Settings
-from tests.cycle.test_agent import make_agent, plan, rows, text
-from tests.cycle.test_agent import tools as tool_calls
+from tests.agent_helpers import make_agent, plan, rows, text
+from tests.agent_helpers import tools as tool_calls
+from tests.api_helpers import post
 from tests.economy_helpers import ScriptedTransport
-from tests.owner.test_owner_api import post
 
 # An obviously fake login with the shape of a generated password (three groups of six, one digit, one capital),
 # which the dashboard's login warning looks for. Never put a real one here: this repository is public.

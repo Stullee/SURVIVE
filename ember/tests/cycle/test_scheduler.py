@@ -17,7 +17,7 @@ import pytest
 from app.agent.scheduler import ROUND_SECONDS, Scheduler
 from app.agent.service import Agent, Decision
 from app.economy.clock import from_iso
-from tests.cycle.test_agent import make_agent, plan
+from tests.agent_helpers import make_agent, plan
 
 
 def test_a_poke_during_a_round_starts_the_next_round_at_once() -> None:

@@ -22,7 +22,7 @@ from app.agent.owner import KILL_RESET_KEY
 from app.config import _HOST, _SITE_EMAIL, _SITE_URL, ModelPrice, Settings, _corrected, load_settings
 from app.economy.life import KILLED_KEY
 from app.security import NOT_OWNER, SAFE_MODE_LOCKED, AccessPolicy
-from tests.owner.test_owner_api import CSRF, grant
+from tests.api_helpers import CSRF, grant
 
 APP_DIR = Path(__file__).resolve().parents[2]
 REPO_DIR = APP_DIR.parent

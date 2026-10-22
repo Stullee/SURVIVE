@@ -25,9 +25,9 @@ from app.agent.service import Agent
 from app.integrations import executor
 from app.integrations.mail import parse_message
 from app.integrations.optout import opt_out
+from tests.agent_helpers import make_agent, plan, rows, text
+from tests.agent_helpers import tools as calls
 from tests.channels.test_approval_timing import ANN, VERIFIED, from_ann
-from tests.cycle.test_agent import make_agent, plan, rows, text
-from tests.cycle.test_agent import tools as calls
 from tests.mail.test_executor import REPLY, FakeSMTP, approval, approve, dashboard_row, ids, proposing
 from tests.mail.test_executor import smtp as smtp  # noqa: F401 - the fixture
 from tests.mail.test_mail import JOURNAL, FakeIMAP, live_agent, tool_results

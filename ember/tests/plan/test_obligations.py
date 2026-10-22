@@ -19,9 +19,7 @@ from app.agent import plan as plan_tree
 from app.agent.fake_llm import FakeTransport
 from app.agent.service import Agent
 from app.agent.store import AgentScope
-from tests.cycle.test_agent import rows
-from tests.cycle.test_loop_shapes import run
-from tests.owner.test_owner_loop import owner
+from tests.agent_helpers import owner, rows, run
 from tests.plan.test_cycle_line import cycle, lined, milestone, now
 from tests.plan.test_money_goal import call
 from tests.plan.test_roadmap import day, plan, planner_texts, section

@@ -25,7 +25,7 @@ from app.agent import (  # noqa: E402
     econ,
     metrics,
     predictions,
-    prompts,  # noqa: E402
+    prompts,
     roadmap,
     stages,
     tools,
@@ -37,10 +37,8 @@ from app.agent.service import Agent  # noqa: E402
 from app.agent.store import AgentScope  # noqa: E402
 from app.db import Database, discover_migrations, migrate  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
-from tests.channels.test_etsy import listed, shop_context, started  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
-from tests.cycle.test_loop_shapes import run  # noqa: E402
-from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.agent_helpers import owner, rows, run  # noqa: E402
+from tests.etsy_helpers import listed, shop_context, started  # noqa: E402
 from tests.roadmap_helpers import led_to_goal  # noqa: E402
 from tests.ventures.test_venture_stages import backed  # noqa: E402
 from tests.ventures.test_ventures import DROPSHIPPING, ETSY, PRINT, VENTURING, plan  # noqa: E402

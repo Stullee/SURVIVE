@@ -36,15 +36,14 @@ from app.economy.clock import from_iso, to_iso  # noqa: E402
 from app.economy.ledger import PreparedEntry  # noqa: E402
 from app.economy.service import Recorded  # noqa: E402
 from app.integrations import etsy, etsy_live, etsy_publisher, etsy_revenue  # noqa: E402
-from tests.channels.test_etsy import a_change, call, listed, live_shop, shop_context  # noqa: E402
-from tests.channels.test_etsy import proposed as etsy_proposed  # noqa: E402
+from tests.agent_helpers import owner, rows  # noqa: E402
 from tests.channels.test_etsy_revenue import LINE, LISTING, order, shop_with, turned_on  # noqa: E402
 from tests.channels.test_printify import proposed as printify_proposed  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
 from tests.economy_helpers import make_economy  # noqa: E402
 from tests.economy_helpers import owner as owner_entry  # noqa: E402
+from tests.etsy_helpers import a_change, call, listed, live_shop, shop_context  # noqa: E402
+from tests.etsy_helpers import proposed as etsy_proposed  # noqa: E402
 from tests.money.test_life import spend  # noqa: E402
-from tests.owner.test_owner_loop import owner  # noqa: E402
 
 APP_JS = Path(__file__).parents[2] / "app" / "web" / "static" / "js" / "app.js"
 

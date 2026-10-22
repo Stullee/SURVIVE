@@ -14,8 +14,7 @@ from app.agent import desk, stages, ventures, weights
 from app.agent.fake_llm import FakeTransport
 from app.agent.service import Agent
 from app.economy.clock import to_iso
-from tests.cycle.test_agent import rows
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import rows, run
 from tests.economy_helpers import owner as owner_entry
 from tests.ventures.test_desk import steps
 from tests.ventures.test_venture_stages import keep

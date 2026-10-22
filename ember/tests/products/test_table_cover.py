@@ -20,8 +20,8 @@ from app.agent import tools
 from app.agent.sandbox import Jail
 from app.integrations import qa
 from app.products import images, make, tables
-from tests.cycle.test_agent import make_agent, plan, rows, text
-from tests.cycle.test_agent import tools as tool_calls
+from tests.agent_helpers import make_agent, plan, rows, text
+from tests.agent_helpers import tools as tool_calls
 
 # The script's cover, cell for cell: its title, subtitle, columns and rows (the Summe row bold).
 TITLE = "NEBENKOSTENABRECHNUNG"

@@ -18,10 +18,8 @@ from app.agent import econ, evidence, knockouts, tools, ventures, views
 from app.agent.fake_llm import FakeTransport, Reply, ToolCalls
 from app.agent.service import Agent
 from app.economy.clock import to_iso
-from tests.channels.test_etsy import call, shop_context, started
-from tests.cycle.test_agent import rows
-from tests.cycle.test_loop_shapes import run
-from tests.owner.test_owner_loop import owner
+from tests.agent_helpers import owner, rows, run
+from tests.etsy_helpers import call, shop_context, started
 from tests.tools.test_workspace_tools import calling
 from tests.ventures import test_knockouts, test_venture_stages, test_ventures
 from tests.ventures.test_ventures import CASE, DROPSHIPPING, JOURNAL, NUMBERS, SCORES, VENTURING, plan, tool_results

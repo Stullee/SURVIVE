@@ -17,11 +17,16 @@ pytest.importorskip("httpx2")
 from app.agent import metrics, obligations, policy, tools  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from app.integrations import connectors, mailstore, qa  # noqa: E402
-from tests.cycle.test_agent import plan, reply, rows, text  # noqa: E402
-from tests.cycle.test_agent import tools as calls  # noqa: E402
+from tests.agent_helpers import (  # noqa: E402
+    owner,
+    plan,
+    reply,
+    rows,
+    text,
+)
+from tests.agent_helpers import tools as calls  # noqa: E402
 from tests.mail.test_executor import REPLY  # noqa: E402
 from tests.mail.test_mail import JOURNAL, READER, mail_cycle  # noqa: E402
-from tests.owner.test_owner_loop import owner  # noqa: E402
 from tests.owner.test_policy import a_milestone  # noqa: E402
 from tests.plan.test_obligations import forcing  # noqa: E402
 from tests.ventures.test_ventures import tool_results  # noqa: E402

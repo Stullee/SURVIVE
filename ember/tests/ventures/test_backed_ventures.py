@@ -28,10 +28,8 @@ pytest.importorskip("httpx2")
 from app.agent import store, tools, ventures  # noqa: E402
 from app.agent.fake_llm import FakeTransport  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
-from tests.channels.test_etsy import call, shop_context  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
-from tests.cycle.test_loop_shapes import run  # noqa: E402
-from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.agent_helpers import owner, rows, run  # noqa: E402
+from tests.etsy_helpers import call, shop_context  # noqa: E402
 from tests.ventures.test_ventures import DROPSHIPPING, VENTURING, plan  # noqa: E402
 
 FIRST_TEST = "Sell 3 sample boxes to shops in a week"

@@ -16,8 +16,7 @@ from app.agent import critic, econ, prompts, ventures, views
 from app.agent.fake_llm import FakeTransport, Reply, request_kind
 from app.agent.service import Agent
 from app.economy.clock import to_iso
-from tests.cycle.test_agent import rows
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import rows, run
 from tests.ventures.test_knockouts import case, independent
 from tests.ventures.test_ventures import CASE, DROPSHIPPING, JOURNAL, SCORES, VENTURING, plan
 

@@ -25,9 +25,8 @@ from app.agent import plan as plan_tree  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from app.economy.life import KILLED_KEY  # noqa: E402
 from app.integrations import connectors, etsy  # noqa: E402
-from tests.channels.test_etsy import listed  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
-from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.agent_helpers import owner, rows  # noqa: E402
+from tests.etsy_helpers import listed  # noqa: E402
 from tests.owner.test_policy import change, price_of, reject, work_on  # noqa: E402
 from tests.ventures.test_ventures import tool_results  # noqa: E402
 

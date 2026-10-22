@@ -17,14 +17,8 @@ from app import paths  # noqa: E402
 from app.agent import plan as plan_tree  # noqa: E402
 from app.agent import quality, ventures  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
-from tests.channels.test_etsy import (  # noqa: E402
-    call,
-    listed,
-    shop_context,
-    started,  # noqa: E402
-)
-from tests.cycle.test_agent import rows  # noqa: E402
-from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.agent_helpers import owner, rows  # noqa: E402
+from tests.etsy_helpers import call, listed, shop_context, started  # noqa: E402
 from tests.products.test_kdp import project  # noqa: E402
 
 # --- From 0.24.0 (formerly test_fixes_0240.py) ---

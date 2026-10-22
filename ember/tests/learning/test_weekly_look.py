@@ -38,8 +38,8 @@ from app.agent import (  # noqa: E402
 )
 from app.agent.service import Agent  # noqa: E402
 from app.config import Settings  # noqa: E402
-from tests.channels.test_etsy import call, shop_context, started  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
+from tests.agent_helpers import rows  # noqa: E402
+from tests.etsy_helpers import call, shop_context, started  # noqa: E402
 from tests.plan.test_cycle_line import lined, now  # noqa: E402
 
 

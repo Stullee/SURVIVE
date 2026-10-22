@@ -10,8 +10,8 @@ from fastapi.testclient import TestClient
 
 from app.config import LoadedSettings, Settings
 from app.security import NOT_OWNER, AccessPolicy
+from tests.api_helpers import CSRF, grant
 from tests.conftest import HA_CORE
-from tests.owner.test_owner_api import CSRF, grant
 
 OWNER = "8f14e45fceea167a5a36dedd4bea2543"  # Home Assistant user IDs are 32 hex digits
 TABLET = "c9f0f895fb98ab9159f51fd0297e236d"

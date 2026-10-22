@@ -49,7 +49,7 @@ from app.economy.metering import (
     rough_token_count,
 )
 from app.economy.pricing import safety_factor
-from tests.cycle.test_agent import ROOMY
+from tests.agent_helpers import ROOMY
 from tests.economy_helpers import make_economy
 
 SETTINGS = Settings()

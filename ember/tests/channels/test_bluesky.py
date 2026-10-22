@@ -46,12 +46,15 @@ from app.integrations.bluesky_connection import BlueskyConnection  # noqa: E402
 from app.integrations.bluesky_live import LiveAccount, _Allowlist, allowed  # noqa: E402
 from app.logging_setup import redact  # noqa: E402
 from app.products import images  # noqa: E402
+from tests.agent_helpers import (  # noqa: E402
+    ROOMY,
+    owner,
+    rows,
+    run,
+)
 from tests.channels import test_bluesky  # noqa: E402
-from tests.channels.test_etsy import Etsy, call, market_next, shop_context, views_approval  # noqa: E402
-from tests.cycle.test_agent import ROOMY, rows  # noqa: E402
-from tests.cycle.test_loop_shapes import run  # noqa: E402
 from tests.economy_helpers import START, FakeClock  # noqa: E402
-from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.etsy_helpers import Etsy, call, market_next, shop_context, views_approval  # noqa: E402
 
 POSTING = ROOMY.model_copy(update={"bluesky_enabled": True})
 PASSWORD = "fake-fake-fake-0000"  # an app password's shape, plainly not one

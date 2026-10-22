@@ -9,7 +9,7 @@ from typing import Any
 
 from app.agent import tools, ventures
 from app.agent.sandbox import Jail, Limits
-from tests.cycle.test_agent import make_agent, plan, rows
+from tests.agent_helpers import make_agent, plan, rows
 
 ETSY = 1  # the first seeded venture
 

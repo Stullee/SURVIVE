@@ -19,8 +19,7 @@ from app.agent import fake_llm, roadmap, tools
 from app.agent.fake_llm import FakeTransport
 from app.agent.service import Agent
 from app.db import Database, discover_migrations, migrate
-from tests.cycle.test_loop_shapes import run
-from tests.owner.test_owner_loop import owner
+from tests.agent_helpers import owner, run
 from tests.plan.test_roadmap import NOW, TODAY, create, day, milestone, no_money_goal, plan, row  # noqa: F401
 
 # no_money_goal: an autouse fixture (the money goal Ember's code keeps stays out of these tests)

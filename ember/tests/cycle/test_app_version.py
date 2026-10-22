@@ -9,8 +9,8 @@ from fastapi.testclient import TestClient
 
 from app.agent import review
 from app.version import app_version
-from tests.cycle.test_agent import plan, rows, text
-from tests.cycle.test_agent import tools as calls
+from tests.agent_helpers import plan, rows, text
+from tests.agent_helpers import tools as calls
 from tests.economy_helpers import ScriptedTransport
 
 

@@ -23,12 +23,10 @@ from app.agent import plan as plan_tree
 from app.agent.fake_llm import FakeTransport, Plan, Reply, ToolCalls
 from app.agent.news import News
 from app.economy.clock import to_iso
-from tests.cycle.test_agent import ROOMY, make_agent, plan, rows
-from tests.cycle.test_agent import tools as calls
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import ROOMY, make_agent, owner, plan, rows, run
+from tests.agent_helpers import tools as calls
 from tests.cycle.test_owner_news import first_text, section, snapshot_with
 from tests.learning.test_weekly_look import judged
-from tests.owner.test_owner_loop import owner
 from tests.plan.test_cycle_line import IDLE, lined, now, take, texts
 from tests.plan.test_money_goal import call
 from tests.plan.test_roadmap import plan as idle
@@ -215,7 +213,7 @@ def test_an_old_message_can_be_read_checked_and_removed(data_dir: Path) -> None:
 
 
 def test_older_messages_page_through_the_web(ingress_client: Any) -> None:
-    from tests.owner.test_owner_api import post
+    from tests.api_helpers import post
 
     for n in range(35):
         assert post(ingress_client, "api/inbox", {"text": f"message {n}"}).status_code == 201

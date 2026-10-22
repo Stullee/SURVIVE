@@ -33,9 +33,8 @@ from app.agent.fake_llm import FakeTransport, Plan, Reply, ToolCalls  # noqa: E4
 from app.agent.loop import CycleRunner  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from app.economy.clock import Clock, to_iso  # noqa: E402
-from tests.channels.test_etsy import call  # noqa: E402
-from tests.cycle.test_agent import rows  # noqa: E402
-from tests.owner.test_owner_loop import owner  # noqa: E402
+from tests.agent_helpers import owner, rows  # noqa: E402
+from tests.etsy_helpers import call  # noqa: E402
 from tests.plan.test_cycle_line import cycle, lined, now, texts, working  # noqa: E402
 from tests.plan.test_marketing_order import CRITIC, PINS  # noqa: E402
 from tests.plan.test_plan_tree import ALL, TRACKER, keep, project  # noqa: E402

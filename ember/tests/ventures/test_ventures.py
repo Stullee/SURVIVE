@@ -18,12 +18,10 @@ from app.agent.fake_llm import FakeTransport, Plan, Raw, Reply, ToolCalls, reque
 from app.agent.service import Agent
 from app.config import LoadedSettings, Settings
 from app.economy.clock import to_iso
-from tests.cycle.test_agent import ROOMY, rows
+from tests.agent_helpers import ROOMY, owner, rows, run
+from tests.api_helpers import post
 from tests.cycle.test_agent_requests import biggest_venture
-from tests.cycle.test_loop_shapes import run
 from tests.economy_helpers import make_economy
-from tests.owner.test_owner_api import post
-from tests.owner.test_owner_loop import owner
 
 # A test marked exploring (conftest): its plan's ventures' steps make venture cycles (0.36.0: the venture share, which
 # made every cycle one, retired).
@@ -856,7 +854,7 @@ def test_the_rules_ask_for_a_path_never_a_no() -> None:
 def test_a_project_with_listings_revenue_or_a_bet_keeps_its_venture(data_dir: Path) -> None:
     """0.22.0 (analysis 0.20.1, FIX NOW 11): moving the shop's project into a venture closed its "listings_live >= 1"
     as met, settled a forecast of 10% as a hit, and let an empty venture escape its park."""
-    from tests.channels.test_etsy import call, listed, shop_context  # noqa: PLC0415
+    from tests.etsy_helpers import call, listed, shop_context  # noqa: PLC0415
 
     agent, _ = listed(data_dir)
     ctx = shop_context(agent)
@@ -881,7 +879,7 @@ def test_a_project_with_listings_revenue_or_a_bet_keeps_its_venture(data_dir: Pa
 def test_the_owner_s_park_or_kill_stops_its_projects(data_dir: Path) -> None:
     """0.22.0 (analysis 0.20.1, FIX NOW 12): the venture's projects stayed active after the owner parked or killed it,
     and the agent could open new ones under it."""
-    from tests.channels.test_etsy import call, listed, shop_context  # noqa: PLC0415
+    from tests.etsy_helpers import call, listed, shop_context  # noqa: PLC0415
 
     agent, _ = listed(data_dir)
     ctx = shop_context(agent)

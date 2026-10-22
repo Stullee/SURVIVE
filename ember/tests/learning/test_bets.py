@@ -14,13 +14,8 @@ pytest.importorskip("httpx2")
 
 from app.agent import bets, store  # noqa: E402
 from app.agent.fake_llm import FakeTransport  # noqa: E402
-from tests.channels.test_etsy import (  # noqa: E402
-    call,
-    shop_context,
-    started,  # noqa: E402
-)
-from tests.cycle.test_agent import rows  # noqa: E402
-from tests.cycle.test_loop_shapes import run  # noqa: E402
+from tests.agent_helpers import rows, run  # noqa: E402
+from tests.etsy_helpers import call, shop_context, started  # noqa: E402
 from tests.plan.test_roadmap import plan  # noqa: E402
 
 # --- From 0.19.2 (formerly test_fixes_0192.py) ---

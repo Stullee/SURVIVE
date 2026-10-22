@@ -18,8 +18,8 @@ from PIL import Image
 from app.agent import tools
 from app.agent.sandbox import Jail
 from app.products import images, make
-from tests.cycle.test_agent import make_agent, plan, rows, text
-from tests.cycle.test_agent import tools as tool_calls
+from tests.agent_helpers import make_agent, plan, rows, text
+from tests.agent_helpers import tools as tool_calls
 
 RED, BLUE = (220, 30, 30), (30, 60, 200)
 

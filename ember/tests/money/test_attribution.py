@@ -18,8 +18,8 @@ from app.agent import tools, ventures
 from app.agent.service import Agent
 from app.economy.clock import to_iso
 from app.integrations import etsy_publisher
-from tests.cycle.test_agent import rows
-from tests.owner.test_owner_api import post
+from tests.agent_helpers import rows
+from tests.api_helpers import post
 
 ETSY = 1  # the seeded tree's first venture: "Etsy digital products"
 LISTING = 4_401_234_567

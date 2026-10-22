@@ -21,10 +21,8 @@ from app.agent.fake_llm import FakeTransport, Raw, Reply, ToolCalls, request_kin
 from app.agent.service import Agent
 from app.config import LoadedSettings
 from app.economy.metering import MeteredModel
-from tests.cycle.test_agent import ROOMY, rows
-from tests.cycle.test_loop_shapes import run
+from tests.agent_helpers import APPROVAL, ROOMY, owner, rows, run
 from tests.economy_helpers import restart
-from tests.owner.test_owner_loop import APPROVAL, owner
 from tests.plan.test_roadmap import plan, planner_texts, section
 
 HANDOFF = "Fix the 4 live listings under 5 photos first: each needs a different angle."

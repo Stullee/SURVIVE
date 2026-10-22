@@ -12,9 +12,8 @@ from app import web
 from app.agent import context, service
 from app.config import Settings
 from app.economy.clock import from_iso
-from tests.cycle.test_agent import ROOMY, make_agent, plan, rows, text, tools
+from tests.agent_helpers import APPROVAL, ROOMY, make_agent, owner, plan, rows, text, tools
 from tests.owner.test_autonomy import request_for
-from tests.owner.test_owner_loop import APPROVAL, owner
 
 JOURNAL = tools(("write_journal", {"summary": "Asked to publish", "entry": "Waiting for my owner."}))
 # 0.40.1: a waiting request cuts the sleep only while one of the owner's decisions on it wouldn't wake the agent
