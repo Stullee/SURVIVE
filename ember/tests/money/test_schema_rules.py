@@ -9,7 +9,8 @@ from pathlib import Path
 import pytest
 
 from app.db import Database, migrate
-from tests.economy_helpers import make_economy, metered, owner, request
+from app.economy.metering import CallRefused, Completed
+from tests.economy_helpers import make_economy, message, metered, owner, request
 
 NOW = "2026-09-01T12:00:00Z"
 DAY = "2026-09-01"
@@ -119,6 +120,86 @@ def test_api_cost_must_match_a_finalized_call(data_dir: Path) -> None:
                     " VALUES (?, ?, 'api_cost', ?, ?, ?, 'system')",
                     (NOW, call["local_day"], amount, simulated, call_id),
                 )
+
+
+def test_an_api_cost_is_only_what_a_finished_call_cost_on_its_day(data_dir: Path) -> None:
+    # 0.42.3 (analysis-0.40.1 audit): a call still in flight or refused has no cost to book, and a cost is booked on
+    # the day of its call (the case above names no reason, so each is checked by the trigger's own)
+    economy = make_economy(data_dir)
+    model, _ = metered(economy)
+    cycle = model.open_cycle("test")
+    held = model.reserve(cycle, "work", request())
+    with pytest.raises(CallRefused):
+        model.call(cycle, "work", request(model="claude-opus-9"))
+    cost = "INSERT INTO ledger (ts, occurred_on, type, amount_micros, simulated, llm_call_id, created_by) VALUES (?, ?,"
+    cost += " 'api_cost', ?, 1, ?, 'system')"
+    unmatched = pytest.raises(sqlite3.IntegrityError, match="ledger: api_cost does not match its llm_calls row")
+    with economy.db.connection() as conn:
+        for status in ("pending", "refused"):
+            call = conn.execute("SELECT * FROM llm_calls WHERE status = ?", (status,)).fetchone()
+            with unmatched:
+                conn.execute(cost, (NOW, call["local_day"], call["cost_micros"], call["id"]))
+    model.finalize(held, Completed(message()))
+    with economy.db.connection() as conn:
+        call = conn.execute("SELECT * FROM llm_calls WHERE id = ?", (held.call_id,)).fetchone()
+        with unmatched:
+            conn.execute(cost, (NOW, "2026-09-02", call["cost_micros"], call["id"]))  # its day is 2026-09-01
+        assert [r[0] for r in conn.execute("SELECT llm_call_id FROM ledger WHERE type = 'api_cost'")] == [call["id"]]
+
+
+def test_a_refused_call_is_history_too(data_dir: Path) -> None:
+    # 0.42.3 (analysis-0.40.1 audit): the guard records a refusal; it can't be turned into a reservation afterwards
+    economy = make_economy(data_dir)
+    model, _ = metered(economy)
+    cycle = model.open_cycle("test")
+    with pytest.raises(CallRefused):
+        model.call(cycle, "work", request(model="claude-opus-9"))
+    with economy.db.connection() as conn, pytest.raises(sqlite3.IntegrityError, match="a finalized call cannot change"):
+        conn.execute("UPDATE llm_calls SET status = 'pending', estimate_micros = 1 WHERE status = 'refused'")
+
+
+def test_a_cycles_cap_and_identity_are_fixed_and_a_finished_cycle_is_final(data_dir: Path) -> None:
+    # 0.42.3 (analysis-0.40.1 audit): the cap a cycle opened with is what the guard holds its calls to
+    economy = make_economy(data_dir)
+    model, _ = metered(economy)
+    cycle = model.open_cycle("test")
+    fixed = "cycles: identity and cap are fixed; a finished cycle is final"
+    changes = (
+        "cap_micros = cap_micros + 1",
+        "life_id = life_id + 1",
+        "boot_id = 'another'",
+        "started_at = '2026-08-01T00:00:00Z'",
+        "trigger = 'owner'",
+        "simulated = 0",
+        "session = session + 1",
+    )
+    with economy.db.connection() as conn:
+        for change in changes:
+            with pytest.raises(sqlite3.IntegrityError, match=fixed):
+                conn.execute(f"UPDATE cycles SET {change} WHERE id = ?", (cycle,))
+        with pytest.raises(sqlite3.IntegrityError, match="cycles: the version that ran a cycle is fixed"):
+            conn.execute("UPDATE cycles SET app_version = 'another' WHERE id = ?", (cycle,))
+        conn.execute("UPDATE cycles SET step = 2 WHERE id = ?", (cycle,))  # its progress is written as it runs
+    model.close_cycle(cycle)
+    with economy.db.connection() as conn:
+        with pytest.raises(sqlite3.IntegrityError, match=fixed):
+            conn.execute("UPDATE cycles SET status = 'running', ended_at = NULL WHERE id = ?", (cycle,))
+        with pytest.raises(sqlite3.IntegrityError, match="cycles: rows cannot be deleted"):
+            conn.execute("DELETE FROM cycles")
+        assert conn.execute("SELECT status FROM cycles").fetchone()[0] == "completed"
+
+
+def test_a_lifes_history_is_never_rewritten(data_dir: Path) -> None:
+    # 0.42.3 (analysis-0.40.1 audit): the runway measures active time from the transitions, and revival by its grant
+    economy = make_economy(data_dir)
+    with economy.db.connection() as conn:
+        with pytest.raises(sqlite3.IntegrityError, match="life_transitions: history cannot change"):
+            conn.execute("UPDATE life_transitions SET ts = '2026-08-01T00:00:00Z'")
+        with pytest.raises(sqlite3.IntegrityError, match="lives: rows cannot be deleted"):
+            conn.execute("DELETE FROM lives")
+        for change in ("mode = 'live'", "born_mark = 99", "revived_by_ledger_id = 1"):
+            with pytest.raises(sqlite3.IntegrityError, match="lives: mode, birth and revival cannot change"):
+                conn.execute(f"UPDATE lives SET {change}")
 
 
 def test_finalized_calls_and_ended_lives_are_history(data_dir: Path) -> None:

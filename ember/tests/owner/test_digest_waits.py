@@ -4,8 +4,9 @@ Since 0.42.0, when Etsy, Pinterest or Bluesky asks Ember's code to come back lat
 503 with Retry-After), the attempt is journaled 'failed' with when it is tried again (retry.py), at most 3 times. The
 digest counted every 'failed' entry as a failed action: a listing that waited twice and then went out read as 3
 actions, 2 of them failed. Now a wait is no action: the requests that waited are counted apart, one that fails at its
-last try fails once, and so does one whose approval aged out while it waited (connectors.stale). The list of what
-Ember's code did shows such a try as "waited", and the sensor's digest_failed agrees.
+last try fails once, and (0.42.3, test_digest_unsent.py) one whose approval aged out while it waited (connectors.stale)
+went back unsent, failing nothing. The list of what Ember's code did shows such a try as "waited", and the sensor's
+digest_failed agrees.
 """
 
 from __future__ import annotations
@@ -82,7 +83,7 @@ def test_a_listing_still_waiting_at_the_day_s_end_is_no_action(data_dir: Path, m
     assert f"Ember's code carried out nothing. {WAITED}." in text  # before: 1 action, 1 failed
 
 
-def test_a_listing_that_aged_out_while_it_waited_counts_once_as_failed(
+def test_a_listing_that_aged_out_while_it_waited_went_back_unsent(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     agent, request = approved(data_dir, monkeypatch, 99)
@@ -92,8 +93,10 @@ def test_a_listing_that_aged_out_while_it_waited_counts_once_as_failed(
     agent.clock.advance(seconds=WAIT)
     assert agent.execute_approved() == [(request, "failed")]  # its approval aged out before it was tried again
     assert agent.clock.today() == day
-    _, data = today(agent)
-    assert (data["actions"], data["trouble"]) == ({"owner": 1}, {"failed": 1}) and data.get("waited_for_service") == 1
+    text, data = today(agent)
+    # 0.42.2 counted it as 1 failed action; 0.42.3: nothing was carried out, its wait still counts as one
+    assert (data["actions"], data["trouble"], data["aged_out"]) == ({}, {}, {"owner": 1})
+    assert data["waited_for_service"] == 1 and "Ember's code carried out nothing. 1 request went back unsent" in text
 
 
 def test_the_list_of_what_ember_s_code_did_shows_a_wait_as_a_wait(

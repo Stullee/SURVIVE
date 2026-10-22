@@ -4,7 +4,8 @@ M3: a 429 or a 503 with Retry-After, before anything changed, closed the approva
 and the owner approved again, though the service had said when to come back. Now the request stays approved and is
 tried again then, through every check of its executor's start transaction, at most retry.TRIES times; a refusal after
 something changed (a draft, a new board, a part of a change) stays as it was, an unlock's request isn't tried again,
-and an email never is.
+and an email never is. 0.42.3 (analysis-0.40.1 audit, M3): a Printify product and a change of one too, which had none:
+only at their first call that changes anything (a product's picture upload; a change's new design, else the change).
 
 M4: the cards of the requests whose files Ember's code uploads only as proposed (a listing, a change, a pin, a post, a
 product) showed the workspace file as it is now. Now each says which file changed since it was proposed, as the KDP
@@ -25,13 +26,24 @@ from fastapi.testclient import TestClient
 httpx2 = pytest.importorskip("httpx2")
 
 from app import paths  # noqa: E402
-from app.agent import policy, store  # noqa: E402
+from app.agent import audit, policy, store  # noqa: E402
 from app.economy.clock import Clock, from_iso, to_iso  # noqa: E402
 from app.economy.life import KILLED_KEY  # noqa: E402
-from app.integrations import bluesky, connectors, etsy, etsy_publisher, pinterest, publish_queue, retry  # noqa: E402
+from app.integrations import (  # noqa: E402
+    bluesky,
+    connectors,
+    etsy,
+    etsy_publisher,
+    pinterest,
+    printify,
+    printify_publisher,
+    publish_queue,
+    retry,
+)
 from app.integrations.bluesky import FakeBluesky  # noqa: E402
 from app.integrations.etsy import FakeShop, Unclear  # noqa: E402
 from app.integrations.pinterest import FakePinterest, Pin  # noqa: E402
+from app.integrations.printify import FakePrintify  # noqa: E402
 from tests.agent_helpers import (  # noqa: E402
     owner,
     plan,
@@ -53,6 +65,10 @@ from tests.channels.test_pinterest import (  # noqa: E402
     pinned,
 )
 from tests.channels.test_pinterest import proposed as pin_proposed  # noqa: E402
+from tests.channels.test_printify import live as printify_live  # noqa: E402
+from tests.channels.test_printify import made_rows  # noqa: E402
+from tests.channels.test_printify import proposed as product_proposed  # noqa: E402
+from tests.channels.test_printify_changes import NEW_TITLE, change, last_change, live_product  # noqa: E402
 from tests.economy_helpers import ScriptedTransport  # noqa: E402
 from tests.etsy_helpers import (  # noqa: E402
     a_change,
@@ -384,6 +400,152 @@ def test_an_email_is_never_tried_again_after_a_refusal_for_now(
     agent.clock.advance(hours=7)
     assert agent.execute_approved() == [] and len(smtp.instances) == 1
     assert approval(agent, approval_id)["status"] == "failed"
+
+
+# --- M3 (0.42.3): a Printify product and a change of one -----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("answer", "error", "wait"),
+    [
+        (httpx2.Response(429, headers={"retry-after": "120"}, json={"message": "Rate limited"}), printify.Busy, 120),
+        (httpx2.Response(429, json={}), printify.Busy, None),
+        (httpx2.Response(503, headers={"retry-after": "60"}, json={}), printify.Busy, 60),
+        (httpx2.Response(503, json={}), printify.Unclear, None),  # without Retry-After a proxy may have reached it
+    ],
+)
+def test_printify_asking_to_come_back_later_is_told_from_what_may_have_changed(
+    answer: Any, error: type, wait: float | None
+) -> None:
+    account, _ = printify_live({("POST", "/v1/uploads/images.json"): answer})
+    with pytest.raises(error) as caught:
+        account.upload("poster.png", b"png")
+    if error is printify.Busy:  # before: NotSent, and the approval failed for good
+        assert isinstance(caught.value, printify.NotSent) and caught.value.wait == wait
+        assert str(caught.value).startswith(f"HTTP {answer.status_code}")
+
+
+def test_a_product_printify_asks_to_wait_for_at_its_upload_stays_approved_and_is_made_once_then(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent, _, request = product_proposed(data_dir)
+    account = agent.printify.account()
+    pictures = len(account.state["images"])
+    calls = refuse(monkeypatch, FakePrintify, "upload", printify.Busy)
+    assert owner(agent).decide(request, {"decision": "approve"}, "Owner").status == 200
+    asked = agent.clock.now()
+    assert agent.execute_approved() == [(request, retry.LATER)]  # before: failed, to propose and approve again
+    assert request_of(agent, request)["status"] == "approved" and request_of(agent, request)["closed_at"] is None
+    [row] = made_rows(agent)
+    assert (row["status"], row["product_id"]) == ("failed", None)
+    [said] = rows(agent, f"SELECT result FROM printify_products WHERE approval_id = {request}")
+    assert said["result"].startswith(f"Printify asked to wait: retrying at {asked + timedelta(seconds=WAIT):%H:%M}")
+    [entry] = journal(agent, request)
+    assert (entry["class"], entry["status"]) == ("printify.create_product", "failed")
+    assert json.loads(entry["after"]) == {"retry_at": to_iso(asked + timedelta(seconds=WAIT))}
+    shown = views_approval(agent, request)["execution"]
+    assert shown["status"] == "retrying" and shown["due_at"] == to_iso(asked + timedelta(seconds=WAIT))
+    assert "HTTP 429" in shown["error"]
+    with agent.db.connection() as conn:  # nothing made: the daily limit is free
+        assert printify_publisher.created_today(conn, agent.clock, agent.scope()) == 0
+    assert agent.pod.recover() == 0  # a restart leaves it waiting: it isn't unclear
+    agent.clock.advance(seconds=WAIT - 1)
+    assert agent.execute_approved() == []  # not before Printify's wait is over
+    agent.clock.advance(seconds=1)
+    assert agent.execute_approved() == [(request, "active")]
+    assert len(calls) == 2 and len(account.state["images"]) == pictures + 1 and len(account.state["products"]) == 1
+    assert [e["status"] for e in journal(agent, request)] == ["failed", "simulated"]
+    assert request_of(agent, request)["status"] == "done" and made_rows(agent)[0]["status"] == "active"
+    assert agent.execute_approved() == []  # never twice
+    with agent.db.connection() as conn:  # the owner's digest: a wait, not a failed action
+        _, data = audit.digest(conn, agent.scope(), agent.clock, agent.clock.today())
+    assert data["trouble"] == {} and data["waited_for_service"] == 1
+
+
+@pytest.mark.parametrize("step", ["create", "publish"])
+def test_a_product_printify_asks_to_wait_for_after_its_upload_fails_as_before(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch, step: str
+) -> None:
+    agent, _, request = product_proposed(data_dir)
+    refuse(monkeypatch, FakePrintify, step, printify.Busy, times=99)
+    owner(agent).decide(request, {"decision": "approve"}, "Owner")
+    assert agent.execute_approved() == [(request, "failed")]  # the picture is in the owner's library: never again
+    closed = request_of(agent, request)
+    assert closed["status"] == "failed" and closed["result_note"].startswith("Not published: Printify refused it (HTTP")
+    assert agent.printify.account().state["products"] == {}  # an unpublished product made is deleted
+    [entry] = journal(agent, request)
+    assert entry["status"] == "failed" and entry["after"] is None
+    agent.clock.advance(hours=7)
+    assert agent.execute_approved() == []
+
+
+def test_a_product_fails_as_before_once_it_waited_three_times(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, _, request = product_proposed(data_dir)
+    calls = refuse(monkeypatch, FakePrintify, "upload", printify.Busy, times=99)
+    owner(agent).decide(request, {"decision": "approve"}, "Owner")
+    for _ in range(retry.TRIES):
+        assert agent.execute_approved() == [(request, retry.LATER)]
+        agent.clock.advance(seconds=WAIT)
+    assert agent.execute_approved() == [(request, "failed")]
+    assert len(calls) == retry.TRIES + 1
+    assert request_of(agent, request)["result_note"].startswith("Not published: Printify refused it (HTTP 429")
+    entries = journal(agent, request)
+    assert [json.loads(e["after"] or "{}").get("retry_at") is not None for e in entries] == [True] * 3 + [False]
+    agent.clock.advance(hours=7)
+    assert agent.execute_approved() == [] and agent.printify.account().state["products"] == {}
+
+
+def test_the_owner_cancels_a_product_that_waits_for_printify(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, _, request = product_proposed(data_dir)
+    refuse(monkeypatch, FakePrintify, "upload", printify.Busy)
+    who = owner(agent)
+    who.decide(request, {"decision": "approve"}, "Owner")
+    assert agent.execute_approved() == [(request, retry.LATER)]
+    assert who.close(request, {"outcome": "failed"}, "Owner").status == 200  # begun, but nothing made
+    agent.clock.advance(seconds=WAIT)
+    assert agent.execute_approved() == [] and agent.printify.account().state["products"] == {}
+    assert request_of(agent, request)["closed_by"] == "Owner"
+
+
+def test_a_change_printify_asks_to_wait_for_is_made_once_then(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, _, listing_id, product_id = live_product(data_dir)
+    assert change(agent, listing_id, title=NEW_TITLE).ok
+    request = last_change(agent)["id"]
+    calls = refuse(monkeypatch, FakePrintify, "update", printify.Busy)  # its first call, without a new design
+    owner(agent).decide(request, {"decision": "approve"}, "Owner")
+    assert agent.execute_approved() == [(request, retry.LATER)]
+    assert views_approval(agent, request)["execution"]["status"] == "retrying"
+    [made] = rows(agent, f"SELECT status, product_id, listing_id FROM printify_edits WHERE approval_id = {request}")
+    assert made == {"status": "failed", "product_id": product_id, "listing_id": listing_id}
+    agent.clock.advance(seconds=WAIT)
+    assert agent.execute_approved() == [(request, "done")]
+    item = agent.printify.account().state["products"][product_id]
+    assert len(calls) == 2 and (item["title"], item["changes"]) == (NEW_TITLE, 1)  # changed once
+    assert [e["status"] for e in journal(agent, request)] == ["failed", "simulated"]
+    assert agent.execute_approved() == []
+
+
+@pytest.mark.parametrize(("step", "outcome"), [("upload", retry.LATER), ("update", "failed"), ("publish", "partial")])
+def test_a_change_with_a_new_design_waits_only_when_printify_refuses_its_upload(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch, step: str, outcome: str
+) -> None:
+    agent, _, listing_id, _ = live_product(data_dir)
+    assert change(agent, listing_id, image="shop/poster-v2.png").ok
+    request = last_change(agent)["id"]
+    refuse(monkeypatch, FakePrintify, step, printify.Busy, times=99)
+    owner(agent).decide(request, {"decision": "approve"}, "Owner")
+    assert agent.execute_approved() == [(request, outcome)]
+    agent.clock.advance(hours=7)
+    if step == "upload":  # nothing changed at Printify: tried again
+        assert agent.execute_approved() == [(request, retry.LATER)]
+    else:  # the new design is in the owner's library (and the product changed): never tried again
+        assert agent.execute_approved() == [] and request_of(agent, request)["status"] == "failed"
+
+
+def test_the_dashboard_says_printify_asked_to_wait_as_it_says_it_of_the_others() -> None:
+    script = (paths.WEB_DIR / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    assert script.count('retrying: { icon: "◷", label: "Printify asked to wait", tone: "warning" }') == 2
+    assert 'retryDetail(ex, "Printify")' in script  # with when, and what Printify answered
 
 
 # --- M4: the files a card shows -------------------------------------------------------------------------------------

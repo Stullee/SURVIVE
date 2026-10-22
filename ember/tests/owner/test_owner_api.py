@@ -1,14 +1,21 @@
-"""The owner's HTTP endpoints: ledger entries, corrections, pause and resume, sensors."""
+"""The owner's HTTP endpoints: ledger entries, corrections, pause and resume, sensors; and (0.42.3) taking back every
+unlock and pinning a lesson, whose logic only was tested (test_audit, test_lessons)."""
 
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
-from tests.api_helpers import grant, post
+from app.config import LoadedSettings, Settings
+from tests.agent_helpers import rows
+from tests.api_helpers import grant, post, refused_but_to_the_owner
 from tests.conftest import HA_CORE
+from tests.owner.test_owner_identity import OWNER, TABLET, as_user
+
+LESSON = "Never hand my owner design work."
 
 
 def test_grant_round_trip(ingress_client: TestClient) -> None:
@@ -93,3 +100,65 @@ def test_dry_run_test_money(ingress_client: TestClient) -> None:
     assert response.status_code == 201 and response.json()["entry"]["simulated"] is True
     agent = ingress_client.get("api/dashboard").json()["agent"]
     assert agent["balance_usd"] == 23.0 and agent["real_balance_usd"] == 20.0
+
+
+def test_the_owner_takes_back_every_unlock_over_http_and_no_one_else_can(
+    client_factory: Callable[..., Iterator[TestClient]],
+) -> None:
+    with client_factory(LoadedSettings(Settings(owner_user_ids=(OWNER,)))) as client:  # an unlock needs the option
+        me = as_user(OWNER)
+        due = (datetime.now(UTC).date() + timedelta(days=30)).isoformat()
+        goal = post(client, "api/roadmap", {"title": "Ten sales", "measure": "10 orders", "due": due}, me).json()["id"]
+        unlocked = post(client, f"api/milestones/{goal}/autonomy", {"rule": "email_reply", "level": "veto_window"}, me)
+        assert unlocked.status_code == 200, unlocked.json()
+
+        def unlocks() -> int:
+            return int(client.get("api/dashboard", headers=me).json()["audit"]["unlocks"])
+
+        assert unlocks() == 1
+        path = "api/autonomy/take_back"
+        refused_but_to_the_owner(client, path, {}, me, as_user(TABLET, "Wall tablet"))
+        for body, field, error in (({"why": "x"}, "why", "unknown field 'why'"), (None, "body", "send a JSON object")):
+            wrong = post(client, path, body, me)
+            assert (wrong.status_code, wrong.json()) == (422, {"error": error, "field": field}), body
+        assert unlocks() == 1  # nothing was taken back
+        taken = post(client, path, {}, me)
+        assert (taken.status_code, taken.json()["taken_back"]) == (200, 1)  # and its "wake": test_wake_switches
+        assert unlocks() == 0
+        agent = client.app.state.ember.agent  # type: ignore[attr-defined]
+        assert rows(agent, "SELECT milestone_id, level, by, why FROM policy_grants ORDER BY id DESC LIMIT 1") == [
+            {"milestone_id": goal, "level": "manual", "by": f"Stefan ({OWNER})", "why": "you took back every unlock"}
+        ]
+        events = [e["message"] for e in client.get("api/dashboard", headers=me).json()["events"]]
+        assert f"Stefan ({OWNER}) took back every unlock (1 in all)" in events
+        assert post(client, path, {}, me).json()["taken_back"] == 0  # none stands
+
+
+def test_the_owner_pins_a_lesson_over_http_and_no_one_else_can(
+    client_factory: Callable[..., Iterator[TestClient]],
+) -> None:
+    with client_factory(LoadedSettings(Settings(owner_user_ids=(OWNER,)))) as client:
+        agent = client.app.state.ember.agent  # type: ignore[attr-defined]
+        agent.roots()[1].write("lessons.md", f"# Lessons\n\n- [#c1] {LESSON}\n- [#c2] Ask people first.\n")
+        me = as_user(OWNER)
+        path, body = "api/lessons/pins", {"text": f"- [#c1] {LESSON}"}  # a line of the Mind tab's lessons
+        refused_but_to_the_owner(client, path, body, me, as_user(TABLET, "Wall tablet"))
+        for wrong_body, status, field, error in (
+            ({"lesson": LESSON}, 422, "lesson", "unknown field 'lesson'"),
+            ({"text": ""}, 422, "text", "please fill in text"),
+            ({"text": 5}, 422, "text", "text must be text"),
+            (None, 422, "body", "send a JSON object"),
+            ({"text": "Something it never learned"}, 409, "text", "that isn't one of the lessons now"),
+        ):
+            wrong = post(client, path, wrong_body, me)
+            assert (wrong.status_code, wrong.json()) == (status, {"error": error, "field": field}), wrong_body
+        assert rows(agent, "SELECT * FROM lesson_pins") == []
+        pinned = post(client, path, body, me)
+        [row] = rows(agent, "SELECT id, text, pinned_by, unpinned_at FROM lesson_pins")
+        assert (pinned.status_code, pinned.json()) == (201, {"id": row["id"], "text": LESSON})
+        assert (row["text"], row["pinned_by"], row["unpinned_at"]) == (LESSON, f"Stefan ({OWNER})", None)
+        dashboard = client.get("api/dashboard", headers=me).json()
+        assert [p["text"] for p in dashboard["mind"]["lesson_pins"]] == [LESSON]
+        assert f"Stefan ({OWNER}) pinned a lesson: {LESSON}" in [e["message"] for e in dashboard["events"]]
+        again = post(client, path, body, me)
+        assert (again.status_code, again.json()) == (409, {"error": "that lesson is already pinned", "field": "text"})
