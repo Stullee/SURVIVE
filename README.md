@@ -548,6 +548,20 @@ rework it, with a reason you see, and **Rework it anyway** on the Plan tab bring
 it back. Ember leaves a listing in your paid test alone until the test ends. The
 tests are grouped in folders by feature.
 
+0.42.2: what was left of the analysis that could be finished small, and the
+license. Like an email, an approved listing, change, pin, post, Printify product
+or blog page that Ember's code hasn't begun within 7 days of your approval is no
+longer carried out weeks later: it closes as failed, with why, and Ember proposes
+it again if it still fits. What began, and your Undo, never age out; on the first
+start after updating, older requests like that close at once. Each usage value
+you treat as standard price is listed on the dashboard with **Take back**: past
+refunds stay, and calls from then on are charged at the worst case again. The
+daily digest counts a try a service asked to make later as a wait, not a failure.
+A very long run of dots, dashes or spaces in a workshop answer (and in a few
+other texts) could freeze Ember for seconds; every pattern in Ember's code is now
+timed against that. `plan.py` and `tools.py` are split into smaller modules,
+with no change in behaviour. Ember is MIT-licensed, and releases aren't tagged.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
