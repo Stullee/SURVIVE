@@ -658,25 +658,31 @@ def test_nothing_is_offered_while_printify_is_off(data_dir: Path) -> None:
 def test_printify_says_whether_a_proposal_waits(data_dir: Path) -> None:
     agent, _, _ = proposed(data_dir)
     with agent.db.connection() as conn:
-        assert printify_publisher.text(conn, agent.scope()) == (
+        assert printify_publisher.text(conn, agent.scope(), agent.clock) == (
             "No product of yours yet: 1 proposal waits for your owner's decision."
         )
     with agent.db.transaction() as conn:
         conn.execute("UPDATE approvals SET status = 'withdrawn' WHERE executor = 'printify_product'")
     with agent.db.connection() as conn:
-        assert printify_publisher.text(conn, agent.scope()) == (
+        assert printify_publisher.text(conn, agent.scope(), agent.clock) == (
             "No product of yours yet, and none waiting (1 rejected, withdrawn or expired)."
         )
     fresh, _ = make_agent(data_dir / "fresh", [])
     with fresh.db.connection() as conn:
-        assert printify_publisher.text(conn, fresh.scope()) == "No product of yours yet, and none proposed yet."
+        assert (
+            printify_publisher.text(conn, fresh.scope(), fresh.clock)
+            == "No product of yours yet, and none proposed yet."
+        )
 
 
 def test_printify_says_an_approved_product_is_not_created_yet(data_dir: Path) -> None:
     agent, _, request = proposed(data_dir)
     assert owner(agent).decide(request, {"decision": "approve"}, "Owner").status == 200  # not executed yet
     with agent.db.connection() as conn:
-        assert printify_publisher.text(conn, agent.scope()) == "No product of yours yet: 1 approved, not created yet."
+        assert (
+            printify_publisher.text(conn, agent.scope(), agent.clock)
+            == "No product of yours yet: 1 approved, not created yet."
+        )
 
 
 # --- From 0.32.0 (formerly test_fixes_0320.py) ---

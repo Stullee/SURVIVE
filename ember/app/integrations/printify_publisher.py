@@ -789,8 +789,10 @@ def execution(
     }
 
 
-def text(conn: sqlite3.Connection, scope: AgentScope, limit: int = 6) -> str:
-    """The plan's PRINTIFY: Ember's newest products with their prices, costs and numbers, and the orders."""
+def text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, limit: int = 6) -> str:
+    """The plan's PRINTIFY: Ember's newest products with their prices, costs and numbers, and the orders. 0.42.4: a
+    product Printify asked to wait for says so, with until when (it read "failed: HTTP 429", and the agent could
+    propose it again)."""
     made = products(conn, scope, limit)
     if not made:  # 0.15.0: it said one waited for the owner's decision when none was proposed
         clause, params = scope.where()
@@ -823,7 +825,9 @@ def text(conn: sqlite3.Connection, scope: AgentScope, limit: int = 6) -> str:
             else ""
         )
         why = f": {r['error'][:80]}" if r["status"] == "failed" and r["error"] else ""  # 0.15.0
-        lines.append(f"- {r['title'][:60]} ({r['status']}, {where}{numbers}){why}")
+        waits = retry.waiting_words(conn, r["approval_id"], clock, "Printify")
+        status, why = (retry.SHOWN, f": {waits}") if waits else (r["status"], why)
+        lines.append(f"- {r['title'][:60]} ({status}, {where}{numbers}){why}")
         for variant, price, cost, shipping, left in json.loads(r["prices"]) if r["prices"] else []:
             currency = str(r["currency"])
             lines.append(

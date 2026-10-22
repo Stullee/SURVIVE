@@ -195,9 +195,10 @@ def summary(conn: sqlite3.Connection, scope: AgentScope) -> str:
     )
 
 
-def text(conn: sqlite3.Connection, scope: AgentScope, limit: int = 6) -> str:
+def text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, limit: int = 6) -> str:
     """The plan's BLUESKY: Ember's newest posts with their numbers. 0.37.7: each by its request's number and day, as the
-    owner and the agent name it (its record key at Bluesky said nothing to either)."""
+    owner and the agent name it (its record key at Bluesky said nothing to either). 0.42.4: a post Bluesky asked to
+    wait for says so, with until when (it read "failed", and the agent could propose it again)."""
     recent = posts(conn, scope, limit)
     if not recent:
         return "No post of yours yet."
@@ -215,7 +216,9 @@ def text(conn: sqlite3.Connection, scope: AgentScope, limit: int = 6) -> str:
         link = f" -> {r['link']}" if r["link"] else ""
         link += f" and {r['second_link']}" if r["second_link"] else ""  # 0.25.1
         day = str(r["finished_at"] or r["started_at"])[:10]
-        lines.append(f"- request #{r['approval_id']}, {day} ({r['status']}): {words}{link}: {numbers}")
+        waits = retry.waiting_words(conn, r["approval_id"], clock, "Bluesky")
+        status, numbers = (retry.SHOWN, waits) if waits else (r["status"], numbers)
+        lines.append(f"- request #{r['approval_id']}, {day} ({status}): {words}{link}: {numbers}")
     return "\n".join(lines)
 
 
