@@ -728,7 +728,8 @@ def test_the_sandbox_connects_apart_and_leaves_the_agent_without_pinterest(tmp_p
     migrate(db.path)
     clock = Clock()
     own = TokenFile(tmp_path / "pinterest" / "tokens.json")
-    own.save(some_tokens(clock))  # the account's own connection, made before
+    before = some_tokens(clock)  # 0.42.3: made once (a second call on the real clock can fall a second later)
+    own.save(before)  # the account's own connection, made before
     asked: list[str] = []
     connection = PinterestConnection(db, clock, SANDBOX, "live", 1, own, transport, lambda: asked.append("test pin"))
     state, reason = connection.status()
@@ -744,7 +745,7 @@ def test_the_sandbox_connects_apart_and_leaves_the_agent_without_pinterest(tmp_p
     assert sandbox.path == tmp_path / "pinterest" / "sandbox_tokens.json"
     saved = sandbox.load()
     assert saved is not None and saved.access_token == "pina_s"
-    assert own.load() == some_tokens(clock)  # untouched
+    assert own.load() == before  # untouched
     assert connection.account() is None and connection.username() is None  # the agent has no Pinterest
     assert isinstance(connection.sandbox_account(), LiveAccount)
     assert connection.status()[0] == "sandbox" and "waits for your approval" in str(connection.status()[1])
