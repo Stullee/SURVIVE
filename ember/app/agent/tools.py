@@ -481,7 +481,8 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "plan_step",
-            "Change your plan for this cycle's product line, with why (your owner sees each change): add steps (to a "
+            # 0.42.1: "sees it", not "sees each change": the room the fixed prompt needed for decline (ACTIONS)
+            "Change your plan for this cycle's product line, with why (your owner sees it): add steps (to a "
             "stage or before one), split or replace a step, say a step you added is done, say a step waits on a "
             f"request to your owner, an upgrade request, another step or a day (at most {plan.WAIT_DAYS} days ahead; "
             f"{plan.WAITS_A_DAY} waits a day), skip a recurring pin or post for its period, or hold the product. "
