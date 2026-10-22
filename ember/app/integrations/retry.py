@@ -23,12 +23,20 @@ picture's upload, the first of its three calls that change anything (the upload,
 of a live product only when Printify refuses the first of its calls (the new design's upload, else the change itself).
 A refusal after that fails it as before: by then the picture is in the owner's Printify library (where it stays, unlike
 a Bluesky picture no post uses), and the product may exist or have changed.
+
+0.42.4 (M3): the owner's Undo of a pin, a post or a product (UNDOS) too, which a 429 to its delete failed, so the owner
+had to press it again. Its delete is one call: a "come back later" to it changed nothing. It keeps no row of an
+executor's, so it waits in its journal entry alone (``park`` with no table; ``waiting`` and ``due`` read the journal as
+for the others), and its card reads it there (``undo_execution``). Etsy's Undo is a change, which waited already. An
+Undo never ages out (connectors.AGING), waiting or not.
 """
 
 from __future__ import annotations
 
 import email.utils
+import json
 import sqlite3
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -43,6 +51,8 @@ LATER = "retrying"  # what a run says of a request that waits for its service, a
 APPROVED = ("approved", "approved_with_changes")
 # The executors' rows a request waits in (0.42.3: and Printify's products and changes)
 PARKED = ("etsy_listings", "etsy_edits", "pinterest_pins", "bluesky_posts", "printify_products", "printify_edits")
+# 0.42.4 (M3): the owner's Undos that wait with no row of their executor's, in their journal entry alone
+UNDOS = ("pinterest_delete", "bluesky_delete", "printify_delete")
 
 
 class Busy(Exception):
@@ -102,7 +112,8 @@ def retry_at_sql(alias: str) -> str:
 
 def waiting_sql(alias: str) -> str:
     """SQL: whether request ``alias`` is approved and waits for its service (begun, but nothing changed): not once its
-    executor's row runs again (a pin's attempt is journaled only after its row)."""
+    executor's row runs again (a pin's attempt is journaled only after its row; 0.42.4: an Undo's, once its new
+    journal entry is begun, which has no ``retry_at``)."""
     running = " UNION ALL ".join(
         f"SELECT 1 FROM {table} x WHERE x.approval_id = {alias}.id AND x.status = 'running'" for table in PARKED
     )
@@ -150,26 +161,46 @@ def _when(clock: Clock, at: datetime) -> str:
 
 
 def park(
-    conn: sqlite3.Connection, table: str, approval_id: int, exc: Busy, clock: Clock, service: str, **values: Any
+    conn: sqlite3.Connection,
+    table: str | None,
+    approval_id: int,
+    exc: Busy,
+    clock: Clock,
+    service: str,
+    **values: Any,
 ) -> str:
     """The attempt ends waiting for its service: the executor's row (``table``, with ``values``) 'failed', the journal
-    entry 'failed' with when it is tried again. Returns the note."""
-    if table not in PARKED:
+    entry 'failed' with when it is tried again. Returns the note. 0.42.4 (M3): ``table`` None for the owner's Undo of a
+    pin, a post or a product (UNDOS), which has no such row: its journal entry alone, which keeps what the service
+    answered too (``after.error``, as a row's ``error``), for its card."""
+    if table is not None and table not in PARKED:
         raise RuntimeError(f"{table} isn't an executor's table a request waits in")
+    if table is None:
+        found = conn.execute("SELECT executor FROM approvals WHERE id = ?", (approval_id,)).fetchone()
+        if values or found is None or found["executor"] not in UNDOS:
+            raise RuntimeError(f"request #{approval_id} waits in its executor's table")
     now = clock.now()
     at = until(now, exc.wait)
     note = f"{service} asked to wait: retrying at {_when(clock, at)} (wait {waited(conn, approval_id) + 1} of {TRIES}:"
     note += f" {exc})"
     stamp = to_iso(now)
-    sets = "".join(f", {name} = ?" for name in values)
-    cursor = conn.execute(
-        f"UPDATE {table} SET status = 'failed', finished_at = ?, result = ?, error = ?{sets}"
-        " WHERE approval_id = ? AND status = 'running'",
-        (stamp, note[:500], str(exc)[:500], *values.values(), approval_id),
-    )
-    if cursor.rowcount != 1:
-        raise RuntimeError(f"request #{approval_id} isn't running in {table}")
-    connectors.finish(conn, approval_id, "failed", stamp, {"retry_at": to_iso(at)}, note)
+    after: dict[str, Any] = {"retry_at": to_iso(at)}
+    if table is not None:
+        sets = "".join(f", {name} = ?" for name in values)
+        cursor = conn.execute(
+            f"UPDATE {table} SET status = 'failed', finished_at = ?, result = ?, error = ?{sets}"
+            " WHERE approval_id = ? AND status = 'running'",
+            (stamp, note[:500], str(exc)[:500], *values.values(), approval_id),
+        )
+        if cursor.rowcount != 1:
+            raise RuntimeError(f"request #{approval_id} isn't running in {table}")
+    elif conn.execute(
+        "SELECT 1 FROM action_journal WHERE approval_id = ? AND status = 'running'", (approval_id,)
+    ).fetchone():
+        after["error"] = str(exc)[:500]
+    else:
+        raise RuntimeError(f"request #{approval_id} isn't running")
+    connectors.finish(conn, approval_id, "failed", stamp, after, note)
     return note
 
 
@@ -188,7 +219,7 @@ def reopen(conn: sqlite3.Connection, table: str, approval_id: int, stamp: str, *
         raise RuntimeError(f"request #{approval_id} doesn't wait in {table}")
 
 
-def execution(row: sqlite3.Row, at: datetime, **extra: Any) -> dict[str, Any]:
+def execution(row: Mapping[str, Any], at: datetime, **extra: Any) -> dict[str, Any]:
     """A request that waits for its service, for the Approvals tab: when it is tried again (``at``), and what the
     service said (``row``: its executor's row)."""
     return {
@@ -201,3 +232,16 @@ def execution(row: sqlite3.Row, at: datetime, **extra: Any) -> dict[str, Any]:
         "url": None,
         **extra,
     }
+
+
+def undo_execution(conn: sqlite3.Connection, approval_id: int) -> dict[str, Any] | None:
+    """0.42.4 (M3): the owner's Undo of a pin, a post or a product that waits for its service, for the Approvals tab
+    as ``execution`` says the others: from its journal entry, the only record it keeps (``park``). None when it doesn't
+    wait."""
+    at = waiting(conn, approval_id)
+    if at is None:
+        return None
+    entry = conn.execute(
+        "SELECT note, after FROM action_journal WHERE approval_id = ? ORDER BY id DESC LIMIT 1", (approval_id,)
+    ).fetchone()
+    return execution({"result": entry["note"], "error": json.loads(entry["after"]).get("error")}, at)

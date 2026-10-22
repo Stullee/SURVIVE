@@ -1722,7 +1722,14 @@ no longer shown); a study that failed three times stops until you press
   request your unlock approved isn't tried again (the agent proposes it again),
   nor is an email, nor anything that may have changed something: a Printify
   product that Printify refuses once its picture went up (the picture stays in
-  your Printify library) fails as before.
+  your Printify library) fails as before. Since 0.42.4 your **Undo** of a pin,
+  a Bluesky post or a Printify product waits the same way when the service
+  gives that answer to its delete (nothing was deleted then): until then the
+  answer failed it, and you had to press Undo again. Its card says when it is
+  tried again ("Pinterest asked to wait"), the kill switch holds it, it is
+  carried out while Ember is paused too, and **Cancel** stops it (you can
+  press Undo again). After 3 waits it fails as before. Your Undo of an Etsy
+  listing's action is a change of the listing, which waited already.
 - **Approved too long ago** (0.42.2): a listing, a change, a pin, a post, a
   Printify product or change, or a blog page that Ember's code hasn't begun 7
   days after your approval isn't carried out any more, as an email isn't (see
@@ -1833,9 +1840,11 @@ no longer shown); a study that failed three times stops until you press
   want). A Bluesky post's **Delete the post** deletes it at Bluesky (0.19.0).
   A Printify product's **Delete the product** deletes it at Printify,
   which takes its Etsy listing down too (check your shop). If an Undo failed
-  before anything changed, or you cancelled it, you can undo again. If the app
-  stopped while deleting a pin or product, the Undo ends unclear and you can
-  press it again (what is gone already counts as deleted).
+  before anything changed, or you cancelled it, you can undo again (0.42.4:
+  one the service asked to come back later for waits first: see Asked to
+  wait above). If the app stopped while deleting a pin or product, the Undo
+  ends unclear and you can press it again (what is gone already counts as
+  deleted).
 
   Before an unlock's price change or photo fix is made, Ember's code reads the
   listing at Etsy again (0.15.0). If its price differs from Ember's record,
@@ -1851,8 +1860,9 @@ no longer shown); a study that failed three times stops until you press
   log; the sensor has its counts (`digest_day`, `digest_actions`, ...). Days
   without a round (a pause) get their digest afterwards, up to 14 days back
   (0.15.0). Since 0.42.2 a try that Etsy, Pinterest, Bluesky or (0.42.3)
-  Printify asked Ember's code to make later (see Asked to wait above) is no
-  failed action: the digest counts the requests that waited apart
+  Printify asked Ember's code to make later (see Asked to wait above; 0.42.4:
+  your Undo's too) is no failed action: the digest counts the requests that
+  waited apart
   ("1 request(s) waited when their service asked to come back later (not
   failures)"), a listing that waited twice and then went out is 1 action, and
   one that fails at its last try fails once. Since 0.42.3 an approved request
@@ -3095,7 +3105,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.42.3 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.42.4 (by /u/your name)`.
 
 ## Amazon KDP
 
