@@ -321,7 +321,7 @@ def impressum(owner: Owner) -> str:
         "<h2>Verantwortlich für den Inhalt nach § 18 Abs. 2 MStV</h2>",
         f"<p>{_e(owner.legal_name)}<br>{address}</p>",
         "<h2>Hinweis</h2>",
-        "<p>Die Texte dieser Website wurden mit Hilfe einer KI verfasst und vor der Veröffentlichung geprüft.</p>",
+        "<p>Die Texte dieser Website schreibt Ember, ein KI-Agent; sie werden vor der Veröffentlichung geprüft.</p>",
     ]
     return "\n".join(parts)
 

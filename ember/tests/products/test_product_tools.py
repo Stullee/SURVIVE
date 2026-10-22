@@ -264,7 +264,8 @@ def test_the_prompts_tell_the_agent_to_make_files_and_ask_for_what_is_missing() 
     assert "file request_upgrade" in prompts.REFLECT_PROMPT
     assert "when a missing tool blocks a way to earn money" in tools.SPECS["request_upgrade"].description
     knowledge = prompts.knowledge()
-    assert "Designed by" in knowledge and "make_document" in knowledge
+    # 0.45.0 (evaluation 2026-10-22, C1): who made it, the agent; it said a listing says "Designed by" the seller
+    assert "you, an AI agent, made it, never that a person did" in knowledge and "make_document" in knowledge
     assert "You make finished products yourself" in knowledge
 
 

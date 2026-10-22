@@ -489,8 +489,8 @@ class English(Words):
             'href="/impressum.html">Impressum</a></li><li><a href="/datenschutz.html">Datenschutz</a></li><li><a '
             f'href="{blog.PROJECT_URL}">GitHub</a></li></ul>\n'
             '</div>\n<div class="footer-notes">\n'
-            "<p>This website sets no cookies and loads nothing from other providers. Its texts were written with the "
-            "help of AI and reviewed before publishing.</p>\n"
+            "<p>This website sets no cookies and loads nothing from other providers. Its texts are written by Ember, "
+            "an AI agent, and checked before publishing.</p>\n"
             "<p>The term 'Etsy' is a trademark of Etsy, Inc. This application uses the Etsy API but is not endorsed or "
             "certified by Etsy, Inc.</p>\n"
             "</div>\n</div>\n</footer>\n</body>\n</html>\n"

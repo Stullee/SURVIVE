@@ -46,6 +46,6 @@ DESIGN THAT SELLS
 - Offer what buyers search for: A4 and Letter versions (a document has one page size: make the Letter copy from a
   copy of the source with 'page: Letter'), and say which programs open the files (Word, Google Docs, Pages open
   .docx; any viewer prints the PDF). Describe only the sizes and files you made.
-- Say in the product that it was made with AI help: on a notes page, or in a footer of printables buyers keep
+- Say in the product that Ember, an AI agent, made it: on a notes page, or in a footer of printables buyers keep
   (planners, worksheets). Never in the footer of what buyers send or give to others (CVs, cover letters, letters,
   invitations): they would send your note with their application. The listing says it for those.

@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from datetime import timedelta
 from typing import Any
 
 from ..economy.clock import to_iso
 from ..integrations import connectors, mail, mailstore, qa, reddit
-from . import obligations, policy, preconditions, roadmap, store, ventures
+from . import claims, obligations, policy, preconditions, roadmap, store, ventures
 from .store import AgentScope
 from .tools_checks import _noted, unleaked, validate
 from .tools_context import MailAccess, Outcome, ToolContext, ToolError, _cut, _local, _numbers, _quoted, wrap
@@ -43,6 +44,9 @@ def _request_approval(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outc
     own = _own_tool(ctx, args)  # 0.37.8
     if own:
         raise ToolError(own)
+    said = claims.refusal([claims.unquoted(args["payload"])])  # 0.45.0 (evaluation 2026-10-22, C1)
+    if said:
+        raise ToolError(said)
     _room_for_request(ctx, conn, args["type"])
     project_id = args.get("project_id")
     if project_id is not None and store.project(conn, ctx.scope, project_id) is None:
@@ -513,8 +517,15 @@ def _inquiry_done(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     return Outcome(True, f"Email #{row['id']} needs no answer: closed.", f"#{row['id']}: closed")
 
 
-def _new_request(ctx: ToolContext, conn: Any, payload: str, action: dict[str, Any], **fields: Any) -> int | str:
-    """An approval request that Ember's code or the owner's click carries out; the text of a duplicate instead."""
+def _new_request(
+    ctx: ToolContext, conn: Any, payload: str, action: dict[str, Any], public: Sequence[str] = (), **fields: Any
+) -> int | str:
+    """An approval request that Ember's code or the owner's click carries out; the text of a duplicate instead. 0.45.0
+    (evaluation 2026-10-22, C1): refused when what it publishes (its action's words, and ``public``: a blog post's
+    article) claims a person made it, legal certainty or "no refunds" (claims.py)."""
+    said = claims.refusal([*claims.texts(action), *public])
+    if said:
+        raise ToolError(said)
     action_json = store.canonical(action)
     if len(action_json) > MAX_ACTION_CHARS:
         raise ToolError("the text is too long; make it shorter")

@@ -390,7 +390,11 @@ what was noted.
 Once a day, at its first wake cycle of the day (from its second day on),
 before it plans, the agent goes through its own numbers like a business owner
 going through the books. Ember's code puts them together from its records, so
-they can't be argued with: the last 7 days' spending by day and by purpose, the
+they can't be argued with: the last 7 days' spending by day and by purpose (since
+0.45.0 both from the ledger: each call at what it cost once settled, and what
+the ledger holds beyond that, a worst case not settled yet or a correction, a
+part of its own, so the parts add up to the total; on 10-18 the parts were the
+calls' booked costs and the total net of 0.39.8's refund), the
 revenue you recorded and its sources, each project's cycles, spending and
 requests to you, your decisions and comments, its cycles, errors, finished
 products and workshop runs, and its verdicts from the last review.
@@ -705,8 +709,24 @@ another font. Files are limited to 15 MB each and 2 GB together, on top of the
 to 1,000 folders). The agent's STATUS shows how much of that it uses.
 
 Check a product before you sell it. The agent is told to disclose on every
-product and listing that AI helped make it, which marketplaces such as Etsy
-require.
+product and listing that Ember, an AI agent, made it, which marketplaces such as
+Etsy require.
+
+**Who made it** (0.45.0, the evaluation of 2026-10-22). Ember's code adds a line
+to every listing, pin, Printify product and KDP book that names the maker:
+"Made by Ember, an AI agent, and checked by the seller before listing." (until
+then "designed with the help of AI and reviewed by the seller", the opposite of
+what happened). And every request the agent makes is refused before it reaches
+you when what it would publish says that a person made it ("designed by a
+human", "by the shop owner", "by the author", "by a solo creator", "von einem
+Menschen gestaltet"), promises legal certainty ("rechtssicher", "GoBD-konform",
+"§ 556 BGB konform", "legally compliant") or says "no refunds" ("keine
+Rückerstattung"): in the week of 10-12, 13 of its 39 requests did, and you
+approved them all. Refused, not flagged for you: your approval is the last
+check, these claims have no true form the agent could check itself, and a
+refusal costs it one rewrite in the same cycle. A format norm ("DIN
+5008-konform") passes, as does a request that corrects such a text (the old
+words a change replaces, or quotes in a request you carry out, aren't its own).
 
 ## The workshop
 
@@ -925,7 +945,10 @@ decided next (0.13.0), and since 0.37.0 it is that venture's step in your plan:
   ventures are being researched or proposed (backed ones don't count; until
   then the step waits for room). Since 0.39.1 the step names the other ideas
   waiting for theirs, so one cycle triages them together: on 10-14 six cycles in
-  a row each parked one idea of one brainstorm ($1.03);
+  a row each parked one idea of one brainstorm ($1.03). Since 0.45.0 the ideas
+  it didn't take along wait for the next day once a cycle of the day took a
+  triage, so one cycle a day decides them (not your own ideas, a step you
+  pinned, or an idea Ember's code parks within 7 days);
 - **appraise** a venture being researched: what it needs next (research,
   evidence, numbers, a knock-out to fix), then its business case, or park it;
 - **answer** the critic on a proposed venture it says to test or park: with
@@ -936,7 +959,10 @@ decided next (0.13.0), and since 0.37.0 it is that venture's step in your plan:
   5 ideas wait and fewer than 5 ventures have their numbers; since 0.39.1 not
   within 7 days of the last one while none of its ideas was researched (the six
   ideas parked in a day left the funnel empty, and the next brainstorm came at
-  once: $1.76 in two days, nothing researched).
+  once: $1.76 in two days, nothing researched); since 0.45.0 not while a rule in
+  your rulebook or the agent's strategy says nothing new starts ("nothing new",
+  "no new ventures", "keine neuen Ideen"): your rule of 10-07 stood until 10-15,
+  and two brainstorms made 12 ideas in it.
 
 A venture's step can wait for a day (since 0.39.1, `plan_step` wait in a venture
 cycle, at most 14 days ahead): an idea the agent means to take up after your
@@ -2327,8 +2353,8 @@ can also remove the app's access at Etsy).
   change the title, price, tags and description; the photos, files and
   category stay as proposed. **Reject** tells the agent why, if you add a
   comment.
-- Ember adds a fixed line to every description saying AI helped design it, as
-  Etsy's rules require.
+- Ember adds a fixed line to every description saying Ember, an AI agent, made
+  it, as Etsy's rules require (0.45.0; see [who made it](#products)).
 - If a file changed after you approved, the listing isn't created. If Etsy
   refuses something after the draft exists, the listing stays a draft at Etsy
   and the card links to it, so you can finish it there. Ember never creates a
@@ -2567,8 +2593,8 @@ sandbox, where what it makes is seen only by you:
    [developers.pinterest.com](https://developers.pinterest.com/apps/), press
    **Upgrade** on your app, upload the video and say what Ember does: it pins
    your own Etsy listings on your own account, each pin approved by you, with
-   a line saying AI helped design it. Add that the video was recorded in the
-   sandbox because trial access can't make pins.
+   a line saying Ember, an AI agent, made it. Add that the video was recorded
+   in the sandbox because trial access can't make pins.
 6. Once Pinterest granted Standard access, turn **Pinterest sandbox** off,
    restart, and connect your account if **System → Pinterest** asks for it (the
    sandbox's connection is kept apart from it).
@@ -2584,8 +2610,8 @@ there is no test pin; the **System log** says so.
 
 - The agent proposes a pin with `propose_pin`: one of its pictures (best 2:3,
   2000 x 3000 pixels: `make_image` has a **pin** shape), a title (at most 100
-  characters), a description (Ember adds a line saying AI helped design it,
-  as on Etsy), alt text, the live listing it links to (since 0.32.0 one
+  characters), a description (Ember adds a line saying Ember, an AI agent, made
+  it, as on Etsy), alt text, the live listing it links to (since 0.32.0 one
   Printify made of its products too), and one of its boards
   or a new board's name. The approval card shows every word, the picture's
   path and size, and what the QA check finds short (a picture that isn't
@@ -2797,10 +2823,10 @@ it made and what their orders cost you.
   who makes them, their sizes with the print area, the shipping to Germany and
   what making each costs with its least price) and proposes a product with `propose_printify_product`: one of its pictures,
   the variants (sizes of one shape) with their prices, and the listing's title,
-  description and tags. Ember adds a line saying AI helped design it, as on
-  Etsy. The approval card shows every word, each price with its shipping, and
-  what the QA check finds short (a picture that prints blurry below 150 dpi, or
-  whose shape leaves part of the print area blank).
+  description and tags. Ember adds a line saying Ember, an AI agent, made the
+  design, as on Etsy. The approval card shows every word, each price with its
+  shipping, and what the QA check finds short (a picture that prints blurry
+  below 150 dpi, or whose shape leaves part of the print area blank).
 - To show what making costs, Ember creates an unpublished product of the
   variants with a blank picture, reads its costs and deletes it at once (at
   most once a day for a product and provider). It is never published. If its
@@ -3134,7 +3160,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.44.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.45.0 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3166,8 +3192,8 @@ own account. Ember never logs in to Amazon or reads its pages.
   to its PDF.
 - The agent describes the book in a JSON file in its workspace (its spec): the
   format, title and subtitle, the description Amazon shows (up to 4,000
-  characters; Ember's code adds a line saying AI helped make the book), up to 7
-  keywords, up to 3 categories, the language, the list price in USD at
+  characters; Ember's code adds a line saying Ember, an AI agent, made it), up
+  to 7 keywords, up to 3 categories, the language, the list price in USD at
   Amazon.com, the manuscript or interior, a paperback's paper (white or cream
   for black ink, or premium colour) and whether it is a low-content book (a
   journal, planner or notebook: no ISBN needed), and its cover: its front
@@ -3187,8 +3213,14 @@ own account. Ember never logs in to Amazon or reads its pages.
   higher), fewer than 24 pages or more than KDP prints at that size and paper,
   anything printed in KDP's margins without bleed (0.25 in at the top, bottom
   and outside edge; 0.375 in to 0.875 in at the inside edge, by page count), a
-  cover that isn't this interior's full wrap, an ebook cover out of KDP's
-  proportions, or a price outside KDP's band or below what printing costs.
+  cover that isn't this interior's full wrap, a paperback cover whose front
+  prints words within 0.125 in of the trim (0.45.0: on the Haushaltsbuch the
+  title printed 0.048 in inside it, from a front picture in shape pin, 2:3,
+  whose centre was cut to the 8.5x11 front: 13% of it; the refusal names the
+  shape nearest the front, portrait there; a front whose art reaches its edges
+  is a note, as Ember's code can't tell its words from its picture), an ebook
+  cover out of KDP's proportions, or a price outside KDP's band or below what
+  printing costs.
   KDP's previewer checks the files again when you upload them.
 - **Its pages, checked before you see them** (0.40.0, upgrade request #12): a
   paperback's `check` also draws its interior's pages fresh, 600 pixels wide,
@@ -3368,7 +3400,10 @@ first the **data**, then **files 1**, **files 2** … with her files, the newest
 - `scorecard.json` and `scorecard.md` (0.44.0): the measures Ember's code computes from her records, for every week
   of her life (Monday to Sunday, your time), by app version, and today's and the last 7 days' alarms (productive
   spend, tool calls not done, promises kept, cycles you started). Numbers only, under the same definitions every
-  time; what a person or a model must judge is left to the evaluation. Ember never sees it.
+  time; what a person or a model must judge is left to the evaluation. Ember never sees it. Since 0.45.0 its
+  definitions are version 2: a cycle weighs what its calls cost once settled (a call billed at its worst case and
+  settled later at what it cost, as on 10-15 and 10-16), and *Work finished* counts the cycles that left no work
+  undone (a call refused or failed that no later call of the same tool and target put right).
 - `report.txt` (the shareable report as the export was made), `memory/` (her strategy, identity and lessons,
   masked), `outside.csv` and `week.csv` to fill in: what only you see (KDP's units and royalties, the ads'
   impressions and clicks, the Anthropic Console's spend) and your week (minutes spent on Ember, instructions given,

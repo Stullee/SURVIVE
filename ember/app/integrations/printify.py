@@ -67,8 +67,9 @@ MIN_MARGIN = Decimal("0.15")
 BILL_VAT = Decimal(str(econ.FEE_VAT))  # 0.15.0: Printify bills VAT to a seller without a VAT ID, as Etsy does
 SHIP_TO = "DE"
 # Added to every product's description, as to every Etsy listing's (the design is the AI's part; the product is made by
-# the print provider).
-DISCLOSURE = "This design was made with the help of AI and reviewed by the seller before listing."
+# the print provider). 0.45.0 (evaluation 2026-10-22, C1): who made it; until then EARLIER
+DISCLOSURE = "Design made by Ember, an AI agent, and checked by the seller before listing."
+EARLIER = ("This design was made with the help of AI and reviewed by the seller before listing.",)
 
 
 class PrintifyError(Exception):

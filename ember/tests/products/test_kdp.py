@@ -356,6 +356,45 @@ def test_a_package_kdp_would_refuse_never_reaches_the_owner(data_dir: Path) -> N
     assert rows(agent, "SELECT COUNT(*) AS n FROM approvals WHERE executor = 'kdp_package'")[0]["n"] == 0
 
 
+def test_a_cover_s_front_keeps_its_words_inside_kdp_s_safe_zone(data_dir: Path) -> None:
+    """0.45.0 (evaluation 2026-10-22, C6): live, a front picture in shape pin (2:3) on an 8.5x11 book lost 13% to the
+    cut that fits it, its title printed 0.048 in inside the trim, and the check said KDP would take it."""
+    _, ctx = publishing(data_dir)
+    jail = ctx.workspace
+    letter = journal(jail, "books/letter", days=120, page="8.5x11")
+    words = ("Haushaltsbuch 2027", "Wochen-Logs | Monatsübersicht")
+    make.image(jail, "books/front.png", "", *words, layout="poster", shape="pin")
+    refused = call(ctx, "propose_kdp_book", {"spec": spec(jail, letter), "check": True})
+    assert not refused.ok
+    assert refused.text.startswith("Error: books/journal-cover.pdf: the cover's front prints words or pictures 0.0")
+    assert "in inside the trim at the top, " in refused.text and "in beyond the trim at the bottom" in refused.text
+    assert "KDP asks for 0.125 in inside the trim, or its cut may take them" in refused.text
+    assert "make books/front.png again in make_image's shape portrait (the nearest to a front at 8.5x11" in refused.text
+    # a cover file of its own is held to the same rule
+    jail.write_bytes("books/own.pdf", jail.read_bytes("books/journal-cover.pdf"))
+    own = call(ctx, "propose_kdp_book", {"spec": spec(jail, letter, cover="books/own.pdf"), "check": True})
+    assert not own.ok and own.text.endswith("move its words 0.125 in inside the trim (0.25 in from the cover's edges).")
+    make.image(jail, "books/front.png", "", *words, layout="poster", shape="portrait")
+    checked = call(ctx, "propose_kdp_book", {"spec": spec(jail, letter), "check": True})
+    assert checked.ok and "KDP would take this paperback as it is" in checked.text, checked.text
+    # one whose art reaches its edges is a note: Ember's code can't tell its words from its picture
+    art = Image.linear_gradient("L").resize((2000, 2500)).convert("RGB")
+    out = io.BytesIO()
+    art.save(out, "PNG")
+    jail.write_bytes("books/art.png", out.getvalue())
+    noted = call(ctx, "propose_kdp_book", {"spec": spec(jail, letter, cover={"front": "books/art.png"}), "check": True})
+    assert noted.ok and "Note: the front's picture reaches its edges, so Ember's code can't tell" in noted.text
+    # the numbers: a 6x9 cover of 120 pages on white is 12.52 x 9.25 in, its trim 0.125 in inside
+    assert kdp.check_front(None, "6x9", 120, "white") == []
+    assert kdp.check_front((7.0, 0.25, 12.0, 9.0), "6x9", 120, "white") == []
+    assert kdp.check_front((7.0, 0.173, 12.4, 9.0), "6x9", 120, "white") == [
+        "the cover's front prints words or pictures 0.048 in inside the trim at the top, 0.005 in beyond the trim at "
+        "the outside edge: KDP asks for 0.125 in inside the trim, or its cut may take them"
+    ]
+    assert make.front_shape("6x9") == "pin" and make.front_shape("8.5x11") == "portrait"
+    assert make.front_shape("8.5x8.5") == "square" and make.front_shape("8.25x6") == "landscape"
+
+
 def test_an_ebook_is_proposed_and_kdp_s_weekly_limit_holds(data_dir: Path) -> None:
     agent, ctx = publishing(data_dir)
     jail = ctx.workspace

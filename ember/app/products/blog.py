@@ -475,8 +475,8 @@ def _footer(owner: Owner) -> str:
         '<ul class="footer-links"><li><a href="/blog/">Blog</a></li><li><a href="/impressum.html">Impressum</a></li>'
         f'<li><a href="/datenschutz.html">Datenschutz</a></li><li><a href="{PROJECT_URL}">GitHub</a></li></ul>\n'
         '</div>\n<div class="footer-notes">\n'
-        "<p>Diese Website setzt keine Cookies und lädt nichts von anderen Anbietern. Ihre Texte entstanden mit Hilfe "
-        "einer KI und wurden vor der Veröffentlichung geprüft.</p>\n"
+        "<p>Diese Website setzt keine Cookies und lädt nichts von anderen Anbietern. Ihre Texte schreibt Ember, ein "
+        "KI-Agent; sie werden vor der Veröffentlichung geprüft.</p>\n"
         "<p lang=\"en\">The term 'Etsy' is a trademark of Etsy, Inc. This application uses the Etsy API but is not "
         "endorsed or certified by Etsy, Inc.</p>\n"
         "</div>\n</div>\n</footer>\n</body>\n</html>\n"

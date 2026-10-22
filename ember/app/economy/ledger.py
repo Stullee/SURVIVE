@@ -54,6 +54,18 @@ _USAGE_READ = (
     "(c.status = 'ok' AND json_extract(c.usage_raw, '$.input_tokens') > 0"
     " AND json_type(c.usage_raw, '$.output_tokens') IS NOT NULL)"
 )
+# 0.45.0 (evaluation 2026-10-22, C2 and C3): what a call ``c`` cost once settled, as the caps count it: an answered call
+# whose bill is uncertain at what it is known to cost, a call with corrections of its own (``k``, OWN_CORRECTIONS joined
+# on k.llm_call_id) with them. The daily review's money and the scorecard weigh calls by it: live, 180 calls of 10-15
+# and 10-16 stood at about four times their price after 0.39.8 had settled them with refunds of no call.
+SETTLED_COST = (
+    f"CASE WHEN c.billing_uncertain = 1 AND {_USAGE_READ} AND k.llm_call_id IS NULL THEN c.floor_micros"
+    " ELSE c.cost_micros + COALESCE(k.amount, 0) END"
+)
+OWN_CORRECTIONS = (
+    "(SELECT llm_call_id, SUM(amount_micros) AS amount FROM ledger WHERE type = 'api_cost_correction'"
+    " AND llm_call_id IS NOT NULL GROUP BY llm_call_id)"
+)
 _ENTRY_COLUMNS = (
     "id, ts, occurred_on, type, amount_micros, simulated, source, note, llm_call_id, corrects_id,"
     " orig_amount, orig_currency, fx_rate, created_by, entered_by, project_id, venture_id"

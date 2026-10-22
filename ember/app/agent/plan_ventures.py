@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Mapping
+from datetime import timedelta
 from typing import Any
 
-from . import critic, desk, templates, ventures, weights
+from ..economy.clock import from_iso, to_iso
+from . import critic, desk, store, templates, ventures, weights
 from .plan_layout import _platform
-from .plan_model import _close, _cut, _insert, _open_steps, node, nodes
+from .plan_model import _close, _cut, _insert, _open_steps, _update, change, node, nodes
 from .store import AgentScope
 
 # --- the ventures: the plan's sub-goal, each venture a node with its next decision as a step (0.37.0) ---
@@ -113,8 +115,11 @@ def _ventures(conn: sqlite3.Connection, scope: AgentScope, now: str) -> list[str
         _insert(
             conn, scope, now, parent_id=here_id, level="step", kind=kind, template=template, title=title, source="code"
         )
+    held = _triage_together(conn, scope, now, rows)  # 0.45.0: the triages a cycle today could have taken along
     due = desk.brainstorm_due(rows)
     rest = desk.brainstorm_rests(rows, now) if due else ""  # 0.39.1: not while none of the last one's ideas went on
+    # 0.45.0 (evaluation 2026-10-22, C4): nor while the owner's rulebook or her strategy says "nothing new"
+    rest = rest or (desk.brainstorm_stopped(store.rules(conn, scope), _strategy(conn, scope)) if due else "")
     if rest:
         due = ""
     brainstorms = nodes(conn, scope, "level = 'step' AND status = 'open' AND template = ?", (BRAINSTORM_TEMPLATE,))
@@ -137,8 +142,55 @@ def _ventures(conn: sqlite3.Connection, scope: AgentScope, now: str) -> list[str
             else:
                 _close(conn, step["id"], now, "done", "enough ideas wait, or have their numbers")
     if first and made:
-        return ["Plan tree: each venture you explore is a node of its Ventures now, its next decision a step."]
-    return []
+        return ["Plan tree: each venture you explore is a node of its Ventures now, its next decision a step.", *held]
+    return held
+
+
+def _strategy(conn: sqlite3.Connection, scope: AgentScope) -> str:
+    """0.45.0: the agent's strategy as she last wrote it (memory_versions keeps each version)."""
+    where, params = scope.where()
+    row = conn.execute(
+        f"SELECT content FROM memory_versions WHERE {where} AND file = 'strategy' ORDER BY id DESC LIMIT 1", params
+    ).fetchone()
+    return str(row["content"]) if row is not None else ""
+
+
+def _triage_together(conn: sqlite3.Connection, scope: AgentScope, now: str, rows: list[Any]) -> list[str]:
+    """0.45.0 (evaluation 2026-10-22, C4): one cycle a day triages the ideas that wait: once a cycle of the owner's
+    day took a triage step, whose YOUR STEP named the other ideas waiting for theirs to be taken along (0.39.1), the
+    triages still open wait for the next day, when one cycle decides them together. An idea Ember's code parks within
+    desk.URGENT_DAYS, the owner's own idea or a step they pinned isn't held. Live on 10-14, six cycles 30 minutes
+    apart parked ventures #28 to #33 one each ($1.04), all for one reason."""
+    today = ventures.owner_day(now)
+    where, params = scope.where("k")
+    taken = [
+        int(r["node_id"])
+        for r in conn.execute(
+            f"SELECT k.node_id, k.created_at FROM plan_picks k JOIN plan_nodes n ON n.id = k.node_id WHERE {where}"
+            " AND n.template = 'triage@1' AND k.created_at >= ?",
+            (*params, to_iso(from_iso(now) - timedelta(days=2))),
+        )
+        if ventures.owner_day(r["created_at"]) == today
+    ]
+    if not taken:
+        return []
+    by_id = {int(v["id"]): v for v in rows}
+    tomorrow = (today + timedelta(days=1)).isoformat()
+    why = (
+        f"a triage cycle today (step #{taken[-1]}) could take this idea along: the next one, tomorrow, decides the"
+        " ideas that wait together"
+    )
+    said = []
+    for step in nodes(conn, scope, "level = 'step' AND status = 'open' AND template = 'triage@1' AND waiting IS NULL"):
+        parent = node(conn, scope, int(step["parent_id"])) if step["parent_id"] else None
+        v = by_id.get(int(parent["venture_id"])) if parent is not None and parent["venture_id"] else None
+        parks = ventures.triage_date(v) if v is not None else None
+        if parks is None or (parks - today).days <= desk.URGENT_DAYS or step["pinned"]:
+            continue
+        _update(conn, step["id"], now, waiting="date", wait_until=tomorrow, wait_why=_cut(why, 200), ready_since=None)
+        change(conn, scope, int(step["id"]), None, "code", "wait", why, now)
+        said.append(f"Plan tree: step #{step['id']} (venture #{v['id']}'s triage) waits for tomorrow: {why}.")
+    return said
 
 
 def _last_taken(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, str]:

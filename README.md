@@ -629,6 +629,21 @@ card, read what she would get, and give it. Its cases join her playbook's, its
 corrections reach her in one message from you, and scores never do. See
 [Feedback from an evaluation](ember/DOCS.md#feedback-from-an-evaluation).
 
+0.45.0 builds the code fixes of the first weekly evaluation
+([evaluation/2026-10-22-0.44.0](evaluation/2026-10-22-0.44.0/ember-evaluation.md)).
+The AI line on every listing, pin, Printify product and KDP book names the
+maker: "Made by Ember, an AI agent, and checked by the seller" (it said
+"designed with the help of AI"). Every request is refused before it reaches you
+when it says a person made Ember's work, promises legal certainty
+("rechtssicher", "GoBD-konform") or says "no refunds": 13 of the week's 39 did.
+A KDP cover whose front prints words within 0.125 in of the trim is refused (the
+Haushaltsbuch's title sat 0.048 in inside it). Once a cycle of the day took a
+triage, the other waiting ideas wait for the next day's, which decides them
+together; no brainstorm comes while your rulebook or her strategy says "nothing
+new". The daily review's money adds up (its parts and its total from one basis),
+and the scorecard is version 2: cycles weigh what their calls cost once settled,
+and "work finished" counts work left undone, not every refused call.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
