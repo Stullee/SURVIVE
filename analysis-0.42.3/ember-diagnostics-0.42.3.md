@@ -9,7 +9,7 @@ the app changes with this report.*
 **Evidence.** I read the whole report (5,871 lines):
 - the planner's context as the next plan would see it, with the plan tree's waits and settings;
 - cycles #366 to #377 in full, the plan picks back to #353 with each weight's parts, the journal back to #348;
-- the ventures, the reviews of 10-16 to 10-22, the messages, the standing instructions and the events.
+- the ventures, the reviews of 10-16 to 10-22, the messages, your standing instructions and rules, and the events.
 
 Then I read the code that turns those records into a cycle's step (`agent/weights.py`, `agent/plan_ready.py`,
 `agent/plan_steer.py`, `agent/plan_keep.py`, `agent/plan_ventures.py`, `agent/knockouts.py`, `agent/review.py`,
@@ -46,8 +46,9 @@ Labels, as in the earlier analyses:
   18 mm name fields will go out unless someone remembers #205.
   - Your message left Ember's plan the moment a cycle had read it: "FROM YOUR OWNER" shows only what is new since the
     last plan.
-  - Ember answered without `commits`, though your standing instruction #7 says every promise goes there. So no
-    promise, and no step, carried the fixes.
+  - Ember answered without `commits`. "Every promise to me goes in commits" was part of your rule #1, which you removed
+    on 10-15, so no plan has shown it since. `message_owner`'s check let #206 through because a later sentence
+    reported on promise #67. So no promise, and no step, carried the fixes.
   - A venture's research ("the category is undated, drop 2027") wrote a note that a later cycle overwrote with "do
     NOT rebuild". That sentence then stood for everything.
 - **The plan's heaviest steps were notes that say "do nothing"** (3.1). The daily review turns each "change" verdict
@@ -82,7 +83,8 @@ What to do, in short (4):
    - let the review read your messages;
    - no review step on a line waiting for your keep-or-drop;
    - one promise in one place, waiting on KDP's week;
-   - the ventures rest while none can pass;
+   - the ventures rest while none can pass (built differently, at your choice: under **invest** a first sale may take
+     the whole runway; see 8);
    - plan_step names the step it changed.
 
 ---
@@ -267,9 +269,11 @@ before Sunday, the proposal on Sunday.
    - The next ordinary cycle took the review's notes, which weighed 4.0. Line #14 had no ready step to bring a cycle
      to it.
    - "Next ordinary cycle on project #14" depended on a cycle choosing line #14. The plan never chose it.
-2. **#206 had no `commits`.** Your standing instruction #7 (10-07): "Every promise to me goes in commits with a due
-   date". With one, a promise "Apply #205's three fixes", due 10-24, would have been a step worth 3.0 with
-   your words in its title, urgent from 10-22.
+2. **#206 had no `commits`.** "Every promise to me goes in commits with a due date" was in your standing instruction
+   #7 (10-07), which became rule #1 with 0.36.0. You removed that rule on 10-15 at 13:23, so no plan has shown it
+   since. `message_owner`'s own check of promises in words (0.33.0, code) let #206 out: a later sentence named promise
+   #67, and a message reporting on an open promise passed whole. With `commits`, a promise "Apply #205's three
+   fixes", due 10-24, would have been a step worth 3.0 with your words in its title, urgent from 10-22.
 3. **Your words left the plan after one cycle** (`context.owner_text`, code). "FROM YOUR OWNER" holds "what the owner
    wrote or decided since the last plan". From #369 on, no plan showed #205. What Ember knew of it was its own
    handoffs.
@@ -325,8 +329,7 @@ something changes.
    > the three edits of #205 in books/kassenbuch-2027-interior-v1.md, make_document to
    > books/kassenbuch-2027-interior-v5.pdf, set the spec's manuscript to it, check it with pages "2, 5, 67" and
    > look at those three pages ("Placeholders: none"). Then rewrite the handoff: on 10-25 from 02:00, propose v5.
-   > Commit to it in your answer, due 10-24, as my standing instruction #7 asks: #206 had no commits, and so nothing
-   > in your plan kept it.
+   > Commit to it in your answer, due 10-24: #206 had no commits, and so nothing in your plan kept it.
    >
    > Promises #67 and #68 are one promise: keep it once on Sunday and close both. Park venture #49: the Kassenbuch is
    > line #14's third book, not a venture to research. No brainstorm, no new ideas and no Fahrtenbuch until I say
@@ -349,16 +352,20 @@ something changes.
    parks venture #17, the KDP line, on 11-03.
 3. **The Kassenbuch's request on 10-25:** look at pages 2, 5 and 67 on the card.
 4. **Your longest sleep** (6 hours) shortens what Ember asks: 8 to 36 hours on these days. Each wake with nothing
-   ready costs about $0.20, 3 to 4 a day until Sunday. Your standing instruction #6 says idle time is a cost too: raise
-   it to 12 hours only if you'd rather save about $0.40 a day.
+   ready costs about $0.20, 3 to 4 a day until Sunday. Raise it to 12 hours only if you'd rather save about $0.40 a
+   day (your standing instruction #6 of 10-02 called idle time a cost too; #7 replaced it on 10-07, and no plan shows
+   it now).
+5. **Optional: the commits rule again.** The rule you removed on 10-15 also said "Every promise to me goes in commits
+   with a due date". If you want Ember to read it in every plan, add that sentence alone as a rule (Mind tab).
+   0.42.6 checks it in code anyway (8).
 
 ### 4.3 Code changes for the next release, by urgency
 
 1. **Your words stay in the plan until they are done** (`agent/context.py`, `owner_text`; the tool `message_owner`).
    - "FROM YOUR OWNER" shows your latest message for 3 days after Ember read it (or until a newer one), headed "your
      words, still to carry out".
-   - `message_owner`'s description and the work prompt say, as your instruction #7 does: an answer saying what Ember
-     will do is a promise, `commits` with a due date.
+   - `message_owner` checks each sentence for a promise in words: one sentence reporting on an open promise no longer
+     lets another sentence's "next cycle …" out without `commits`.
    - Live, #205 left every plan after #368, and #206 promised the fixes without `commits`.
 2. **The daily review reads your messages and the books' links** (`agent/review.py`, `scorecard`).
    - It gets your messages of its window (quoted, cut like the planner's) and the KDP books with or without their link.
@@ -376,13 +383,15 @@ something changes.
    - A promise to propose a KDP book is a step of the KDP line: `_calls` maps it to `propose_kdp_book`. It waits
      ('blocked') while KDP's week is full, instead of taking a refused cycle a day.
    - Live, #67 and #68 are one job on two lines. From 10-23 they take about 4 refused cycles.
-5. **The ventures rest while none can pass** (`agent/plan_ventures.py`, `agent/desk.py`).
-   - While half the runway is shorter than the shortest first sale (`econ.MIN_FIRST_SALE_DAYS`, 14 days), no
-     brainstorm, triage or research step is laid out.
-   - The Ventures line of the plan says why: "the ventures rest: a new venture's first sale (14 days at least) would
-     come after half your runway (12 days)".
-   - A venture the owner backed, or one with an urgent decision, keeps its step.
-   - Live, 9 venture cycles ($2.48) on 10-21 and 10-22. Every case Ember wrote failed "slow".
+5. **The ventures can pass again under invest** (`agent/knockouts.py` and its callers). You chose this over resting
+   the ventures while none can pass.
+   - Under the spending stance **invest** (your setting, the default), "slow" compares the first sale with the whole
+     net runway, not half: invest explores whatever the runway, and half of it could never be met below 28 days.
+     Steady and conserve keep half.
+   - Resting them instead (no brainstorm, triage or research step while half the runway is under 14 days) would have
+     saved the 9 cycles, but no venture would reach you until the runway grows.
+   - Live, 9 venture cycles ($2.48) on 10-21 and 10-22. Every case Ember wrote failed "slow". With 23.9 days of
+     runway, a case with its first sale in 14 to 23 days now passes that knock-out.
 6. **plan_step says which step it changed, and when a wait can come** (`agent/plan_changes.py`).
    - The result names the step's title: "Step #251 'Research its next question…' waits on 10-23".
    - The day's limit says "2 a day: it can wait from tomorrow".
@@ -394,7 +403,8 @@ something changes.
 - **The weights' formula and its numbers.**
   - The two days' waste came from what became a step (a review's note, a second promise, a venture no knock-out lets
     through), not from how a step is weighed.
-  - With 4.3.3 to 4.3.5, the only ready steps of these days would have been the Kassenbuch's.
+  - With 4.3.3 and 4.3.4 (and the ventures held, 4.1), the only ready steps of these days would have been the
+    Kassenbuch's.
   - A dead line's worth (2.0 at 22 views) is also your keep-or-drop to settle, not a formula's. Lowering it in code
     would decide for you.
 - **The two waits a day.** They keep Ember from putting off everything. With 4.3.6 the refusal says what to do.
@@ -444,3 +454,28 @@ something changes.
 | #207: "Kassenbuch 2027 is spec-ready and QA-passed" | **Not quite**: the spec names v4, with the placeholder and the 12 mm column |
 | #207: "Could you add the Amazon links for KDP books #140 and #141" | **Yes**: "Add its Amazon link" on each request (4.1) |
 | #207: "I'll hold off on more English titles until it gets at least one sale" | **Right**, and the same holds for the Fahrtenbuch |
+
+---
+
+## 8. What 0.42.6 does
+
+The six changes of 4.3, built and tested (`pytest -W error`, the whole suite). Where the build differs from 4.3's plan,
+the table says so.
+
+| 4.3 | What 0.42.6 does | Different from the plan |
+|---|---|---|
+| 1. Your words stay | Your two newest messages that Ember answered stay in FROM YOUR OWNER and in the planner's news for 3 days after you wrote them: "Message #205 from your owner (…, answered in your #206; any work it asks for stays yours until it is done)". `message_owner` checks a message sentence by sentence: a sentence reporting on promise #67 goes out, a sentence promising "next ordinary cycle …" still needs `commits` (it goes back once, as before) | Counted from when you wrote the message, not from when Ember read it, and only answered messages (an open one stayed anyway). They come after everything else and only where there is room: a long decision can leave them out of the planner's smaller news. The commits rule is checked in code, not added to `message_owner`'s description: the longer description broke the fixed prompt's size limit |
+| 2. The review reads your messages and the books' links | The scorecard quotes your newest 3 messages of the review's 7 days (400 characters each, masked as in the report), then your KDP books: "published at <link>" or "published, no link at Amazon yet: no pin or post can link it until your owner adds it". The review's rules: "Read your owner's messages, decisions and comments: what they asked stands" | None |
+| 3. No review step while you decide | A "change" for a line with an open "You decide: keep line #n or drop it" makes no step. The review's rules: "A line you leave as it is (passive, no more effort, your owner's to keep or drop) is continue" | None |
+| 4. One promise, one place | A new promise holding every word of an open one (3 words at least) repeats it: no second obligation, and the message still goes out (as 0.24.0's repeats). A promise whose words name another line's listing or type (KDP, Printify) is put on that line, and `message_owner` says so. A promise step whose title proposes a KDP book waits ('blocked', in `propose_kdp_book`'s words) while KDP's week holds the book's format | A repeat isn't refused: it adds nothing and Ember is told which promise it repeats. #67 and #68 already exist: 0.42.6 neither merges nor moves them (4.1's message asks Ember to keep and close both on Sunday). #67's step (#243), which looked ready, now waits ('blocked') until Sunday 02:00; #68's (#273) waits on the date Ember set |
+| 5. Ventures | Under **invest** (your setting), "slow" means a first sale after the whole net runway; steady and conserve keep half. The Ventures tab, your Back and the agent's tools use the same rule | You chose this over resting the ventures (4.3.5). The Ventures hold of 4.1 still saves the venture cycles until the Kassenbuch is out |
+| 6. plan_step | "Step #251 ("Research its next question …") waits on 2026-10-23 (1 of 2 waits today)"; done and skip name the step the same way. The third wait of a day: "2 steps were said to wait today already (2 a day): this one can wait from tomorrow; do what you can of it now" | None |
+
+**After the upgrade:**
+- #205 is back in every plan until 10-24 (three days after you wrote it), marked answered. With 4.1's message, which
+  repeats it, Ember has both.
+- The review of the next day sees your messages, including 4.1's, and that #140 and #141 have no link (until you add
+  them).
+- Lines #3, #4 and #6 get no review steps while they wait for your keep-or-drop: no more 30-minute sleeps from them.
+- With 23.9 days of runway, a venture case whose first sale is 14 to 23 days away passes "slow". If you hold the
+  Ventures (4.1), nothing changes until you resume them.

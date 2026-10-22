@@ -206,7 +206,7 @@ def test_a_refused_proposal_keeps_its_case_and_names_every_gap_and_knock_out_at_
 
 
 def test_the_owner_who_invests_gives_a_first_sale_the_whole_runway(data_dir: Path) -> None:
-    """Live (analysis-0.42.3, 3.2), the invest stance explored with 25 days of runway, and half of it knocked out every
+    """Live (analysis-0.42.3, 3.2), the invest stance explored with 24 days of runway, and half of it knocked out every
     case (a first sale takes at least 14 days): 9 venture cycles ($2.48) ended parked, none reached the owner."""
     agent, _ = run(data_dir, FakeTransport(), cycles=0, settings=VENTURING)
     independent(agent)

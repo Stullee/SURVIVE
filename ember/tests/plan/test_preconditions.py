@@ -25,10 +25,11 @@ import pytest
 
 pytest.importorskip("httpx2")
 
-from app.agent import plan, preconditions, store, tools  # noqa: E402
+from app.agent import obligations, plan, preconditions, store, tools  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from app.integrations import etsy, etsy_publisher  # noqa: E402
+from tests.agent_helpers import rows  # noqa: E402
 from tests.etsy_helpers import call  # noqa: E402
 from tests.plan.test_cycle_line import cycle, lined, now, working  # noqa: E402
 from tests.plan.test_limit_waits import full_queue, launched, refused_by  # noqa: E402
@@ -407,3 +408,32 @@ def test_a_promise_to_propose_a_kdp_book_waits_in_a_full_kdp_week_too(
     assert step.waiting == "blocked" and "KDP lets an account create at most 2 new paperbacks a week" in str(
         step.refused
     )
+
+
+def test_a_kdp_promise_s_step_of_no_line_waits_on_the_line_its_obligation_names(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Live, promise #67's step (#243) stood under "Your owner" while the obligation named line #14, the KDP line."""
+    monkeypatch.delenv("TZ", raising=False)
+    agent, ctx = publishing(data_dir)
+    kept = promise(agent, "Propose the Kassenbuch 2027 KDP listing")  # no KDP line yet: a step of your owner's
+    keep(agent)
+    line = project(agent, *BOOK)
+    with agent.db.transaction() as conn:  # its repetition names the line later (obligations.name_line)
+        assert obligations.name_line(conn, kept, line)
+    keep(agent)
+    ctx.cycle_id = cycle(agent, line, status="running")
+    path = spec(ctx.workspace, paperback(ctx.workspace), project_id=line)
+    assert call(ctx, "propose_kdp_book", {"spec": path, "check": True}).ok  # a paperback
+    keep(agent)
+    title = f"Keep promise #{kept}: "
+    assert rows(agent, f"SELECT project_id FROM plan_nodes WHERE obligation_id = {kept}") == [{"project_id": None}]
+    assert the_step(agent, title).waiting is None
+    with agent.db.transaction() as conn:
+        for n in range(2):
+            store.insert_approval(
+                conn, agent.scope(), 1, now(agent), project_id=None, type="sell", title=f"KDP paperback: Book {n}",
+                description="a book", payload=f"book {n}", expected_cost="none", expected_benefit="royalties",
+                executor="kdp_package", action=json.dumps({"format": "paperback"}),
+            )  # fmt: skip
+    assert the_step(agent, title).waiting == "blocked"

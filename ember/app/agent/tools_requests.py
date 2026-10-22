@@ -140,8 +140,8 @@ def _message_owner(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
         about = named_line
     elif named_line is not None and about != named_line:
         # 0.42.6 (analysis-0.42.3, 3.1): a promise whose words name another line's listing or type goes on that line.
-        # Live, "Propose Kassenbuch 2027 KDP listing" was promised on line #4 (cover letters): the KDP book's step
-        # took line #4's cycles and its momentum
+        # Live, "Propose Kassenbuch 2027 KDP listing once weekly slot resets" was promised on line #4 (cover letters):
+        # the KDP book's step took line #4's cycles and its momentum
         moved = f" Its words name line #{named_line}, so it is that line's promise (not #{about})."
         about = named_line
     if promised is None:  # 0.33.0
