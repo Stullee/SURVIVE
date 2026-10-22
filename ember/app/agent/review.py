@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from .. import privacy
 from ..economy.clock import Clock, from_iso, to_iso
 from ..economy.costs import micros_to_usd
 from ..economy.ledger import Books, Scope
@@ -34,6 +35,11 @@ SCORECARD_MAX = 9_000  # characters: the review call's profile (pricing.REVIEW) 
 PROJECTS_MIN_CHARS = 2_000  # 0.22.0: the projects' room, whatever the other parts take
 MAX_PROJECTS = 8  # projects the scorecard shows in full (0.19.1: every open one is listed, the others in a line each)
 MAX_DECISIONS = 6
+# 0.42.6 (analysis-0.42.3, 3.3): the owner's messages of the period the scorecard quotes, the newest first, each cut to
+# WORDS_CHARS; and the KDP books it lists with their link at Amazon or without one
+MAX_WORDS = 3
+WORDS_CHARS = 400
+MAX_BOOKS = 6
 MAX_SALES = 6  # revenue entries listed in the scorecard
 MAX_ATTEMPTS = 2  # reviews a day, failed ones included
 VERDICTS = ("continue", "change", "stop")
@@ -212,6 +218,8 @@ def scorecard(
         _header(first, today, dry_run),
         _money(conn, scope, books, ledger_scope, status, since),
         _last_review(conn, scope, today),
+        _owner_words(conn, scope, since),  # 0.42.6: the owner's own words, which the focus and verdicts follow
+        _books(conn, scope),  # 0.42.6: which KDP book a pin or post can link
         # 0.19.2: before the projects, a few lines whose milestones the review judges (live, 8 projects in full left
         # no room for it: "Milestones were not shown, so I can't judge them today")
         roadmap.review_text(conn, scope, today, since),
@@ -227,7 +235,7 @@ def scorecard(
     # 0.22.0 (analysis 0.20.1, FIX NOW 14): the projects take only the room the other parts leave, fewer of them in
     # full first (each still named), then their last lines left out. With no limit on open projects (0.19.1), about 26
     # of them pushed what settled, the forecasts and the decisions out for good.
-    index = 5
+    index = 7  # the projects' part (0.42.6: after the owner's words and the books)
     room = max(
         SCORECARD_MAX - 20 - sum(len(p) + 2 for i, p in enumerate(parts) if p and i != index), PROJECTS_MIN_CHARS
     )
@@ -563,6 +571,53 @@ def _decisions(conn: sqlite3.Connection, scope: AgentScope, since: str) -> str:
     return "\n".join(lines)
 
 
+def _owner_words(conn: sqlite3.Connection, scope: AgentScope, since: str) -> str:
+    """0.42.6 (analysis-0.42.3, 3.3): the owner's messages of the period, the newest first, quoted (without the words
+    the owner removed). The review read their decisions on requests only: live, on 10-22 its focus planned the
+    Fahrtenbuch the owner had put off in #205 and pins "linking to Amazon" for books without a link, and every plan
+    of the day read that focus first."""
+    where, params = scope.where()
+    rows = conn.execute(
+        f"SELECT id, created_at, text FROM messages WHERE {where} AND sender = 'owner' AND removed_at IS NULL"
+        " AND created_at >= ? ORDER BY id DESC LIMIT ?",
+        (*params, since, MAX_WORDS),
+    ).fetchall()
+    if not rows:
+        return ""
+    mask = privacy.load(conn).apply
+    lines = ["YOUR OWNER'S MESSAGES IN THE PERIOD (the newest first; what they ask stands, and your focus follows it)"]
+    for r in rows:
+        when = str(r["created_at"])[5:16].replace("T", " ")
+        lines.append(f'- #{r["id"]} ({when} UTC): "{_one_line(mask(str(r["text"] or "")), WORDS_CHARS)}"')
+    return "\n".join(lines)
+
+
+def _books(conn: sqlite3.Connection, scope: AgentScope) -> str:
+    """0.42.6 (analysis-0.42.3, 3.3): the KDP books the owner published or will, each with its link at Amazon or
+    without one: a book without its link can't be linked by a pin or a post (live, the review of 10-22 planned pins and
+    posts "linking to Amazon" for #140 and #141, which had none)."""
+    where, params = scope.where()
+    rows = conn.execute(
+        f"SELECT id, title, status, result_link FROM approvals WHERE {where} AND executor = 'kdp_package'"
+        " AND status IN ('pending', 'approved', 'approved_with_changes', 'done') ORDER BY id DESC LIMIT ?",
+        (*params, MAX_BOOKS),
+    ).fetchall()
+    if not rows:
+        return ""
+    lines = ["AMAZON KDP (your books, the newest first)"]
+    for r in rows:
+        if r["status"] == "done":
+            said = (
+                f"published at {r['result_link']}"
+                if r["result_link"]
+                else "published, no link at Amazon yet: no pin or post can link it until your owner adds it"
+            )
+        else:
+            said = "waiting for your owner" if r["status"] == "pending" else "approved, not published yet"
+        lines.append(f'- #{r["id"]} "{_one_line(r["title"], 80)}": {said}')
+    return "\n".join(lines)
+
+
 def _etsy(conn: sqlite3.Connection, scope: AgentScope, since: str) -> str:
     """The Etsy listings Ember made and how they did: the clearest demand signal there is. Every live listing, top
     sellers in the period first (0.12.0: the newest 8 only, so the listings live the longest dropped out first), and
@@ -798,7 +853,9 @@ def planner_text(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
         # 0.40.2: and Ember's code holds the line until they decide (plan._review_holds)
         "Act on it: a stop is your owner's decision (only they close a line): Ember's code asks them on their Plan tab;"
         " until they decide, Ember's code holds the line: its steps wait. A change is a step of its line's,"
-        ' due today ("Review MM-DD: ..."): carry it out, a request to your owner where it needs one, then plan_step'
+        # 0.42.6: not for a line waiting for the owner's keep-or-drop (plan._review_changes)
+        ' due today ("Review MM-DD: ...") unless the line waits for your owner\'s keep-or-drop: carry it out, a'
+        " request to your owner where it needs one, then plan_step"
         " done. Work on a bottleneck (reach: its marketing cycles bring buyers) waits for its line's cycle. Ember's"
         " code kept the lesson."
     )

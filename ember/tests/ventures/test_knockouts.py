@@ -1,13 +1,14 @@
 """0.13.0: knock-outs in code. What ruled a venture out was the agent's judgement, and a dropshipping case resting on
 vendors' pages reached the owner. Now Ember's code checks each business case before it is proposed: cold outreach,
-accounts Ember would create, cash beyond the owner's venture budget, a first sale later than half the net runway, a
-sale that loses money, and demand without an independent page. A knocked-out venture isn't proposed until the case
-changes or the owner lifts that knock-out for it (reversibly, kept as history).
+accounts Ember would create, cash beyond the owner's venture budget, a first sale later than half the net runway (all
+of it while the owner invests, 0.42.6), a sale that loses money, and demand without an independent page. A knocked-out
+venture isn't proposed until the case changes or the owner lifts that knock-out for it (reversibly, kept as history).
 
-Also tests from 0.24.0 and 0.32.0 (formerly test_fixes_0240.py, test_fixes_0320.py)."""
+Also tests from 0.24.0 and 0.32.0 (formerly test_fixes_0240.py, test_fixes_0320.py), and 0.42.6."""
 
 from __future__ import annotations
 
+import dataclasses
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -66,11 +67,12 @@ def independent(agent: Agent) -> None:
         )
 
 
-def found(agent: Agent, net_days: float | None = 100.0) -> list[tuple[str, bool]]:
+def found(agent: Agent, net_days: float | None = 100.0, whole_runway: bool = False) -> list[tuple[str, bool]]:
     with agent.db.connection() as conn:
         row = ventures.get(conn, agent.scope(), DROPSHIPPING)
         assert row is not None
-        return [(k.rule, k.overridden) for k in knockouts.check(conn, row, cash_eur=20.0, net_days=net_days)]
+        found = knockouts.check(conn, row, cash_eur=20.0, net_days=net_days, whole_runway=whole_runway)
+        return [(k.rule, k.overridden) for k in found]
 
 
 @pytest.mark.exploring  # 0.36.0: the plan's Explore step makes its venture cycles
@@ -154,7 +156,7 @@ def test_a_venture_case_says_at_once_what_knocks_it_out(data_dir: Path) -> None:
         )
     made = call(ctx, "venture_case", {**NUMBERS, "venture_id": vid, "first_sale_days": 30})
     assert made.ok and "Knocked out by Ember's code (it isn't proposed while one stands): " in made.text
-    assert "a first sale after half the runway (its first sale in 30 days, half the runway is 16 days)" in made.text
+    assert "a first sale too late for the runway (its first sale in 30 days, half the runway is 16 days)" in made.text
 
 
 # --- From 0.32.0 (formerly test_fixes_0320.py) ---
@@ -198,3 +200,60 @@ def test_a_refused_proposal_keeps_its_case_and_names_every_gap_and_knock_out_at_
     # a refusal with nothing else in the call is a refusal, as before
     again = in_a_venture_cycle(agent, "venture_update", venture_id=vid, stage="live")
     assert not again.ok and "a venture goes live once your owner backed it" in again.text
+
+
+# --- From 0.42.6: the owner who invests gives a first sale the whole runway ------------------------------------------
+
+
+def test_the_owner_who_invests_gives_a_first_sale_the_whole_runway(data_dir: Path) -> None:
+    """Live (analysis-0.42.3, 3.2), the invest stance explored with 25 days of runway, and half of it knocked out every
+    case (a first sale takes at least 14 days): 9 venture cycles ($2.48) ended parked, none reached the owner."""
+    agent, _ = run(data_dir, FakeTransport(), cycles=0, settings=VENTURING)
+    independent(agent)
+    case(agent, first_sale_days=30)
+    assert found(agent, net_days=40.0) == [("slow", False)]  # half the runway is 20 days
+    assert found(agent, net_days=40.0, whole_runway=True) == []
+    with agent.db.connection() as conn:
+        row = ventures.get(conn, agent.scope(), DROPSHIPPING)
+        assert row is not None
+        [slow] = knockouts.check(conn, row, cash_eur=20.0, net_days=25.0, whole_runway=True)
+    assert (slow.label, slow.why) == (
+        "a first sale too late for the runway",
+        "its first sale in 30 days, the whole runway is 25 days, as your owner invests",
+    )
+
+
+def test_a_venture_case_meets_the_whole_runway_while_the_owner_invests(data_dir: Path) -> None:
+    agent, _ = started(data_dir)
+    ctx = shop_context(agent)  # the loop sets whole_runway from the owner's stance
+    ctx.venture, ctx.net_runway_days, ctx.whole_runway = True, 40.0, True
+    with agent.db.transaction() as conn:
+        vid = ventures.create(conn, agent.scope(), title="Worksheets", pitch="p.", stage="idea", now=now(agent))
+    made = call(ctx, "venture_case", {**NUMBERS, "venture_id": vid, "first_sale_days": 30})
+    assert made.ok and "too late for the runway" not in made.text, made.text
+    ctx.whole_runway = False
+    made = call(ctx, "venture_case", {**NUMBERS, "venture_id": vid, "first_sale_days": 30})
+    assert "a first sale too late for the runway (its first sale in 30 days, half the runway is 20 days)" in made.text
+
+
+@pytest.mark.parametrize(("stance", "slow"), [("invest", False), ("steady", True)])
+def test_the_ventures_tab_and_the_owners_back_follow_the_stance(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch, stance: str, slow: bool
+) -> None:
+    agent, _ = run(
+        data_dir, FakeTransport(), cycles=0, settings=VENTURING.model_copy(update={"spending_stance": stance})
+    )
+    independent(agent)
+    case(agent, first_sale_days=30)
+    evaluate = agent.economy.life.evaluate
+
+    def forty_days() -> Any:  # a runway of 40 days: a first sale in 30 is within it, not within half of it
+        status = evaluate()
+        return dataclasses.replace(status, runway=dataclasses.replace(status.runway, net_days=40.0))
+
+    monkeypatch.setattr(agent.economy.life, "evaluate", forty_days)
+    shown = next(v for v in views.ventures_view(agent)["items"] if v["id"] == DROPSHIPPING)
+    assert ("slow" in [k["rule"] for k in shown["knockouts"]]) is slow
+    assert ("too late for the runway" in (shown["backing_problem"] or "")) is slow
+    backed = owner(agent).decide_venture(DROPSHIPPING, {"action": "back"}, "Stefan")  # an idea: a problem asks first
+    assert backed.status == (409 if slow else 200), backed.body

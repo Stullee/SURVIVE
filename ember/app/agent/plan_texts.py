@@ -83,6 +83,7 @@ def step_text(
     questions: list[str] | None = None,
     cash_eur: float = 0.0,
     net_days: float | None = None,
+    whole_runway: bool = False,
     forecasts: str = "",
     today: date | None = None,
 ) -> str:
@@ -90,10 +91,11 @@ def step_text(
     taken, what comes after it in its stage, and the next heaviest steps; with no step ready, what waits and whether a
     new product may start (the explore burn mode). Its most important lines come first: the context cuts the end.
     0.37.0: a venture plan's too (in place of READY): its venture's decision and what it needs now (desk.item, with
-    the cash a venture may need, ``cash_eur``, the net runway, ``net_days``, and the day, ``today``), and the record of
+    the cash a venture may need, ``cash_eur``, the net runway, ``net_days``, all of which a first sale may take with
+    ``whole_runway``, and the day, ``today``), and the record of
     the agent's forecasts (``forecasts``)."""
     if steered.kind == "venture" and steered.step is not None:
-        return _venture_step_text(conn, scope, steered, cash_eur, net_days, forecasts, today)
+        return _venture_step_text(conn, scope, steered, cash_eur, net_days, whole_runway, forecasts, today)
     lines: list[str] = []
     step = steered.step
     if step is not None:
@@ -206,6 +208,7 @@ def _venture_step_text(
     steered: Steer,
     cash_eur: float,
     net_days: float | None,
+    whole_runway: bool,
     forecasts: str,
     today: date | None,
 ) -> str:
@@ -222,7 +225,7 @@ def _venture_step_text(
         everyone = ventures.all_ventures(conn, scope)
         room = sum(1 for x in everyone if x["stage"] in ventures.EXPLORED) < ventures.MAX_ACTIVE
         item = (
-            desk.item(conn, v, today=today, cash_eur=cash_eur, net_days=net_days, room=room)
+            desk.item(conn, v, today=today, cash_eur=cash_eur, net_days=net_days, whole_runway=whole_runway, room=room)
             if today is not None
             else None
         )

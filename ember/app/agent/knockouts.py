@@ -9,7 +9,9 @@ owner. Now each business case is checked against six knock-outs:
   Anthropic's usage policy forbids them): the case says so;
 * cash: it needs more cash to start than the owner's venture budget (the ``venture_cash_eur`` option);
 * slow: its first sale comes later than half the net runway (0.15.0: in days, at least econ.MIN_FIRST_SALE_DAYS; whole
-  months knocked out every case below about 61 days of runway, and 0 months passed);
+  months knocked out every case below about 61 days of runway, and 0 months passed), or later than the whole runway
+  while the owner's spending stance is invest (0.42.6, ``whole_runway``: half of it knocked out every case below 28
+  days of runway, and the invest stance explores whatever the runway, so 9 venture cycles ended parked);
 * losing: a sale loses money (its net per sale, after the fees, is not above 0);
 * vendor_only: no independent page backs its demand (0.15.0: a claim of searches, sales, orders, reviews or buyers,
   evidence.demand_shown; any one independent claim lifted it, a policy or a price too).
@@ -34,7 +36,7 @@ LABELS = {
     "cold_outreach": "cold outreach",
     "ember_accounts": "accounts Ember would create",
     "cash": "cash beyond the budget",
-    "slow": "a first sale after half the runway",
+    "slow": "a first sale too late for the runway",
     "losing": "a sale loses money",
     "vendor_only": "no independent source for its demand",
 }
@@ -165,9 +167,15 @@ def set_override(
 
 
 def check(
-    conn: sqlite3.Connection, venture: Mapping[str, Any], *, cash_eur: float, net_days: float | None
+    conn: sqlite3.Connection,
+    venture: Mapping[str, Any],
+    *,
+    cash_eur: float,
+    net_days: float | None,
+    whole_runway: bool = False,
 ) -> list[KnockOut]:
-    """Every knock-out that applies to the venture's newest case, lifted by the owner or not (``overridden``)."""
+    """Every knock-out that applies to the venture's newest case, lifted by the owner or not (``overridden``). A first
+    sale is slow after half the net runway, or after all of it with ``whole_runway`` (the owner's invest stance)."""
     vid = int(venture["id"])
     lifted = overridden(conn, vid)
     case = ventures.latest_case(conn, vid)
@@ -183,8 +191,11 @@ def check(
         if float(case["setup_eur"]) > cash_eur:
             found.append(("cash", f"EUR {float(case['setup_eur']):.0f} to start, the budget is EUR {cash_eur:.0f}"))
         days = max(int(case["first_sale_days"]), econ.MIN_FIRST_SALE_DAYS)  # 0.15.0: days, not whole months
-        if net_days is not None and days > net_days / 2:
-            found.append(("slow", f"its first sale in {days} days, half the runway is {net_days / 2:.0f} days"))
+        limit = None if net_days is None else net_days if whole_runway else net_days / 2
+        if limit is not None and days > limit:
+            runway = "the whole runway" if whole_runway else "half the runway"
+            invests = ", as your owner invests" if whole_runway else ""
+            found.append(("slow", f"its first sale in {days} days, {runway} is {limit:.0f} days{invests}"))
         if float(case["net_eur"]) <= 0:
             found.append(("losing", f"a sale keeps EUR {float(case['net_eur']):.2f} after fees and its cost"))
     if not evidence.demand_shown(conn, vid):  # 0.15.0: a demand number, not any independent claim

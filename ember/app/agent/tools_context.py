@@ -222,6 +222,7 @@ class ToolContext:
     usd_per_eur: float = 0.0  # the owner's exchange rate (etsy_usd_per_eur; 0: none, econ assumes one), 0.13.0
     venture_cash_eur: float = 20.0  # the owner's cash for a venture's first test (a knock-out beyond it), 0.13.0
     net_runway_days: float | None = None  # at the cycle's start (None: it earns what it spends), 0.13.0
+    whole_runway: bool = False  # 0.42.6: the owner invests: a first sale may take the whole runway (knockouts.check)
     unlocks_off: str = ""  # 0.15.0: why the owner's unlocks don't act now (policy.off; "" when they do)
     library: bool = False  # the owner's library holds documents (0.12.0): its tools
     brainstorm: BrainstormFn | None = None

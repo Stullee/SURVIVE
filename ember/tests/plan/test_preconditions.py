@@ -378,3 +378,32 @@ def test_the_tools_preconditions_read_one_clock_and_the_calls_facts(data_dir: Pa
     assert (facts.line, facts.form, facts.channel, facts.answers) == (3, "ebook", None, False)
     assert preconditions.blocked("message_owner", facts) is None
     assert preconditions.blocked("no_such_tool", facts) is None
+
+
+def test_a_promise_to_propose_a_kdp_book_waits_in_a_full_kdp_week_too(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """0.42.6 (analysis-0.42.3, 3.1): live, promise #67 "Propose Kassenbuch 2027 KDP listing" was a step ready while
+    KDP's week was full: its weight cut the sleep, and the cycles that took it could only wait."""
+    monkeypatch.delenv("TZ", raising=False)
+    agent, ctx = publishing(data_dir)
+    line = project(agent, *BOOK)
+    keep(agent)
+    ctx.cycle_id = cycle(agent, line, status="running")
+    path = spec(ctx.workspace, paperback(ctx.workspace), project_id=line)
+    assert call(ctx, "propose_kdp_book", {"spec": path, "check": True}).ok  # a paperback
+    kept = promise(agent, "Propose the Kassenbuch 2027 KDP listing")
+    keep(agent)
+    title = f"Keep promise #{kept}: "
+    assert the_step(agent, title, line).waiting is None
+    with agent.db.transaction() as conn:  # two paperbacks of other books proposed this week
+        for n in range(2):
+            store.insert_approval(
+                conn, agent.scope(), 1, now(agent), project_id=None, type="sell", title=f"KDP paperback: Book {n}",
+                description="a book", payload=f"book {n}", expected_cost="none", expected_benefit="royalties",
+                executor="kdp_package", action=json.dumps({"format": "paperback"}),
+            )  # fmt: skip
+    step = the_step(agent, title, line)
+    assert step.waiting == "blocked" and "KDP lets an account create at most 2 new paperbacks a week" in str(
+        step.refused
+    )

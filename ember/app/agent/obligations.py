@@ -50,6 +50,10 @@ FORCING = ("promise", "decision")
 HEADING = "OBLIGATIONS (kept by Ember's code: deal with them first)"
 SAME_PROMISE_DAYS = 2  # 0.24.0: a promise due this close to an open one, with most of its words, repeats it
 SAME_WORDS = 0.6
+# 0.42.6 (analysis-0.42.3, 3.1): ... or one holding every word of the other, when that has this many at least. Live,
+# "Propose Kassenbuch 2027 KDP listing once weekly slot resets" (#68) shared 5 of 9 words with #67's "Propose
+# Kassenbuch 2027 KDP listing": two promises, two steps, on two lines, for one book
+SUBSET_WORDS = 3
 STEM_LETTERS = 6  # 0.32.0: "propose", "proposal" and "proposed" are one word to the comparison
 _COMMON = frozenset(
     {"and", "the", "for", "with", "from", "all", "again", "your", "you", "our", "this", "that", "then"}
@@ -182,8 +186,9 @@ def name_line(conn: sqlite3.Connection, obligation_id: int, project_id: int) -> 
 
 def repeated_promise(conn: sqlite3.Connection, scope: AgentScope, what: str, due: str) -> sqlite3.Row | None:
     """0.24.0: the open promise a new one repeats: due within SAME_PROMISE_DAYS of it, and sharing at least SAME_WORDS
-    of the words the two hold (_promise_words). Live, "Bluesky reaction + view delta report for posts #43/#44" became
-    promise #28 beside the same report's #20, both due 2026-10-11."""
+    of the words the two hold (_promise_words), or (0.42.6) one holding every word of the other. Live, "Bluesky
+    reaction + view delta report for posts #43/#44" became promise #28 beside the same report's #20, both due
+    2026-10-11."""
     new = _promise_words(what)
     day = roadmap.parse_day(due)
     if not new or day is None:
@@ -200,6 +205,8 @@ def repeated_promise(conn: sqlite3.Connection, scope: AgentScope, what: str, due
         if named and earlier and not named & earlier:  # 0.32.0: about other listings or requests, not the same
             continue
         if len(new & old) >= SAME_WORDS * len(new | old):
+            return row
+        if min(len(new), len(old)) >= SUBSET_WORDS and (old <= new or new <= old):  # 0.42.6
             return row
     return None
 

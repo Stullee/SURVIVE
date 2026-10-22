@@ -293,7 +293,12 @@ def park(conn: sqlite3.Connection, scope: AgentScope, venture: Mapping[str, Any]
 
 
 def backing_problem(
-    conn: sqlite3.Connection, venture: Mapping[str, Any], *, cash_eur: float, net_days: float | None
+    conn: sqlite3.Connection,
+    venture: Mapping[str, Any],
+    *,
+    cash_eur: float,
+    net_days: float | None,
+    whole_runway: bool = False,
 ) -> str:
     """0.15.0: why a proposal can't be backed as it stands ("" when it can): it has no numbers (proposed before they
     were needed) or a knock-out stands. Such a proposal goes back to researching (``reopen``)."""
@@ -301,7 +306,9 @@ def backing_problem(
         if venture["stage"] == "proposed":
             return "it has no numbers (venture_case), as it was proposed before a business case needed them"
         return "it has no numbers (venture_case) yet"
-    standing = knockouts.active(knockouts.check(conn, venture, cash_eur=cash_eur, net_days=net_days))
+    standing = knockouts.active(
+        knockouts.check(conn, venture, cash_eur=cash_eur, net_days=net_days, whole_runway=whole_runway)
+    )
     if standing:
         return "it is knocked out (" + "; ".join(f"{k.label}: {k.why}" for k in standing) + ")"
     return ""

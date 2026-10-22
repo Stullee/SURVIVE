@@ -17,9 +17,10 @@ import re
 import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
+from ..economy.clock import from_iso, to_iso
 from ..economy.costs import micros_to_usd
 from ..economy.life import LifeStatus
 from ..economy.metering import rough_token_count
@@ -128,6 +129,12 @@ WAITING_NOTE = "Your owner's decision on these wakes you: don't wait for it, wor
 # The owner's decisions and messages in the brief and the will context, as much as the planner's news share:
 # room for one whole message of plain text at the owner's limit of 2,000 characters.
 OWNER_BUDGET = 2_300
+# 0.42.6 (analysis-0.42.3, 3.3): the owner's messages the agent answered stay in the owner's news store.ANSWERED_DAYS
+# days after they were written (at most WORDS_SHOWN, each quoted to WORDS_CHARS, last and only in the room the news
+# leaves): what they ask stays the agent's to carry out. Live, #205's three fixes left every plan once #206 had
+# answered it, and no cycle made them.
+WORDS_SHOWN = 2
+WORDS_CHARS = 600
 OPEN_UPGRADES = 5  # 0.15.0: the open upgrade requests WAITING FOR YOUR OWNER lists
 SHOWN_PROJECTS = 8  # open projects the plan shows in full, the ones updated last (0.19.1: the others by name)
 QUOTE_CAP = 300  # characters of each text quoted in a decision or upgrade line, when the owner's news is shortened
@@ -259,6 +266,7 @@ class Snapshot:
     project_bets: dict[int, list[str]] = field(default_factory=dict)  # 0.18.0: the open bets
     playbook: list[Any] = field(default_factory=list)  # 0.18.0: the active principles (learning.principles)
     owner_messages: list[sqlite3.Row] = field(default_factory=list)
+    owner_words: list[sqlite3.Row] = field(default_factory=list)  # 0.42.6: answered lately (store.recent_words)
     pending: list[sqlite3.Row] = field(default_factory=list)
     upgrades: list[sqlite3.Row] = field(default_factory=list)  # 0.15.0: its open upgrade requests, newest first
     last_cycle: sqlite3.Row | None = None
@@ -401,6 +409,11 @@ def snapshot(
         project_bets=bets.open_lines(conn, scope),
         playbook=learning.principles(conn, scope),
         owner_messages=store.open_messages(conn, scope, 8),
+        owner_words=(
+            store.recent_words(conn, scope, to_iso(from_iso(now) - timedelta(days=store.ANSWERED_DAYS)), WORDS_SHOWN)
+            if now
+            else []
+        ),
         pending=store.pending_requests(conn, scope),  # 0.15.0: every one, not those among the newest 20 requests
         upgrades=open_upgrades(conn, scope),
         last_cycle=last_cycle,
@@ -778,9 +791,16 @@ def _owner(s: Snapshot, budget: int) -> tuple[str, list[tuple[Item, str, bool]],
             limits = [None if kept(None) else _largest(SHORTEST_QUOTE, len(texts[0]), kept)]
             chars, too_long = SHORTEST_QUOTE, None if limits[0] is None else items[0]
     text = shortened(limits, chars)
+    for m in s.owner_words:  # 0.42.6: answered lately, what it asks still to do: last, each whole in the room left
+        said = (
+            f"Message #{m['id']} from your owner ({m['created_at']}, answered in your #{m['answered_by']}; any work it"
+            f" asks for stays yours until it is done): {_quote(str(m['text']), WORDS_CHARS)}"
+        )
+        if json_bytes(f"{text}\n{said}" if text else said) <= budget:
+            text = f"{text}\n{said}" if text else said
     limits += [chars] * (len(texts) - len(limits))
     whole = [n is None or len(t) <= n for t, n in zip(texts, limits, strict=True)] + [True] * len(decisions)
-    lines = list(zip(items, text.split("\n"), whole, strict=True)) if items else []
+    lines = list(zip(items, text.split("\n")[: len(items)], whole, strict=True)) if items else []
     return cut(text, budget), lines, too_long
 
 

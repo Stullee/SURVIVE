@@ -217,7 +217,8 @@ def test_a_recurring_step_is_skipped_for_its_period_outside_the_days_waits(data_
     first, other = steps[0], steps[1]
     skipped = plan_step(agent, line, action="skip", step_id=first["id"], why="the blog has no readers")
     assert skipped.ok, skipped.text
-    assert f"Step #{first['id']} is skipped for this period (it ends {first['due']})" in skipped.text
+    assert skipped.text.startswith(f'Step #{first["id"]} ("')  # 0.42.6: with its title
+    assert f'") is skipped for this period (it ends {first["due"]})' in skipped.text
     assert rows(agent, "SELECT actor, action FROM plan_changes WHERE action = 'drop'") == [
         {"actor": "agent", "action": "drop"}
     ]

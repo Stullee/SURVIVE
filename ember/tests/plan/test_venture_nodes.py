@@ -286,7 +286,10 @@ def test_a_triage_names_the_other_ideas_waiting_and_a_ventures_step_waits_for_it
     waited = call(
         ctx, "plan_step", {"action": "wait", "step_id": later, "on": "date", "until": day, "why": "after the freeze"}
     )
-    assert waited.ok and waited.text == f"Step #{later} waits on {day} (1 of {plan.WAITS_A_DAY} waits today)."
+    assert waited.ok and waited.text == (  # 0.42.6: with its title
+        f'Step #{later} ("Triage it: research it, or park it with why") waits on {day} (1 of {plan.WAITS_A_DAY} '
+        "waits today)."
+    )
     assert f"#{others[0]} " not in your_step().split("Other ideas wait for their triage: ")[1]
     assert {c.step.id: c.waiting for c in explored(agent).found}[later] == "date"
     tracker = project(agent, *TRACKER)
@@ -301,7 +304,8 @@ def test_a_triage_names_the_other_ideas_waiting_and_a_ventures_step_waits_for_it
     with agent.db.transaction() as conn:
         plan.pin(conn, agent.scope(), step, False, "Owner", now(agent))
     own = call(ctx, "plan_step", {"action": "wait", "on": "date", "until": day, "why": "after the freeze"})
-    assert own.ok and own.text == f"Step #{step} waits on {day} (2 of {plan.WAITS_A_DAY} waits today)."  # YOUR STEP
+    assert own.ok and own.text.startswith(f'Step #{step} ("')  # YOUR STEP, named
+    assert own.text.endswith(f'") waits on {day} (2 of {plan.WAITS_A_DAY} waits today).')
     agent.clock.advance(days=5)
     lifted = keep(agent)
     assert f"Plan tree: step #{later} is ready again ({day} has come)." in lifted

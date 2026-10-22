@@ -134,8 +134,16 @@ def _message_owner(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
     named = list(dict.fromkeys(int(n) for n in re.findall(r"\d{1,9}", args.get("answers") or "")))[:20]
     promised = _promise(ctx, args)
     about = _promised_line(ctx, conn, args.get("project_id"), promised is not None)
+    named_line = obligations.promised_line(conn, ctx.scope, promised[0]) if promised is not None else None
+    moved = ""
     if about is None and promised is not None:  # 0.35.1: the line its words name (a listing's number, KDP)
-        about = obligations.promised_line(conn, ctx.scope, promised[0])
+        about = named_line
+    elif named_line is not None and about != named_line:
+        # 0.42.6 (analysis-0.42.3, 3.1): a promise whose words name another line's listing or type goes on that line.
+        # Live, "Propose Kassenbuch 2027 KDP listing" was promised on line #4 (cover letters): the KDP book's step
+        # took line #4's cycles and its momentum
+        moved = f" Its words name line #{named_line}, so it is that line's promise (not #{about})."
+        about = named_line
     if promised is None:  # 0.33.0
         _unrecorded_promise(ctx, conn, args["text"])
     # 0.12.0: at most MESSAGES_PER_DAY a day that answer none of the owner's (the prompt's "once a day" was prose)
@@ -158,8 +166,12 @@ def _message_owner(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome
             conn, ctx.scope, ctx.cycle_id, message_id, promised[0], promised[1], ctx.now(), about
         )
         text += f" Your promise is obligation #{made}, due {promised[1]}{on}: close it with obligation_done once kept."
+        text += moved
     if answered:
-        text += f" It answers {_numbers(answered)}: they leave FROM YOUR OWNER."
+        # 0.42.6: shown as answered for some days (store.recent_words): the work they ask for is still to do
+        text += (
+            f" It answers {_numbers(answered)}: FROM YOUR OWNER shows them as answered for {store.ANSWERED_DAYS} days."
+        )
     wrong = [n for n in named if n not in answered]
     if wrong:
         text += f" Not an open message from your owner that you were shown, so still as it was: {_numbers(wrong)}."
@@ -180,22 +192,29 @@ PROMISE_WORDS = re.compile(
     re.IGNORECASE,
 )
 QUOTED = re.compile(r'"[^"]*"|“[^”]*”|„[^“”]*[“”]')
+SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")  # 0.42.6: a message's sentences, each judged on its own
 
 
 def _unrecorded_promise(ctx: ToolContext, conn: Any, text: str) -> None:
     """0.33.0: a message whose words promise later work but whose promise isn't recorded (commits) goes back once;
     sent again unchanged, it goes out (its words promised nothing after all). A message that reports on an open
-    promise (#n) goes out."""
-    said = PROMISE_WORDS.search(QUOTED.sub(" ", text))  # what it quotes (its owner's words) promises nothing
+    promise (#n) goes out. 0.42.6 (analysis-0.42.3, 3.3): sentence by sentence, so a report lets its own sentence
+    through, not another's. Live, #206 began "Next ordinary cycle on project #14 will: (1) apply the 3 exact text/table
+    fixes" and went out without commits because a later sentence named promise #67: no obligation kept the fixes, and
+    no cycle made them."""
     key = " ".join(text.split())
-    if said is None or key in ctx.state.bounced or _reports_promise(ctx, conn, text):
+    if key in ctx.state.bounced:
         return
-    ctx.state.bounced.add(key)
-    raise ToolError(
-        f'your message promises later work ("{said.group(0)}") but records no promise: put what you promise in '
-        "commits, with due and project_id, so OBLIGATIONS keeps it until it is kept; send it again unchanged if it "
-        "promises nothing"
-    )
+    for sentence in SENTENCE.split(QUOTED.sub(" ", text)):  # what it quotes (its owner's words) promises nothing
+        said = PROMISE_WORDS.search(sentence)
+        if said is None or _reports_promise(ctx, conn, sentence):
+            continue
+        ctx.state.bounced.add(key)
+        raise ToolError(
+            f'your message promises later work ("{said.group(0)}") but records no promise: put what you promise in '
+            "commits, with due and project_id, so OBLIGATIONS keeps it until it is kept; send it again unchanged if it "
+            "promises nothing"
+        )
 
 
 def _promised_line(ctx: ToolContext, conn: Any, project_id: int | None, promises: bool) -> int | None:
