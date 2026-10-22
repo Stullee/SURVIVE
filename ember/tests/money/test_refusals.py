@@ -229,7 +229,7 @@ def test_live_without_an_api_key_a_call_is_never_sent_and_costs_nothing(data_dir
     before = money(economy)
     with pytest.raises(CallFailed) as failed:
         model.call(cycle, "work", request())
-    result, error = failed.value.result, "model calls are not available in this version yet"
+    result, error = failed.value.result, "model calls need the Anthropic API key in the app's options"
     assert (result.status, result.cost_micros, result.billing_uncertain, result.error) == ("failed", 0, False, error)
     assert money(economy) == before  # nothing charged, nothing held
     assert f"Call #{result.call_id} (claude-sonnet-5) failed: {error}; nothing charged" in logged(economy)
@@ -380,6 +380,23 @@ def test_each_uncertain_bill_says_why_it_is_charged_at_its_worst_case(
     assert f"Call #{result.call_id} was charged at its worst case because its bill is uncertain: {note}" in (
         logged(economy)
     )
+
+
+def test_an_iteration_on_the_requested_models_dated_snapshot_is_an_ordinary_bill(data_dir: Path) -> None:
+    """0.42.3: the answer's own model may be the alias's dated snapshot (_same_model), and an iteration's was compared
+    exactly: one naming claude-sonnet-5-20260101 for a claude-sonnet-5 request charged its worst case, which neither
+    the start's settlement nor the dashboard's offer refunds (its note is no unknown usage field)."""
+    economy = make_economy(data_dir, GENEROUS)
+    sampled = {"type": "message", "model": "claude-sonnet-5-20260101", "input_tokens": 1_000, "output_tokens": 100}
+    other = {**sampled, "model": "claude-opus-5"}  # another model still makes the bill uncertain
+    answers = [Completed(message(iterations=[sampled])), Completed(message(iterations=[other]))]
+    model, _ = metered(economy, ScriptedTransport(outcomes=answers))
+    cycle = model.open_cycle("test")
+    result = model.call(cycle, "work", request())
+    assert not result.billing_uncertain and result.cost_micros < WORST
+    with economy.db.connection() as conn:
+        assert conn.execute("SELECT error FROM llm_calls").fetchone()[0] is None
+    assert model.call(cycle, "work", request()).billing_uncertain
 
 
 @pytest.mark.parametrize("stored", ["{priority: standard", '["priority", "standard"]', '{"priority": "standard"}'])
