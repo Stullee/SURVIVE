@@ -29,7 +29,10 @@ changed to its Etsy listing. The product as Printify has it (``current_product``
 made since.
 
 0.42.2 (M2): a product or a change not begun within connectors.APPROVED_DAYS of its approval is closed unsent, as an
-email is (connectors.stale).
+email is (connectors.stale). 0.42.3 (M3): when Printify asks Ember's code to come back later (HTTP 429, or 503 with
+Retry-After) at the first call that would change anything (a product's picture upload; a change's new design, else the
+change itself), the request stays approved and is tried again then, at most retry.TRIES times (retry.py), or until it
+is too old (connectors.stale); a refusal after that call stays as it was.
 """
 
 from __future__ import annotations
@@ -57,11 +60,12 @@ from ..economy.clock import Clock, from_iso, normalized, to_iso
 from ..economy.costs import micros_to_usd
 from ..economy.ledger import PreparedEntry
 from ..products import images
-from . import connectors, etsy
+from . import connectors, etsy, retry
 from .printify import (
     MIN_MARGIN,
     Account,
     Blueprint,
+    Busy,
     Edit,
     Gone,
     Made,
@@ -730,9 +734,12 @@ def execution(
     conn: sqlite3.Connection, row: sqlite3.Row, scope: AgentScope, clock: Clock, daily_limit: int
 ) -> dict[str, Any] | None:
     """What happened to an approved product, or to the owner's Undo of one (0.39.0: or a change of one), for the
-    dashboard (None before approval)."""
+    dashboard (None before approval). 0.42.3 (M3): one Printify asked to wait says when it is tried again."""
+    retry_at = retry.waiting(conn, row["id"]) if row["executor"] in ("printify_product", "printify_edit") else None
     if row["executor"] == "printify_edit":
         change = conn.execute("SELECT * FROM printify_edits WHERE approval_id = ?", (row["id"],)).fetchone()
+        if retry_at is not None:
+            return retry.execution(change, retry_at)
         if change is not None:
             return {
                 "status": change["status"],
@@ -758,7 +765,9 @@ def execution(
             }
     else:
         made = conn.execute("SELECT * FROM printify_products WHERE approval_id = ?", (row["id"],)).fetchone()
-        if made is not None:
+        if retry_at is not None and created_today(conn, clock, scope) < daily_limit:
+            return retry.execution(made, retry_at)
+        if made is not None and retry_at is None:
             return {
                 "status": made["status"],
                 "started_at": made["started_at"],
@@ -869,14 +878,14 @@ class Publisher:
             for approval_id in creating:
                 outcome = self._one(account, scope, shop, approval_id)
                 done.append((approval_id, outcome))
-                if outcome == connectors.HALTED:
-                    return done  # 0.37.3: the kill switch came on: the rest waits
+                if outcome in (connectors.HALTED, retry.LATER):
+                    return done  # 0.37.3: the kill switch came on (0.42.3: or Printify asked to wait): the rest waits
                 if outcome == "waiting_limit":
                     break  # the rest waits for tomorrow too, in order
             for approval_id in editing:
                 outcome = self._edit(account, scope, shop, approval_id)
                 done.append((approval_id, outcome))
-                if outcome == connectors.HALTED:
+                if outcome in (connectors.HALTED, retry.LATER):
                     return done
             for approval_id in deleting:
                 outcome = self._delete(account, scope, shop, approval_id)
@@ -888,17 +897,19 @@ class Publisher:
             self._lock.release()
 
     def _approved(self, scope: AgentScope, executor: str) -> list[int]:
+        """The approved requests of ``executor`` that Ember's code hasn't begun (0.42.3: or that Printify asked to wait
+        until now), oldest first."""
         where, params = scope.where()
         with self.db.connection() as conn:
             return [
                 int(r[0])
                 for r in conn.execute(
                     f"SELECT id FROM approvals WHERE {where} AND executor = ? AND status IN {APPROVED}"
-                    " AND NOT EXISTS (SELECT 1 FROM action_journal j WHERE j.approval_id = approvals.id)"
+                    " AND ((NOT EXISTS (SELECT 1 FROM action_journal j WHERE j.approval_id = approvals.id)"
                     " AND NOT EXISTS (SELECT 1 FROM printify_products p WHERE p.approval_id = approvals.id)"
-                    " AND NOT EXISTS (SELECT 1 FROM printify_edits e WHERE e.approval_id = approvals.id)"
-                    " ORDER BY id",
-                    (*params, executor),
+                    " AND NOT EXISTS (SELECT 1 FROM printify_edits e WHERE e.approval_id = approvals.id))"
+                    f" OR {retry.retry_at_sql('approvals')} <= ?) ORDER BY id",
+                    (*params, executor, to_iso(self.clock.now())),
                 )
             ]
 
@@ -917,8 +928,9 @@ class Publisher:
         with self.db.transaction() as conn:
             row = conn.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
             started = conn.execute("SELECT 1 FROM printify_products WHERE approval_id = ?", (approval_id,)).fetchone()
-            if row is None or row["status"] not in ("approved", "approved_with_changes") or started is not None:
-                return "skipped"  # cancelled or decided meanwhile
+            again = started is not None and retry.due(conn, approval_id, self.clock.now())  # 0.42.3 (M3)
+            if row is None or row["status"] not in ("approved", "approved_with_changes") or (started and not again):
+                return "skipped"  # cancelled or decided meanwhile (or Printify's wait isn't over)
             if connectors.halted(conn):
                 return connectors.HALTED  # 0.37.3: the kill switch came on while this round ran
             if (stale := connectors.stale(conn, row, self.clock.now())) is not None:  # 0.42.2 (M2): too old to begin
@@ -934,16 +946,23 @@ class Publisher:
                         "again"
                     )
             except PrintifyError as exc:
-                self._start(conn, scope, approval_id, stamp, str(row["title"]), currency)
+                self._start(conn, scope, approval_id, stamp, str(row["title"]), currency, again)
                 connectors.begin(conn, approval_id, stamp)
                 return self._failed(conn, approval_id, str(exc))
-            self._start(conn, scope, approval_id, stamp, product.title, product.currency)
+            self._start(conn, scope, approval_id, stamp, product.title, product.currency, again)
             connectors.begin(conn, approval_id, stamp)
         # Committed: from here on this product is never made a second time, whatever happens.
         made = None
         prices: list[list[int]] | None = None  # 0.15.0: kept on an unclear publish: its prices were checked
+        # 0.42.3 (analysis-0.40.1 audit, M3): of its three calls that change something at Printify (the picture's
+        # upload, the product, its publishing), only a "come back later" to the first keeps the approval: nothing
+        # changed yet. Once the upload went through, the picture is in the owner's Printify library, where it stays
+        # (a Bluesky picture no post uses is dropped), so a try again would upload it a second time; once the product
+        # exists, it would make a second one. A refusal from then on fails it as before (a product made is deleted).
+        uploaded = False
         try:
             image_id = account.upload(product.image.path.rsplit("/", 1)[-1], data)
+            uploaded = True
             made = account.create(shop, product, image_id)
             self._created(approval_id, product, made)
             prices, short = self._margins(product, made.costs)
@@ -954,6 +973,8 @@ class Publisher:
                 )
             account.publish(shop, made.product_id)
         except NotSent as exc:
+            if not uploaded and (waits := self._wait("printify_products", approval_id, exc)):
+                return waits
             note = f"Not published: Printify refused it ({exc})"
             if made is not None:
                 note += f". {self._discard(account, shop, made.product_id)}"
@@ -1039,8 +1060,17 @@ class Publisher:
 
     @staticmethod
     def _start(
-        conn: sqlite3.Connection, scope: AgentScope, approval_id: int, stamp: str, title: str, currency: str
+        conn: sqlite3.Connection,
+        scope: AgentScope,
+        approval_id: int,
+        stamp: str,
+        title: str,
+        currency: str,
+        again: bool = False,
     ) -> None:
+        if again:  # 0.42.3 (M3): Printify asked to wait: its row is tried again
+            retry.reopen(conn, "printify_products", approval_id, stamp, title=title[:140], currency=currency[:3])
+            return
         conn.execute(
             "INSERT INTO printify_products (mode, session, approval_id, title, currency, status, started_at)"
             " VALUES (?, ?, ?, ?, ?, 'running', ?)",
@@ -1060,10 +1090,24 @@ class Publisher:
 
     def _lapsed(self, conn: sqlite3.Connection, row: sqlite3.Row, done: str, why: str, stamp: str) -> str:
         """0.42.2 (analysis-0.40.1 audit, M2): a product or change approved more than connectors.APPROVED_DAYS ago that
-        never began is closed unsent (connectors.lapse)."""
+        never began (0.42.3: or that waited for Printify since) is closed unsent (connectors.lapse)."""
         note = connectors.lapse(conn, row, done, why, stamp)
         events.record(self.db, "warning", "printify", f"Request #{row['id']}: {note}"[:300])
         return "failed"
+
+    def _wait(self, table: str, approval_id: int, exc: Exception) -> str | None:
+        """0.42.3 (analysis-0.40.1 audit, M3): Printify asked to come back later before anything changed there
+        (``printify.Busy``): the request stays approved and is tried again then (retry.park; nothing made, so the
+        day's limit doesn't count it). None when it may not wait (an unlock's, or it waited retry.TRIES times): it
+        fails as before."""
+        if not isinstance(exc, Busy):
+            return None
+        with self.db.transaction() as conn:
+            if not retry.may_wait(conn, approval_id):
+                return None
+            note = retry.park(conn, table, approval_id, exc, self.clock, "Printify")
+        events.record(self.db, "warning", "printify", f"Request #{approval_id}: {note}"[:300])
+        return retry.LATER
 
     def _after(
         self,
@@ -1171,8 +1215,9 @@ class Publisher:
         with self.db.transaction() as conn:
             row = conn.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
             started = conn.execute("SELECT 1 FROM printify_edits WHERE approval_id = ?", (approval_id,)).fetchone()
-            if row is None or row["status"] not in ("approved", "approved_with_changes") or started is not None:
-                return "skipped"
+            again = started is not None and retry.due(conn, approval_id, self.clock.now())  # 0.42.3 (M3)
+            if row is None or row["status"] not in ("approved", "approved_with_changes") or (started and not again):
+                return "skipped"  # cancelled or decided meanwhile (or Printify's wait isn't over)
             if connectors.halted(conn):
                 return connectors.HALTED
             if (stale := connectors.stale(conn, row, self.clock.now())) is not None:  # 0.42.2 (M2): too old to begin
@@ -1189,13 +1234,13 @@ class Publisher:
                 refused = ""
             except PrintifyError as exc:
                 if edit is not None:
-                    self._edit_start(conn, scope, approval_id, edit, stamp)
+                    self._edit_start(conn, scope, approval_id, edit, stamp, again)
                 connectors.begin(conn, approval_id, stamp, subject=edit.product_id if edit is not None else None)
                 refused = self._edit_failed(conn, approval_id, str(exc))
             if not refused:
                 assert edit is not None and found is not None
                 current, parts = found[1], edit.parts()
-                self._edit_start(conn, scope, approval_id, edit, stamp)
+                self._edit_start(conn, scope, approval_id, edit, stamp, again)
                 before = {"title": current.title, "tags": list(current.tags), "design": current.image.path}
                 connectors.begin(conn, approval_id, stamp, subject=edit.product_id, before=before)
         if refused:
@@ -1203,14 +1248,21 @@ class Publisher:
             return "failed"
         # Committed: from here on this change is never made a second time, whatever happens.
         changed = False
+        # 0.42.3 (analysis-0.40.1 audit, M3): only a "come back later" to the first call that changes something at
+        # Printify keeps the approval: the new design's upload, or without one the change itself. After an upload the
+        # picture stays in the owner's Printify library, and after the change a try again would change it twice.
+        untouched = True
         try:
             image_id = None
             if edit.image is not None and data is not None:
                 image_id = account.upload(edit.image.path.rsplit("/", 1)[-1], data)
+                untouched = False
             account.update(shop, edit.product_id, edit.applied(current), parts, image_id)
-            changed = True
+            changed, untouched = True, False
             account.publish(shop, edit.product_id, parts)
         except NotSent as exc:
+            if untouched and (waits := self._wait("printify_edits", approval_id, exc)):
+                return waits
             if not changed:
                 note = f"Not changed: Printify refused it ({exc})"
                 return self._edited(scope, approval_id, edit, "failed", note, exc)
@@ -1236,7 +1288,13 @@ class Publisher:
         return self._edited(scope, approval_id, edit, "done", note, simulated=account.simulated)
 
     @staticmethod
-    def _edit_start(conn: sqlite3.Connection, scope: AgentScope, approval_id: int, edit: Edit, stamp: str) -> None:
+    def _edit_start(
+        conn: sqlite3.Connection, scope: AgentScope, approval_id: int, edit: Edit, stamp: str, again: bool = False
+    ) -> None:
+        if again:  # 0.42.3 (M3): Printify asked to wait: its row is tried again
+            values = {"product_id": edit.product_id[:40], "listing_id": edit.listing_id}
+            retry.reopen(conn, "printify_edits", approval_id, stamp, **values)
+            return
         conn.execute(
             "INSERT INTO printify_edits (mode, session, approval_id, product_id, listing_id, status, started_at)"
             " VALUES (?, ?, ?, ?, ?, 'running', ?)",

@@ -205,10 +205,10 @@ SECTION_CHARS = {
     "META": 30_000,
     EVENTS_TITLE: 100_000,
 }
-SHAREABLE = (
-    "Shareable report: other people's text (emails, web pages, emails to others) is left out; email addresses,"
-    " one-time codes, tokens in links and the words you removed from your messages are masked. Read it before you"
-    " share it."
+SHAREABLE = (  # 0.42.3: it named what was masked before 0.40.3 only (phone numbers, IBANs) and 0.42.3 (streets)
+    "Shareable report: other people's text (emails, web pages, emails to others) is left out; email addresses, phone"
+    " numbers, IBANs, street addresses, one-time codes, tokens in links and the words you removed from your messages"
+    " are masked. Read it before you share it."
 )
 PRIVATE = (
     "PRIVATE report: it holds other people's emails and the web text the agent read. Don't share it, and don't paste"

@@ -10,6 +10,7 @@ Tests from 0.34.0 (formerly test_fixes_0340.py)."""
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -22,8 +23,10 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.agent import obligations, plan, store, templates  # noqa: E402
 from app.agent.fake_llm import Reply, ToolCalls  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
+from app.config import LoadedSettings, Settings  # noqa: E402
 from tests.agent_helpers import rows  # noqa: E402
-from tests.api_helpers import post  # noqa: E402
+from tests.api_helpers import post, refused_but_to_the_owner  # noqa: E402
+from tests.owner.test_owner_identity import OWNER, TABLET, as_user  # noqa: E402
 from tests.plan.test_cycle_line import cycle, lined, now, take  # noqa: E402
 from tests.ventures.test_ventures import JOURNAL  # noqa: E402
 
@@ -266,3 +269,44 @@ def test_the_plan_tab_shows_the_tree_and_takes_a_pin_and_a_worth(ingress_client:
     assert "-- plan_nodes" in report and "-- plan_words" in report
     assert "-- plan tree: the ranking now (the next cycle takes: pin)" in report  # the demand note is still pinned
     assert ingress_client.get("api/dashboard").json()["plan_stamp"] == ingress_client.get("api/plan").json()["stamp"]
+
+
+def test_the_owner_drops_a_product_over_http_and_no_one_else_can(
+    client_factory: Callable[..., Iterator[TestClient]],
+) -> None:
+    """0.42.3: POST api/plan/products/{id}/drop through the app (its logic: test_tree_steers)."""
+    with client_factory(LoadedSettings(Settings(owner_user_ids=(OWNER,)))) as client:
+        agent = client.app.state.ember.agent  # type: ignore[attr-defined]
+        cycle(agent)
+        book = project(agent, *BOOK)
+        keep(agent)
+        me = as_user(OWNER)
+        [product] = client.get("api/plan", headers=me).json()["projects"][0]["products"]
+        path = f"api/plan/products/{product['id']}/drop"
+        refused_but_to_the_owner(client, path, {"why": "No demand."}, me, as_user(TABLET, "Wall tablet"))
+        for body, field, error in (
+            ({"reason": "No demand."}, "reason", "unknown field 'reason'"),
+            ({"why": 7}, "why", "why must be text"),
+            ({"why": "x" * 301}, "why", "keep why under 300 characters"),
+            (None, "body", "send a JSON object"),
+        ):
+            wrong = post(client, path, body, me)
+            assert (wrong.status_code, wrong.json()) == (422, {"error": error, "field": field}), body
+        step = product["stages"][0]["steps"][0]["id"]  # a step of it, not a product
+        for node in (9999, step):
+            unknown = post(client, f"api/plan/products/{node}/drop", {}, me)
+            assert (unknown.status_code, unknown.json()) == (404, {"error": "no such product", "field": "id"})
+        assert post(client, "api/plan/products/0/drop", {}, me).status_code == 422  # not an id
+        assert rows(agent, f"SELECT status FROM projects WHERE id = {book}") == [{"status": "active"}]  # still
+        assert rows(agent, "SELECT * FROM plan_changes WHERE actor = 'owner'") == []
+        dropped = post(client, path, {"why": "No demand."}, me)
+        assert (dropped.status_code, dropped.json()) == (200, {"id": product["id"], "line": book, "status": "dropped"})
+        assert rows(agent, f"SELECT status FROM projects WHERE id = {book}") == [{"status": "abandoned"}]
+        assert client.get("api/plan", headers=me).json()["projects"][0]["products"][0]["status"] == "dropped"
+        assert rows(agent, f"SELECT actor, action, why FROM plan_changes WHERE node_id = {product['id']}") == [
+            {"actor": "owner", "action": "drop", "why": f"Stefan ({OWNER}): No demand."}
+        ]
+        events = [e["message"] for e in client.get("api/dashboard", headers=me).json()["events"]]
+        assert f"Stefan ({OWNER}) dropped it: product line #{book} in the plan" in events
+        again = post(client, path, {}, me)
+        assert (again.status_code, again.json()) == (409, {"error": "this product is dropped", "field": "id"})

@@ -3,6 +3,24 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.42.3
+
+Small fixes your owner picked from what was still open after the codebase analysis of 0.40.1. What changes for you:
+
+- When Printify answers "too many requests" (or "down for now") before anything changed there (a product's picture
+  not uploaded yet, a change not made yet), your owner's approval of the product or change is kept, and Ember's code
+  tries it again when Printify says, at most 3 times, as for Etsy, Pinterest and Bluesky. Don't propose it again while
+  it waits.
+- An approved request that hasn't gone out within 7 days now comes back as failed even while Ember's code can't
+  carry it out at all (an account disconnected, Bluesky refusing the login, Printify without a shop, the mailbox
+  unreadable or switched off), with the same words as before. Propose it again if it still fits.
+- Your owner's daily digest counts a request of yours that went back unsent apart, no longer as an action that
+  failed. Nothing changes for you.
+- A title or last will that holds a street address stays off your live page ("a street address"), even without its
+  postcode, and the shareable diagnostics report masks street addresses.
+- An answer whose usage names the dated version of your model (claude-sonnet-5-20260101 for claude-sonnet-5) is no
+  longer charged at its worst case.
+
 ## 0.42.2
 
 What was left of your owner's codebase analysis of 0.40.1 that could be finished small. What changes for you:

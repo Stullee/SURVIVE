@@ -423,6 +423,30 @@ def test_the_approved_post_goes_up_with_the_list_and_the_undo_takes_it_down(data
         assert audit.feed(conn, agent.scope())[1]["undo"]["why_not"] == "it is undone"
 
 
+def test_while_the_agent_is_paused_the_owners_undo_of_a_post_goes_through_and_a_new_post_waits(data_dir: Path) -> None:
+    """0.42.3: the owner's Undo is accepted while the agent is paused (0.15.0: Owner.undo), and a paused round carried
+    out every publisher's Undos but the website's: the page stayed up until Resume, its card saying only "waiting"."""
+    agent, _ = published(data_dir)
+    agent.roots()[0].write("blog/other.md", post_source(slug="anderer-beitrag"))
+    assert call(blog_context(agent), "propose_blog_post", {"source": "blog/other.md", "reason": "More."}).ok
+    second = rows(agent, "SELECT MAX(id) AS id FROM approvals WHERE executor = 'site_post'")[0]["id"]
+    assert owner(agent).decide(second, {"decision": "approve"}, "Owner").status == 200
+    agent.economy.set_paused(True)
+    entry = next(e for e in agent.dashboard()["audit"]["feed"] if e["class"] == "site.publish_post")
+    reply = owner(agent).undo(entry["id"], "Owner")
+    assert reply.status == 200, reply.body
+    undo = int(reply.body["approval_id"])
+    assert agent.executor_blocked() == "The agent is paused"
+    assert agent.execute_approved() == [(undo, "done")]  # the Undo only: the approved post waits for Resume
+    server = agent.blog.fake
+    assert server is not None
+    assert "blog/bewerbung-nachfassen.html" not in server.files and "blog/anderer-beitrag.html" not in server.files
+    assert rows(agent, f"SELECT status FROM approvals WHERE id = {second}") == [{"status": "approved"}]
+    agent.economy.set_paused(False)
+    assert agent.execute_approved() == [(second, "done")]
+    assert "blog/anderer-beitrag.html" in server.files
+
+
 def test_an_update_keeps_its_date_and_its_undo_puts_the_old_version_back(data_dir: Path) -> None:
     agent, first = published(data_dir)
     old_page = agent.blog.fake.files["blog/bewerbung-nachfassen.html"]

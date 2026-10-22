@@ -445,14 +445,15 @@ def test_each_executor_runs_on_its_own(data_dir: Path, imap: type[FakeIMAP], smt
     agent._blog_run = runs("blog", [(9, "uploaded")])  # type: ignore[method-assign]
     assert agent.execute_approved() == [(7, "created"), (8, "posted"), (9, "uploaded")]
     assert ran == ["emails", "etsy", "pins", "bluesky", "printify", "blog"]
-    # While the agent is paused only the owner's undos run: each on its own too
+    # While the agent is paused only the owner's undos run: each on its own too (0.42.3: the website's as well)
     ran.clear()
     agent.executor_blocked = lambda: "paused"  # type: ignore[method-assign]
     agent.undo_blocked = lambda: None  # type: ignore[method-assign]
     agent.publisher.run = runs("etsy")  # type: ignore[method-assign]
     agent.pins.run = runs("pins", [(10, "undone")])  # type: ignore[method-assign]
-    assert agent.execute_approved() == [(10, "undone"), (8, "posted")]
-    assert ran == ["etsy", "pins", "printify", "bluesky"]
+    agent._blog_run = runs("blog", [(11, "undone")])  # type: ignore[method-assign]
+    assert agent.execute_approved() == [(10, "undone"), (8, "posted"), (11, "undone")]
+    assert ran == ["etsy", "pins", "printify", "bluesky", "blog"]
 
 
 # --- 3. CSS comments are stripped in linear time, under the cap (4.12) ---

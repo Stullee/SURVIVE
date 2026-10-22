@@ -280,7 +280,8 @@ def _without_pictures(node: Any, found: list[int]) -> Any:
 
 
 class OfflineTransport:
-    """Used until the model transports exist: counts tokens, never sends anything."""
+    """What a live agent without an Anthropic API key is given (agent.service.select_transport): counts tokens, never
+    sends anything."""
 
     def __init__(self, simulated: bool) -> None:
         self.simulated = simulated
@@ -301,7 +302,7 @@ class OfflineTransport:
         raise FilesError("files can't be deleted without a model transport")
 
     def send(self, request: Mapping[str, Any]) -> Outcome:
-        return NotSent("model calls are not available in this version yet")
+        return NotSent("model calls need the Anthropic API key in the app's options")  # 0.42.3: it said "not yet"
 
 
 # --- results ---
@@ -1750,8 +1751,12 @@ class MeteredModel:
                 if not isinstance(item, Mapping):
                     notes.append("unreadable usage iteration")
                     continue
-                if item.get("type") not in (None, "message") or item.get("model") not in (None, res.model):
-                    notes.append(f"usage iteration of type {item.get('type')!r} on {item.get('model') or res.model}")
+                # 0.42.3 (analysis-0.40.1 audit): an iteration may name the requested alias's dated snapshot, as the
+                # answer may (_same_model); compared exactly, it charged an ordinary call at its worst case
+                named = item.get("model")
+                other = named is not None and not (isinstance(named, str) and _same_model(named, res.model))
+                if item.get("type") not in (None, "message") or other:
+                    notes.append(f"usage iteration of type {item.get('type')!r} on {named or res.model}")
                 summed = summed.plus(Usage.from_api(item, _remainder_ttl(res.plan)))
             usage = Usage(**{k: max(v, getattr(summed, k)) for k, v in asdict(usage).items()})
         for key, value in raw.items():

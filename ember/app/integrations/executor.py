@@ -11,7 +11,8 @@ first:
    kill switch was on, the app was down or reading failed, and the first round after that sent before it read.
 3. A recipient who asked not to get emails: the request is closed as failed. 0.40.3: one who wrote again after the
    request, in an email the agent hasn't opened, waits until it has (``mailstore.unread_reply``), and one approved
-   more than APPROVED_DAYS ago that never began is closed unsent (analysis-0.40.1 codebase, M1 and M2).
+   more than APPROVED_DAYS ago that never began is closed unsent (analysis-0.40.1 codebase, M1 and M2); 0.42.3:
+   also when the run doesn't come this far (``sweep``).
 4. The email is built from the approved action (the owner's text if approved with changes), with a footer
    the model can't remove: plain text, one recipient, no copies, no attachments.
 5. A 'running' row in ``email_actions`` is committed before anything is sent, and the approval is re-checked
@@ -87,6 +88,11 @@ STALE = (
 
 def _cap(text: str | None, limit: int) -> str | None:
     return text[:limit] if text else None
+
+
+def _aged(row: sqlite3.Row, now: datetime) -> bool:
+    """0.40.3 (M2): whether an approved email was approved more than APPROVED_DAYS before ``now``."""
+    return bool(row["decided_at"]) and now - from_iso(row["decided_at"]) > timedelta(days=APPROVED_DAYS)
 
 
 def footer(settings: Settings, unlocked: bool = False) -> str:
@@ -335,7 +341,7 @@ class Executor:
                 return "skipped"  # cancelled or decided meanwhile
             if connectors.halted(conn):
                 return connectors.HALTED  # 0.37.3: the kill switch came on while this round sent
-            if row["decided_at"] and now - from_iso(row["decided_at"]) > timedelta(days=APPROVED_DAYS):
+            if _aged(row, now):
                 return self._failed(conn, approval_id, STALE.format(days=APPROVED_DAYS))  # 0.40.3 (M2): too old
             if sent_today(conn, self.clock, scope) >= self.settings.email_daily_limit:
                 return "waiting_limit"
@@ -392,6 +398,27 @@ class Executor:
         what = "was recorded, not sent (dry run)" if result.status == "simulated" else "was sent"
         events.record(self.db, "info", "email", f"The approved email of request #{approval_id} {what}")
         return result.status
+
+    def sweep(self) -> list[tuple[int, str]]:
+        """0.42.3 (analysis-0.40.1 audit): every approved email not begun within APPROVED_DAYS of its approval is closed
+        unsent, as ``_one`` closes it, also when ``run`` doesn't come that far: while Ember's mailbox can't be read
+        (every email waits for it) or without a mailbox (email switched off), its card said "approved" until then. In
+        one transaction that reads each email's status and row again, so it never closes one ``_one`` began; nothing
+        while the kill switch is on (``_one`` reads it first). Returns (approval id, 'failed') for each it closed."""
+        now = self.clock.now()
+        where, params = self.scope().where()
+        with self.db.transaction() as conn:
+            if connectors.halted(conn):
+                return []
+            approved = conn.execute(
+                f"SELECT * FROM approvals WHERE {where} AND executor = 'email' AND status IN {APPROVED}"
+                " AND NOT EXISTS (SELECT 1 FROM email_actions x WHERE x.approval_id = approvals.id) ORDER BY id",
+                params,
+            ).fetchall()
+            aged = [int(r["id"]) for r in approved if _aged(r, now)]
+            for approval_id in aged:
+                self._failed(conn, approval_id, STALE.format(days=APPROVED_DAYS))
+        return [(approval_id, "failed") for approval_id in aged]
 
     def _after(self, approval_id: int, status: str, error: str) -> str:
         note = UNCLEAR.format(error=error[:200]) if status == "unclear" else f"Not sent: {error}"

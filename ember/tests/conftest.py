@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from app import db as dbmod
 from app.agent import plan
 from app.config import LoadedSettings, Settings, load_settings
+from app.economy.clock import Clock
 from app.main import create_app
 from tests.economy_helpers import close_databases
 
@@ -121,9 +122,14 @@ def write_options(data_dir: Path) -> Callable[[dict], Path]:
 def client_factory() -> Callable[..., Iterator[TestClient]]:
     @contextmanager
     def make(
-        loaded: LoadedSettings | None = None, *, dev_mode: bool = False, client: tuple[str, int] = INGRESS
+        loaded: LoadedSettings | None = None,
+        *,
+        dev_mode: bool = False,
+        client: tuple[str, int] = INGRESS,
+        clock: Clock | None = None,
     ) -> Iterator[TestClient]:
-        app = create_app(loaded or load_settings(), dev_mode=dev_mode)
+        """``clock`` (0.42.3): the app's, a FakeClock to build it at a set time; the real clock if not given."""
+        app = create_app(loaded or load_settings(), dev_mode=dev_mode, clock=clock)
         with TestClient(app, client=client) as test_client:
             yield test_client
 

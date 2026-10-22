@@ -562,6 +562,21 @@ other texts) could freeze Ember for seconds; every pattern in Ember's code is no
 timed against that. `plan.py` and `tools.py` are split into smaller modules,
 with no change in behaviour. Ember is MIT-licensed, and releases aren't tagged.
 
+0.42.3: small fixes from what was still open after the analysis. A Printify
+product or change that Printify rate-limits before anything changed stays
+approved and is retried, as listings, pins and posts already were. A request
+that can't go out because an account is disconnected (or Bluesky refuses the
+login, Printify has no shop, the mailbox can't be read) no longer sits at
+"approved": after 7 days it closes as failed, like one held by a pause. The
+daily digest says "1 request went back unsent" for those instead of "1 failed".
+The shareable diagnostics report also hides street addresses ("Musterstraße 12,
+80331 München", "12 Main Street, Springfield, IL 62701") and leaves prices,
+ids, years and counts as they are. Your Undo of a blog post now goes through
+while Ember is paused, as every other Undo did. A call whose usage names the
+dated version of its model is no longer charged at its worst case. And tests:
+every refusal of the money guard, the kill switch pressed mid-round for every
+channel, and three dashboard routes over HTTP.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
@@ -676,14 +691,18 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   anything changed (no draft, no part of a change, no new board, no post), an
   approved listing, change, pin or post stays approved and Ember's code tries it
   again when the service said (1 minute to 6 hours later, at most 3 times),
-  through every check again (`ember/app/integrations/retry.py`). Nothing that may
-  have changed something is tried again, nor anything an unlock approved, nor an
-  email. 0.42.2: like an email, an approved listing, change, pin, post, Printify
-  product or blog page that Ember's code hasn't begun within 7 days of its
-  approval (also one still waiting for its service) isn't carried out at all:
-  it is closed unsent, and the agent proposes it again if it still fits
-  (`ember/app/integrations/connectors.py`). Nothing that began ages out, nor
-  the owner's Undo. A card whose file changed since it was proposed says so,
+  through every check again (`ember/app/integrations/retry.py`); 0.42.3: a
+  Printify product or change too, when Printify refuses its first call (a
+  product's picture upload, a change's new design or the change itself). Nothing
+  that may have changed something is tried again, nor anything an unlock
+  approved, nor an email. 0.42.2: like an email, an approved listing, change,
+  pin, post, Printify product or blog page that Ember's code hasn't begun within
+  7 days of its approval (also one still waiting for its service) isn't carried
+  out at all: it is closed unsent, and the agent proposes it again if it still fits
+  (`ember/app/integrations/connectors.py`); 0.42.3: also while its executor
+  can't run (an account disconnected, a refused login, no Printify shop, an
+  unreadable mailbox), as the round's last step. Nothing that began ages out,
+  nor the owner's Undo. A card whose file changed since it was proposed says so,
   and its Approve is refused. The kill switch stops whatever
   Ember's code hasn't begun, also in the middle of a round (0.37.3). A Reddit
   post becomes a link the owner opens and posts from their own account; a KDP

@@ -433,13 +433,14 @@ class Publisher:
 
     # --- carrying out ---
 
-    def run(self) -> list[tuple[int, str]]:
-        """Upload the approved pages (and carry out the owner's Undos) that are due."""
+    def run(self, undos: bool = False) -> list[tuple[int, str]]:
+        """Upload the approved pages (and carry out the owner's Undos) that are due; with ``undos`` (0.42.3: while the
+        agent is paused or waits for money, as the other publishers since 0.15.0) only the owner's Undos."""
         if not self.settings.blog_enabled or not self._lock.acquire(blocking=False):
             return []
         try:
             scope = self.scope()
-            due = self._approved(scope)
+            due = [(a, e) for a, e in self._approved(scope) if not undos or e == RESTORE]
             if not due or not self._may_try():
                 return []
             try:
