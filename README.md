@@ -562,6 +562,21 @@ other texts) could freeze Ember for seconds; every pattern in Ember's code is no
 timed against that. `plan.py` and `tools.py` are split into smaller modules,
 with no change in behaviour. Ember is MIT-licensed, and releases aren't tagged.
 
+0.42.3: small fixes from what was still open after the analysis. A Printify
+product or change that Printify rate-limits before anything changed stays
+approved and is retried, as listings, pins and posts already were. A request
+that can't go out because an account is disconnected (or Bluesky refuses the
+login, Printify has no shop, the mailbox can't be read) no longer sits at
+"approved": after 7 days it closes as failed, like one held by a pause. The
+daily digest says "1 request went back unsent" for those instead of "1 failed".
+The shareable diagnostics report also hides street addresses ("Musterstraße 12,
+80331 München", "12 Main Street, Springfield, IL 62701") and leaves prices,
+ids, years and counts as they are. Your Undo of a blog post now goes through
+while Ember is paused, as every other Undo did. A call whose usage names the
+dated version of its model is no longer charged at its worst case. And tests:
+every refusal of the money guard, the kill switch pressed mid-round for every
+channel, and three dashboard routes over HTTP.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
