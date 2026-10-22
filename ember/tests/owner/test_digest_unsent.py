@@ -94,6 +94,21 @@ def test_a_listing_that_aged_out_went_back_unsent_and_no_action_failed(data_dir:
     assert agent.dashboard()["audit"]["digest"]["text"] == text
 
 
+def test_a_listing_the_sweep_closed_while_etsy_was_disconnected_went_back_unsent(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """0.42.3: the sweep closes what no executor can begin (close_stale) with lapse's words, so the digest counts it
+    as went back too, not as a failed action."""
+    agent, request = listing(data_dir)
+    assert owner(agent).decide(request, {"decision": "approve"}, "Owner").status == 200
+    monkeypatch.setattr(agent.publisher, "shop", lambda: None)  # the owner's Etsy connection is gone: it never begins
+    agent.clock.advance(days=DAYS, minutes=1)
+    assert (request, "failed") in agent.execute_approved()
+    text, data = today(agent)
+    assert (data["actions"], data["trouble"], data["aged_out"]) == ({}, {}, {"owner": 1})
+    assert WENT_BACK in text
+
+
 def test_an_approved_email_that_aged_out_went_back_unsent(data_dir: Path) -> None:
     agent, _ = make_agent(data_dir, proposing(REPLY))
     agent.run_cycle("schedule")
