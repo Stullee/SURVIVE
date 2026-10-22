@@ -42,15 +42,17 @@ import tempfile
 import threading
 import zipfile
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import diagnostics, events, paths
+from . import diagnostics, events, paths, scorecard
 from .agent.sandbox import SandboxError, kind_of
 from .agent.store import context_text
 from .agent.tools_limits import LIBRARY_TOOLS
 from .db import TEXT_DAYS, utcnow
+from .economy.clock import Clock
 from .economy.metering import RESEARCH, STUDY
 from .logging_setup import redact
 from .version import app_version, build_id
@@ -61,11 +63,17 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 KEEP = 2  # exports kept in /data/exports, the newest
-PRODUCT_DAYS = 35  # her files changed in these days go in: the week evaluated and the four before it
+BRIEF_PATH = paths.APP_DIR / "evaluation_brief.md"  # 0.44.0: EVALUATE.md, what the evaluator is to do with it
+PRODUCT_DAYS = 35  # her files changed in these days go in at most: the week evaluated and the four before it
+FILE_DAYS = (0, 7, PRODUCT_DAYS)  # 0.44.0: the owner's choice: none of her files, the week's, or the five weeks'
 PRODUCT_BYTES = 300 * 1024 * 1024  # of them, the newest first
+# 0.44.0: a zip of her files holds at most this, before compression (her products hardly compress): an AI chat takes
+# attachments of 30 MB, and live, the first export was one zip of 66 MB
+PART_BYTES = 25 * 1024 * 1024
 WORKSPACE_ENTRIES = 10_000  # the most a walk of her workspace meets (diagnostics.WORKSPACE_ALL)
 BATCH = 500  # rows masked at a time, each batch its own transaction
-NAME = re.compile(r"ember-evaluation-\d{8}T\d{6}Z(?:-[0-9A-Za-z.+_-]{1,40})?\.zip")
+# An export's zips: its time, the version that made it and its part (0.43.0 made one zip, without a part)
+NAME = re.compile(r"ember-evaluation-(\d{8}T\d{6}Z)(?:-[0-9A-Za-z.+_]{1,40})?(?:-(data|files-\d{1,3}))?\.zip")
 # The columns whose text is other people's or the owner's library's: only their length goes in.
 LEFT_OUT = {
     "emails": ("subject", "body", "attachments"),
@@ -100,13 +108,45 @@ class ExportError(ValueError):
     """An export that can't be made now; the message is for the owner."""
 
 
+@dataclass(frozen=True)
+class Options:
+    """0.44.0: what the owner chose to put in: her files changed in the last ``files_days`` (0: none), and what each
+    plan saw (``contexts``). The rest is small and always goes in."""
+
+    files_days: int = 7
+    contexts: bool = True
+
+    @classmethod
+    def of(cls, body: Any) -> Options:
+        """The options of a request's body ({} or none: the defaults). Raises ExportError for one it can't take."""
+        if body is None:
+            return cls()
+        if not isinstance(body, dict) or set(body) - {"files_days", "contexts"}:
+            raise ExportError('send {"files_days": 0, 7 or 35, "contexts": true or false}')
+        days = body.get("files_days", cls.files_days)
+        contexts = body.get("contexts", cls.contexts)
+        if isinstance(days, bool) or days not in FILE_DAYS:
+            raise ExportError(f"files_days is one of {', '.join(str(d) for d in FILE_DAYS)}")
+        if not isinstance(contexts, bool):
+            raise ExportError("contexts is true or false")
+        return cls(days, contexts)
+
+
+DEFAULT = Options()
+
+
 def exports_dir() -> Path:
     return paths.data_dir() / "exports"
 
 
-def build(state: AppState, progress: Callable[[str], None] | None = None) -> Path:
-    """Makes an export in exports_dir() and returns its path; ``progress`` hears each step's name. Raises ExportError
-    (no database) and anything the copy, the masking or the disk raise; a failed export leaves nothing behind."""
+def build(state: AppState, progress: Callable[[str], None] | None = None, options: Options = DEFAULT) -> list[Path]:
+    """Makes an export in exports_dir() and returns its zips, the data first; ``progress`` hears each step's name.
+    Raises ExportError (no database) and anything the copy, the masking or the disk raise; a failed export leaves
+    nothing behind.
+
+    0.44.0: in parts, so that each fits an AI chat's attachment: ``…-data.zip`` (the manifest, the database, the
+    scorecard, the report, her memory and the forms) and ``…-files-1.zip``, ``…-files-2.zip`` … with her files, the
+    newest first, each at most PART_BYTES."""
     if state.db_error is not None:
         raise ExportError(f"the database is unavailable ({state.db_error})")
     say = progress or (lambda step: None)
@@ -114,46 +154,117 @@ def build(state: AppState, progress: Callable[[str], None] | None = None) -> Pat
     folder.mkdir(parents=True, exist_ok=True)
     _tidy(folder, KEEP - 1)
     now = datetime.now(UTC)
-    version = re.sub(r"[^0-9A-Za-z.+_-]", "", app_version())[:40]
-    name = f"ember-evaluation-{now.strftime('%Y%m%dT%H%M%SZ')}" + (f"-{version}" if version else "") + ".zip"
+    version = re.sub(r"[^0-9A-Za-z.+_]", "", app_version())[:40]
+    base = f"ember-evaluation-{now.strftime('%Y%m%dT%H%M%SZ')}" + (f"-{version}" if version else "")
     work = Path(tempfile.mkdtemp(prefix=".work-", dir=folder))
     try:
         say("copying the database")
         copy = work / "ember.db"
         _copy_database(state.db.path, copy)
+        say("computing the scorecard")
+        texts = _scorecard(state, copy)  # from the copy before it is masked: numbers only
         say("masking the database")
         mask = _mask_fn(state)
-        tables = mask_database(copy, mask)
+        tables = mask_database(copy, mask, contexts=options.contexts)
         say("writing the report")
-        files: dict[str, bytes] = {"report.txt": diagnostics.report(state).encode()}
+        texts["report.txt"] = diagnostics.report(state).encode()
         agent = state.agent
         left_out: list[dict[str, Any]] = []
+        chosen: list[Any] = []
+        workspace = None
         if agent is not None:
-            say("collecting her memory and files")
             for key, text in agent.memory_files().items():
-                files[f"memory/{key}.md"] = mask(text).encode()
+                texts[f"memory/{key}.md"] = mask(text).encode()
             workspace, _ = agent.roots()
-            since = (now - timedelta(days=PRODUCT_DAYS)).timestamp()
-            for path, data in _workspace_files(workspace, since, mask, left_out):
-                files[f"workspace/{path}"] = data
-        files["outside.csv"] = OUTSIDE_CSV.encode()
-        files["week.csv"] = WEEK_CSV.encode()
-        say("packing the zip")
-        manifest = _manifest(state, now, copy, tables, files, left_out, agent is not None)
-        part = folder / f".{name}.part"
-        with zipfile.ZipFile(part, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zipped:
+            if options.files_days:
+                since = (now - timedelta(days=options.files_days)).timestamp()
+                chosen = _workspace_files(workspace, since, left_out)
+        texts["outside.csv"] = OUTSIDE_CSV.encode()
+        texts["week.csv"] = WEEK_CSV.encode()
+        listed: list[dict[str, Any]] = []
+        names: list[str] = []
+        groups = _parts(chosen)
+        for number, group in enumerate(groups, start=1):
+            say(f"packing her files ({number} of {len(groups)})")
+            name = f"{base}-files-{number}.zip"
+            with _zip(work / name) as zipped:
+                for entry in group:
+                    try:
+                        data = _file(workspace, entry, mask)
+                    except SandboxError as exc:  # deleted or replaced while the export read it
+                        left_out.append({"path": entry.path, "bytes": entry.size, "why": f"unreadable: {exc}"})
+                        continue
+                    zipped.writestr(f"workspace/{entry.path}", data)
+                    listed.append(_listed(f"workspace/{entry.path}", data, name))
+            names.append(name)
+        say("packing the data")
+        data_name = f"{base}-data.zip"
+        brief = _brief(state, now, [data_name, *names], options, texts.get("scorecard.json"))
+        texts = {"EVALUATE.md": brief, **texts}  # 0.44.0: the evaluator's brief, the first file of the data
+        listed = [_listed(path, data, data_name) for path, data in texts.items()] + listed
+        parts = [
+            {
+                "name": data_name,
+                "holds": "EVALUATE.md, the manifest, ember.db, the scorecard, the report, memory/, the forms",
+            }
+        ]
+        parts += [{"name": n, "bytes": (work / n).stat().st_size, "holds": "her files"} for n in names]
+        manifest = _manifest(state, now, copy, tables, listed, left_out, agent is not None, parts, options)
+        with _zip(work / data_name) as zipped:
+            zipped.writestr("EVALUATE.md", texts.pop("EVALUATE.md"))  # the first thing an evaluator opens
             zipped.writestr("manifest.json", json.dumps(manifest, indent=1, ensure_ascii=False))
             zipped.write(copy, "ember.db")
-            for path, data in files.items():
+            for path, data in texts.items():
                 zipped.writestr(path, data)
-        target = folder / name
-        os.replace(part, target)
+        made = [folder / name for name in (data_name, *names)]
+        for name in reversed([data_name, *names]):  # the data last: an export is listed by it once whole
+            os.replace(work / name, folder / name)
     finally:
         shutil.rmtree(work, ignore_errors=True)
-        with contextlib.suppress(OSError):
-            (folder / f".{name}.part").unlink(missing_ok=True)
     _tidy(folder, KEEP)
-    return target
+    return made
+
+
+@contextlib.contextmanager
+def _zip(path: Path) -> Iterator[zipfile.ZipFile]:
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zipped:
+        yield zipped
+
+
+def _listed(path: str, data: bytes, part: str) -> dict[str, Any]:
+    return {"path": path, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(), "part": part}
+
+
+def _brief(state: AppState, now: datetime, zips: list[str], options: Options, card: bytes | None) -> bytes:
+    """0.44.0: EVALUATE.md, the evaluator's brief (evaluation_brief.md), with this export's facts: when and by which
+    version it was made, its zips, the owner's options and the week to evaluate (the scorecard's newest whole one)."""
+    weeks = json.loads(card)["weeks"] if card else []
+    whole = [w for w in weeks if w["complete"]] or weeks
+    week = f"the week {whole[-1]['from']} to {whole[-1]['to']}" if whole else "the newest week in her records"
+    files = f"her files changed in the last {options.files_days} days" if options.files_days else "none of her files"
+    facts = {
+        "{{made_at}}": now.strftime("%Y-%m-%d %H:%M UTC"),
+        "{{version}}": app_version(),
+        "{{mode}}": "a dry run" if state.loaded.settings.dry_run else "live",
+        "{{parts}}": ", ".join(f"`{name}`" for name in zips),
+        "{{options}}": files + (", what each plan saw" if options.contexts else ", not what each plan saw"),
+        "{{week}}": week,
+    }
+    text = BRIEF_PATH.read_text(encoding="utf-8")
+    for marker, fact in facts.items():
+        text = text.replace(marker, fact)
+    return text.encode()
+
+
+def _scorecard(state: AppState, copy: Path) -> dict[str, bytes]:
+    """0.44.0: scorecard.json and scorecard.md of the copy, in the owner's time zone, at the app's clock."""
+    clock = state.economy.clock if state.economy is not None else Clock()
+    conn = sqlite3.connect(copy)
+    conn.row_factory = sqlite3.Row
+    try:
+        return scorecard.files(conn, "dry_run" if state.loaded.settings.dry_run else "live", clock.now(), clock.tz)
+    finally:
+        conn.close()
 
 
 def _copy_database(source: Path, target: Path) -> None:
@@ -176,9 +287,10 @@ def _mask_fn(state: AppState) -> Callable[[str], str]:
     return lambda text: masker(redact(text))
 
 
-def mask_database(path: Path, mask: Callable[[str], str]) -> dict[str, dict[str, int]]:
+def mask_database(path: Path, mask: Callable[[str], str], *, contexts: bool = True) -> dict[str, dict[str, int]]:
     """Masks the database copy at ``path`` in place for sharing (see the module's docstring), and returns each table's
-    rows: in all, and live and dry run where it has a mode."""
+    rows: in all, and live and dry run where it has a mode. Without ``contexts`` (0.44.0, the owner's option), what
+    each plan saw is left out (NULL, as once pruned; its length stays)."""
     conn = sqlite3.connect(path, isolation_level=None)
     conn.row_factory = sqlite3.Row
     try:
@@ -190,6 +302,8 @@ def mask_database(path: Path, mask: Callable[[str], str]) -> dict[str, dict[str,
             conn.execute(f'DROP TRIGGER "{trigger}"')
         conn.execute("DELETE FROM meta WHERE key LIKE 'secret.%'")  # the redaction's salt
         conn.execute("DELETE FROM redactions")  # the removed words' salted hashes
+        if not contexts:
+            conn.execute("UPDATE plan_contexts SET context = NULL")
         purposes = {int(r[0]): str(r[1]) for r in conn.execute("SELECT id, purpose FROM llm_calls")}
         names = [
             str(r[0])
@@ -328,30 +442,43 @@ def _counts(conn: sqlite3.Connection, table: str) -> dict[str, int]:
     return counts
 
 
-def _workspace_files(
-    workspace: Any, since: float, mask: Callable[[str], str], left_out: list[dict[str, Any]]
-) -> Iterator[tuple[str, bytes]]:
-    """Her files changed since ``since`` (a timestamp), the newest first up to PRODUCT_BYTES: a product's bytes as
-    they are, a text file masked. What doesn't go in is added to ``left_out`` with why."""
+def _workspace_files(workspace: Any, since: float, left_out: list[dict[str, Any]]) -> list[Any]:
+    """Her files changed since ``since`` (a timestamp), the newest first up to PRODUCT_BYTES (sandbox entries; read
+    when they are packed, so a Raspberry Pi never holds them all at once). What doesn't go in is added to ``left_out``
+    with why."""
     files = [e for e in workspace.walk(WORKSPACE_ENTRIES).entries if not e.is_dir and e.modified >= since]
     room = PRODUCT_BYTES
+    chosen = []
     for entry in sorted(files, key=lambda e: (-e.modified, e.path)):
-        kind = kind_of(entry.path)
-        why = None
-        if kind is None:
-            why = "neither a text nor a product file"
+        if kind_of(entry.path) is None:
+            left_out.append({"path": entry.path, "bytes": entry.size, "why": "neither a text nor a product file"})
         elif entry.size > room:
             why = f"the export's room for files ({paths.size_text(PRODUCT_BYTES)}) was used by newer ones"
-        if why is None:
-            try:
-                data = mask(workspace.read(entry.path)).encode() if kind == "text" else workspace.read_bytes(entry.path)
-            except SandboxError as exc:  # deleted or replaced while the export read it
-                why = f"unreadable: {exc}"
-            else:
-                room -= entry.size
-                yield entry.path, data
-                continue
-        left_out.append({"path": entry.path, "bytes": entry.size, "why": why})
+            left_out.append({"path": entry.path, "bytes": entry.size, "why": why})
+        else:
+            room -= entry.size
+            chosen.append(entry)
+    return chosen
+
+
+def _parts(entries: list[Any]) -> list[list[Any]]:
+    """The files in zips of at most PART_BYTES each, in their order (the newest first)."""
+    groups: list[list[Any]] = []
+    size = PART_BYTES
+    for entry in entries:
+        if size + entry.size > PART_BYTES and (not groups or groups[-1]):
+            groups.append([])
+            size = 0
+        groups[-1].append(entry)
+        size += entry.size
+    return groups
+
+
+def _file(workspace: Any, entry: Any, mask: Callable[[str], str]) -> bytes:
+    """A file of hers as the export packs it: a product's bytes as they are, a text file masked."""
+    if kind_of(entry.path) == "text":
+        return mask(workspace.read(entry.path)).encode()
+    return workspace.read_bytes(entry.path)
 
 
 def _manifest(
@@ -359,17 +486,21 @@ def _manifest(
     now: datetime,
     copy: Path,
     tables: dict[str, dict[str, int]],
-    files: dict[str, bytes],
+    files: list[dict[str, Any]],
     left_out: list[dict[str, Any]],
     agent: bool,
+    parts: list[dict[str, Any]],
+    options: Options,
 ) -> dict[str, Any]:
     """What the export holds and how to read it."""
     digest = hashlib.sha256()
     with copy.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
-    listed = [{"path": "ember.db", "bytes": copy.stat().st_size, "sha256": digest.hexdigest()}]
-    listed += [{"path": p, "bytes": len(d), "sha256": hashlib.sha256(d).hexdigest()} for p, d in files.items()]
+    listed = [
+        {"path": "ember.db", "bytes": copy.stat().st_size, "sha256": digest.hexdigest(), "part": parts[0]["name"]}
+    ]
+    listed += files
     schema = sqlite3.connect(copy)
     try:
         version = int(schema.execute("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").fetchone()[0])
@@ -384,8 +515,12 @@ def _manifest(
         "schema": version,
         "mode": "dry_run" if state.loaded.settings.dry_run else "live",
         "texts_since": (now - timedelta(days=TEXT_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "files_since": (now - timedelta(days=PRODUCT_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "options": {"files_days": options.files_days, "plan_contexts": options.contexts},
+        "files_since": (now - timedelta(days=options.files_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if options.files_days
+        else None,
         "how_to_read": list(HOW_TO_READ),
+        "parts": parts,
         "tables": tables,
         "files": listed,
         "files_left_out": left_out if agent else [{"path": "memory/, workspace/", "why": "the agent isn't running"}],
@@ -393,30 +528,48 @@ def _manifest(
 
 
 def _tidy(folder: Path, keep: int) -> None:
-    """The newest ``keep`` exports stay; older ones, and what an export cut short left, go."""
+    """The newest ``keep`` exports stay (all their parts); older ones, and what an export cut short left, go."""
     for leftover in [*folder.glob(".*.part"), *folder.glob(".work-*")]:
         if leftover.is_dir():
             shutil.rmtree(leftover, ignore_errors=True)
         else:
             leftover.unlink(missing_ok=True)
-    made = sorted(p for p in folder.iterdir() if NAME.fullmatch(p.name))
-    for old in made[: max(len(made) - keep, 0)]:
-        old.unlink(missing_ok=True)
+    exports = _exports()
+    for stamp in sorted(exports)[: max(len(exports) - keep, 0)]:
+        for old in exports[stamp]:
+            old.unlink(missing_ok=True)
+
+
+def _exports() -> dict[str, list[Path]]:
+    """Each export made, by its time: its zips, the data first."""
+    folder = exports_dir()
+    found: dict[str, list[Path]] = {}
+    for path in sorted(folder.iterdir()) if folder.is_dir() else []:
+        match = NAME.fullmatch(path.name)
+        if match:
+            found.setdefault(match[1], []).append(path)
+    for zips in found.values():
+        zips.sort(key=lambda p: _order(p.name))
+    return found
+
+
+def _order(name: str) -> tuple[int, int]:
+    """A part's place: the data (or an export of one zip) first, then the files by their number."""
+    part = (NAME.fullmatch(name) or [None, None, None])[2]
+    return (1, int(part.rpartition("-")[2])) if part and part.startswith("files") else (0, 0)
 
 
 def newest() -> dict[str, Any] | None:
-    """The newest export made: its name, size and when it was made, or None."""
-    folder = exports_dir()
-    if not folder.is_dir():
+    """The newest export made: when, its size and its zips (name and size, the data first), or None."""
+    exports = _exports()
+    if not exports:
         return None
-    made = sorted(p for p in folder.iterdir() if NAME.fullmatch(p.name))
-    if not made:
-        return None
-    info = made[-1].stat()
+    zips = exports[max(exports)]
+    sizes = [p.stat().st_size for p in zips]
     return {
-        "name": made[-1].name,
-        "bytes": info.st_size,
-        "made_at": datetime.fromtimestamp(info.st_mtime, UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "made_at": datetime.fromtimestamp(zips[0].stat().st_mtime, UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "bytes": sum(sizes),
+        "parts": [{"name": p.name, "bytes": size} for p, size in zip(zips, sizes, strict=True)],
     }
 
 
@@ -428,15 +581,15 @@ def path_of(name: str) -> Path | None:
     return path if path.is_file() else None
 
 
-def room_needed(state: AppState) -> int:
+def room_needed(state: AppState, options: Options = DEFAULT) -> int:
     """About the bytes an export takes while it is made: the database's copy twice (the copy and the zip) and her
     recent files once."""
     size = 0
     with contextlib.suppress(OSError):
         size = os.path.getsize(state.db.path)
     files = 0
-    if state.agent is not None:
-        since = (datetime.now(UTC) - timedelta(days=PRODUCT_DAYS)).timestamp()
+    if state.agent is not None and options.files_days:
+        since = (datetime.now(UTC) - timedelta(days=options.files_days)).timestamp()
         workspace, _ = state.agent.roots()
         files = sum(e.size for e in workspace.walk(WORKSPACE_ENTRIES).entries if not e.is_dir and e.modified >= since)
     return 2 * size + min(files, PRODUCT_BYTES) + 16 * 1024 * 1024
@@ -456,7 +609,7 @@ class Exporter:
     def building(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    def start(self, state: AppState) -> None:
+    def start(self, state: AppState, options: Options = DEFAULT) -> None:
         """Starts an export. Raises ExportError while one is being made, without a database, or when the disk would
         be left with less than Ember keeps free for its database."""
         with self._lock:
@@ -464,13 +617,17 @@ class Exporter:
                 raise ExportError("an export is being made")
             if state.db_error is not None:
                 raise ExportError(f"the database is unavailable ({state.db_error})")
-            needed = room_needed(state)
+            needed = room_needed(state, options)
             try:
                 free = paths.free_bytes()
             except OSError as exc:
                 raise ExportError(f"the free space on the disk can't be read ({type(exc).__name__})") from None
-            made = _made()
-            freed = sum(p.stat().st_size for p in made[: max(len(made) - (KEEP - 1), 0)])  # the ones it deletes
+            exports = _exports()
+            freed = sum(  # the exports it deletes first
+                p.stat().st_size
+                for stamp in sorted(exports)[: max(len(exports) - (KEEP - 1), 0)]
+                for p in exports[stamp]
+            )
             if free + freed - needed < paths.FREE_FLOOR_BYTES:
                 raise ExportError(
                     f"it needs about {paths.size_text(needed)} while it is made; the device has "
@@ -478,12 +635,14 @@ class Exporter:
                     f"{paths.size_text(paths.FREE_FLOOR_BYTES)} free for its database: free some space first"
                 )
             self.started_at, self.step, self.error = utcnow(), "starting", None
-            self._thread = threading.Thread(target=self._run, args=(state,), name="evaluation-export", daemon=True)
+            self._thread = threading.Thread(
+                target=self._run, args=(state, options), name="evaluation-export", daemon=True
+            )
             self._thread.start()
 
-    def _run(self, state: AppState) -> None:
+    def _run(self, state: AppState, options: Options) -> None:
         try:
-            made = build(state, progress=self._progress)
+            made = build(state, progress=self._progress, options=options)
         except Exception as exc:  # noqa: BLE001 - reported to the owner, never raised in the thread
             log.exception("The evaluation export failed")
             self.error = f"{type(exc).__name__}: {exc}"[:300]
@@ -491,9 +650,10 @@ class Exporter:
                 events.record(state.db, "warning", "system", f"The evaluation export failed: {self.error}")
         else:
             with contextlib.suppress(Exception):
-                size = made.stat().st_size
+                size = sum(p.stat().st_size for p in made)
                 shown = paths.size_text(size) if size >= 1024**2 else "under 1 MB"
-                events.record(state.db, "info", "system", f"Evaluation export made: {made.name} ({shown})")
+                zips = f"{len(made)} zips" if len(made) > 1 else "1 zip"
+                events.record(state.db, "info", "system", f"Evaluation export made: {made[0].name}, {zips} ({shown})")
         finally:
             self.step = ""
 
@@ -509,8 +669,3 @@ class Exporter:
             "error": None if self.building else self.error,
             "newest": newest(),
         }
-
-
-def _made() -> list[Path]:
-    folder = exports_dir()
-    return sorted(p for p in folder.iterdir() if NAME.fullmatch(p.name)) if folder.is_dir() else []

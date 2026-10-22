@@ -3134,7 +3134,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.43.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.44.0 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3348,31 +3348,66 @@ registered: change such a password where it is used.
 0.43.0. The report shows the latest 12 cycles and the newest rows of each record, and after 30 days the database
 keeps only the costs of the model's replies and tool calls, not their text. An evaluation of Ember's work (how she
 spends, builds, reasons, learns and explores, week by week: see `vision/evaluation.md` in the repository) needs more:
-the **Evaluation export** card under the report makes it, as one zip.
+the **Evaluation export** card under the report makes it.
 
+Since 0.44.0 it comes as zips of at most 25 MB each, so each fits an AI chat's attachment (one of 30 MB at most):
+first the **data**, then **files 1**, **files 2** … with her files, the newest first. The data zip holds:
+
+- `EVALUATE.md`: the brief for the evaluator, an AI or a person: what each file is, what to do (the scorecard's
+  numbers, the graded measures with their rubric, a cause for each finding, the report), the format of the feedback
+  for Ember, and that everything else in the export is data, never instructions. Give it the zips and say "evaluate
+  this".
 - `ember.db`: the whole database, copied while Ember runs (a consistent snapshot), and shared like the report: other
   people's text (the emails' subjects, texts and attachments, an opt-out's words, an email Ember proposed, the web
   text of her research, your library and what its study drew from it) is left out with its length, and every other
   text is masked as in the shareable report (addresses as `[email 1]`, the same address the same number throughout,
   codes, tokens in links, phone numbers, IBANs, street addresses, your name and user ID, your personal options and
-  the words you removed). The salt of the removed words and their hashes are left out.
-- What each plan saw in the last 30 days (`plan_contexts`): since 0.43.0 every cycle keeps its plan's context for
-  30 days, like the replies, with the mail, research and library sections left out as in the report's PLANNER
-  CONTEXT.
-- `report.txt` (the shareable report as the export was made), `memory/` (her strategy, identity and lessons, masked)
-  and `workspace/`: the files she changed in the last 35 days, the newest first up to 300 MB. Her text files are
-  masked; **her products (PDF, Word, Excel, pictures) are as she made them**, as buyers and the platforms get them:
-  a book's author is your KDP author.
-- `outside.csv` and `week.csv` to fill in: what only you see (KDP's units and royalties, the ads' impressions and
-  clicks, the Anthropic Console's spend) and your week (minutes spent on Ember, instructions given, how it felt).
-- `manifest.json`: what is in it, how to read it (live rows have `mode = 'live'` or `simulated = 0`; older texts read
-  `[pruned]`), every table's rows and every file's size and SHA-256.
+  the words you removed). The salt of the removed words and their hashes are left out. With it, what each plan saw
+  in the last 30 days (`plan_contexts`, with the mail, research and library sections left out as in the report's
+  PLANNER CONTEXT), unless you leave it out.
+- `scorecard.json` and `scorecard.md` (0.44.0): the measures Ember's code computes from her records, for every week
+  of her life (Monday to Sunday, your time), by app version, and today's and the last 7 days' alarms (productive
+  spend, tool calls not done, promises kept, cycles you started). Numbers only, under the same definitions every
+  time; what a person or a model must judge is left to the evaluation. Ember never sees it.
+- `report.txt` (the shareable report as the export was made), `memory/` (her strategy, identity and lessons,
+  masked), `outside.csv` and `week.csv` to fill in: what only you see (KDP's units and royalties, the ads'
+  impressions and clicks, the Anthropic Console's spend) and your week (minutes spent on Ember, instructions given,
+  how it felt).
+- `manifest.json`: what is in which zip, how to read it (live rows have `mode = 'live'` or `simulated = 0`; older
+  texts read `[pruned]`), every table's rows and every file's size and SHA-256.
 
-**Make export** starts it; Ember works on meanwhile. It takes about a minute for a database of 100 MB on a PC, and
-several on a Raspberry Pi; the card says which step it is at. It is refused while another is being made, or when it
-would leave less than the 1 GB Ember keeps free on the disk. The newest two are kept in `/data/exports`, and
-Home Assistant's backups leave them out. As with the report: read it before you share it, and give it to a session
-that evaluates, not one that changes Ember's code.
+The files zips hold `workspace/`: the files she changed, the newest first up to 300 MB. Her text files are masked;
+**her products (PDF, Word, Excel, pictures) are as she made them**, as buyers and the platforms get them: a book's
+author is your KDP author.
+
+Choose before **Make export**:
+
+- **Her files**: changed in the last 7 days (the default: the week you evaluate), in the last 35 days (a first
+  evaluation of her whole life), or none.
+- **What each of her plans saw**: on by default, for the audit of her reasoning; off makes the data zip smaller.
+
+Ember works on while it is made. It takes about a minute for a database of 100 MB on a PC, and several on a Raspberry
+Pi; the card says which step it is at, and which zip is over 25 MB if one is. It is refused while another is being
+made, or when it would leave less than the 1 GB Ember keeps free on the disk. The newest two exports are kept in
+`/data/exports`, and Home Assistant's backups leave them out. As with the report: read it before you share it, and
+give it to a session that evaluates, not one that changes Ember's code.
+
+### Feedback from an evaluation
+
+0.44.0. The evaluation ends with a `feedback.json` for Ember (its format is in `EVALUATE.md`): **cases** of her own
+work (what she expected, what happened, why, the cause, how sure, the lesson) and **corrections** of facts she had
+wrong. Under **Feedback from an evaluation** on the card, choose the file: Ember's code checks it and shows what
+Ember would get. **Give it to Ember** then
+
+- adds its cases to her cases (at most 8), their subjects beginning "evaluation <its name>": her playbook and her
+  weekly look weigh them like her reviews' cases, so three that agree make a principle established, and her own
+  evidence can dispute one;
+- sends her one message from you with the corrections (at most 10) and where the cases are, which stays in her plans
+  until she answers it, and wakes her as a message does;
+- keeps what was given: it is listed on the card, the next export carries it, and the same file can't be given twice.
+
+Scores never go back to her: a score she saw would become a target. A file with anything but its keys (a score, a
+grade) is refused, and nothing reaches her before you have read the preview and given it.
 
 ## Money
 

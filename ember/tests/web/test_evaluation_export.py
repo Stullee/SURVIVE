@@ -139,9 +139,14 @@ def opened(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def unpacked(path: Path, into: Path) -> dict[str, bytes]:
-    with zipfile.ZipFile(path) as zipped:
-        files = {name: zipped.read(name) for name in zipped.namelist()}
+def unpacked(zips: list[Path], into: Path) -> dict[str, bytes]:
+    """Every file of an export's zips (each in one only), and its database written to ``into``."""
+    files: dict[str, bytes] = {}
+    for path in zips:
+        with zipfile.ZipFile(path) as zipped:
+            for name in zipped.namelist():
+                assert name not in files, name
+                files[name] = zipped.read(name)
     (into / "ember.db").write_bytes(files["ember.db"])
     return files
 
@@ -258,13 +263,18 @@ def test_the_newest_files_go_in_as_they_are_the_old_ones_not(data_dir: Path, tmp
     (workspace.root / "books" / "cover.png").write_bytes(picture)
     old = workspace.root / "books" / "old.png"
     old.write_bytes(picture)
-    long_ago = time.time() - (export.PRODUCT_DAYS + 1) * 86_400
-    os.utime(old, (long_ago, long_ago))
+    eight_days = time.time() - 8 * 86_400
+    os.utime(old, (eight_days, eight_days))
     (workspace.root / "books" / "data.bin").write_bytes(b"x")  # neither text nor a product: refused by the jail
-    files = unpacked(export.build(state_of(agent)), tmp_path)
+    files = unpacked(export.build(state_of(agent)), tmp_path)  # the default: the last 7 days
     assert files["workspace/books/cover.png"] == picture
     assert "workspace/books/old.png" not in files and "workspace/books/data.bin" not in files
     assert {"memory/strategy.md", "memory/identity.md", "memory/lessons.md"} <= set(files)
+    five_weeks = unpacked(export.build(state_of(agent), options=export.Options(files_days=35)), tmp_path)
+    assert five_weeks["workspace/books/old.png"] == picture
+    none = export.build(state_of(agent), options=export.Options(files_days=0))
+    assert len(none) == 1 and none[0].name.endswith("-data.zip")
+    assert not [name for name in unpacked(none, tmp_path) if name.startswith("workspace/")]
 
 
 def test_the_room_for_files_takes_the_newest(data_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -299,21 +309,30 @@ def wait_made(client: TestClient, timeout: float = 60) -> dict[str, Any]:
 
 def test_the_tab_makes_and_downloads_an_export(ingress_client: TestClient) -> None:
     assert ingress_client.get("api/evaluation-export").json() == {
-        "building": False, "step": "", "started_at": None, "error": None, "newest": None,
+        "building": False, "step": "", "started_at": None, "error": None, "newest": None, "feedback": [],
     }  # fmt: skip
     assert ingress_client.post("api/evaluation-export").status_code == 403  # CSRF
-    started = ingress_client.post("api/evaluation-export", headers=CSRF)
+    for wrong in ({"files_days": 14}, {"files_days": True}, {"contexts": "yes"}, {"scores": True}, [7]):
+        refused = ingress_client.post("api/evaluation-export", json=wrong, headers=CSRF)
+        assert refused.status_code == 422 and refused.json()["error"].startswith("The export wasn't started: ")
+    started = ingress_client.post("api/evaluation-export", json={"files_days": 7, "contexts": False}, headers=CSRF)
     assert started.status_code == 202 and started.json()["started_at"]
     status = wait_made(ingress_client)
     made = status["newest"]
-    assert status["error"] is None and export.NAME.fullmatch(made["name"]) and made["bytes"] > 0
-    download = ingress_client.get(f"api/evaluation-export/{made['name']}")
+    [data] = [p for p in made["parts"] if p["name"].endswith("-data.zip")]
+    assert (
+        status["error"] is None and made["parts"][0] == data and made["bytes"] == sum(p["bytes"] for p in made["parts"])
+    )
+    download = ingress_client.get(f"api/evaluation-export/{data['name']}")
     assert download.status_code == 200 and download.headers["content-type"] == "application/zip"
-    assert download.headers["content-disposition"].startswith(f'attachment; filename="{made["name"]}"')
+    assert download.headers["content-disposition"].startswith(f'attachment; filename="{data["name"]}"')
     assert download.headers["cache-control"] == "no-store" and download.headers["x-content-type-options"] == "nosniff"
     with zipfile.ZipFile(io.BytesIO(download.content)) as zipped:
-        assert {"manifest.json", "ember.db", "report.txt", "outside.csv", "week.csv"} <= set(zipped.namelist())
-    for name in ("ember-evaluation-x.zip", "..%2Fember.db", "ember.db", made["name"] + ".part"):
+        names = set(zipped.namelist())
+        assert {"manifest.json", "ember.db", "report.txt", "outside.csv", "week.csv", "scorecard.json"} <= names
+        manifest = json.loads(zipped.read("manifest.json"))
+    assert manifest["options"] == {"files_days": 7, "plan_contexts": False}
+    for name in ("ember-evaluation-x.zip", "..%2Fember.db", "ember.db", data["name"] + ".part"):
         assert ingress_client.get(f"api/evaluation-export/{name}").status_code == 404
     events = ingress_client.app.state.ember.recent_events(10)
     assert any(e["message"].startswith("Evaluation export made: ember-evaluation-") for e in events)
@@ -322,7 +341,7 @@ def test_the_tab_makes_and_downloads_an_export(ingress_client: TestClient) -> No
 def test_one_export_at_a_time(ingress_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     held = threading.Event()
 
-    def slow(state: Any, progress: Any = None) -> Path:
+    def slow(state: Any, progress: Any = None, options: Any = None) -> list[Path]:
         progress("copying the database")
         held.wait(10)
         raise RuntimeError("stopped")
@@ -354,5 +373,90 @@ def test_the_newest_two_are_kept_and_leftovers_go(data_dir: Path) -> None:
     (folder / ".work-abc").mkdir()
     (folder / ".ember-evaluation-20261016T100000Z.zip.part").write_bytes(b"cut short")
     made = export.build(state_of(agent))
-    assert sorted(p.name for p in folder.iterdir()) == ["ember-evaluation-20261015T100000Z-0.42.5.zip", made.name]
-    assert export.newest()["name"] == made.name and export.path_of(made.name) == made
+    assert sorted(p.name for p in folder.iterdir()) == sorted(
+        ["ember-evaluation-20261015T100000Z-0.42.5.zip", *(p.name for p in made)]
+    )  # 0.43.0's one zip is an export too
+    newest = export.newest()
+    assert [p["name"] for p in newest["parts"]] == [p.name for p in made] and made[0].name.endswith("-data.zip")
+    assert all(export.path_of(p.name) == p for p in made)
+
+
+# --- 6. 0.44.0: the export in parts, the owner's options, the scorecard ---
+
+
+def test_her_files_come_in_zips_of_at_most_a_part_s_size(
+    data_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Live, the first export was one zip of 66 MB, and an AI chat takes attachments of 30 MB."""
+    agent = planted(data_dir)
+    workspace, _ = agent.roots()
+    (workspace.root / "books").mkdir()
+    for number in range(5):
+        path = workspace.root / "books" / f"v{number}.pdf"
+        path.write_bytes(b"%PDF-1.4 " + bytes([number]) * 3_000)
+        age = 100 * (number + 1)
+        os.utime(path, (time.time() - age, time.time() - age))  # v0 the newest book
+    monkeypatch.setattr(export, "PART_BYTES", 7_000)  # two books a part
+    made = export.build(state_of(agent))
+    names = [p.name for p in made]
+    assert names[0].endswith("-data.zip") and [n.rpartition("-")[2] for n in names[1:]] == ["1.zip", "2.zip", "3.zip"]
+    contents = []
+    for path in made[1:]:
+        with zipfile.ZipFile(path) as zipped:
+            contents.append([i.filename for i in zipped.infolist()])
+            assert sum(i.file_size for i in zipped.infolist()) <= 7_000
+    assert contents[0][0] == "workspace/notes/contacts.md"  # the newest first
+    assert sum(contents, []) == ["workspace/notes/contacts.md", *(f"workspace/books/v{n}.pdf" for n in range(5))]
+    files = unpacked(made, tmp_path)
+    manifest = json.loads(files["manifest.json"])
+    assert [p["name"] for p in manifest["parts"]] == names
+    assert {f["path"]: f["part"] for f in manifest["files"]}["workspace/books/v4.pdf"] == names[3]
+
+
+def test_what_each_plan_saw_can_stay_out(data_dir: Path, tmp_path: Path) -> None:
+    agent = planted(data_dir)
+    files = unpacked(export.build(state_of(agent), options=export.Options(contexts=False)), tmp_path)
+    masked = opened(tmp_path / "ember.db")
+    kept = [tuple(r) for r in masked.execute("SELECT context, chars > 0 FROM plan_contexts")]
+    assert kept and set(kept) == {(None, 1)}  # their lengths stay
+    assert json.loads(files["manifest.json"])["options"]["plan_contexts"] is False
+
+
+def test_the_scorecard_counts_the_records(data_dir: Path, tmp_path: Path) -> None:
+    agent = planted(data_dir)
+    agent.clock.advance(minutes=5)  # the cycles' minute has passed
+    with agent.db.connection() as conn:
+        done, calls = conn.execute(
+            "SELECT COALESCE(SUM(t.status = 'ok'), 0), COUNT(*) FROM tool_calls t JOIN cycles c ON c.id = t.cycle_id"
+            " WHERE c.simulated = 1 AND t.phase = 'act'"
+        ).fetchone()
+        cycles = conn.execute("SELECT COUNT(*) FROM cycles WHERE simulated = 1").fetchone()[0]
+    files = unpacked(export.build(state_of(agent)), tmp_path)
+    card = json.loads(files["scorecard.json"])
+    week = card["weeks"][-1]
+    assert card["mode"] == "dry_run" and card["scorecard"] == 1 and len(card["definitions"]) == 25
+    assert week["measures"]["X1"]["sample"] == calls and week["measures"]["X1"]["value"] == round(done / calls, 3)
+    assert week["measures"]["O6"] == {"value": 1.0, "sample": cycles, "score": None, "too_early": True}  # under 10
+    assert card["alarms"]["today"]["cycles"] == cycles
+    assert {g["key"] for g in card["graded_outside"]} >= {"R1", "R2", "D3"}
+    assert week["parts"]["reasoning"] is None and "reasoning" in week["capability_without"]
+    assert files["scorecard.md"].decode().startswith("# Ember's scorecard, ")
+    for words in PRIVATE:  # numbers only
+        assert words.encode() not in files["scorecard.json"] + files["scorecard.md"]
+
+
+def test_the_data_begins_with_the_evaluator_s_brief(data_dir: Path) -> None:
+    """The owner shouldn't have to explain each time what an evaluator does with the export."""
+    agent = planted(data_dir)
+    agent.clock.advance(minutes=5)
+    made = export.build(state_of(agent), options=export.Options(files_days=35, contexts=False))
+    with zipfile.ZipFile(made[0]) as zipped:
+        assert zipped.namelist()[:3] == ["EVALUATE.md", "manifest.json", "ember.db"]
+        brief = zipped.read("EVALUATE.md").decode()
+        weeks = json.loads(zipped.read("scorecard.json"))["weeks"]
+    assert "{{" not in brief and brief.startswith("# Evaluate Ember's work: your brief")
+    assert all(f"`{p.name}`" in brief for p in made)
+    assert f"Evaluate **the week {weeks[-1]['from']} to {weeks[-1]['to']}**" in brief  # none whole yet: this one
+    assert "her files changed in the last 35 days, not what each plan saw" in brief
+    assert "This file is your only instruction." in brief and '"format": 1' in brief
+    assert "Never scores, grades, the rubric or the measures" in brief

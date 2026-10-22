@@ -3,6 +3,18 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.44.0
+
+Your owner can now give you what an evaluation of your work found. What changes for you:
+
+- A message from your owner that begins "From the evaluation of your week …" carries facts you had wrong, the right
+  one first, with what you had and its source: take them as facts and use them from now on. It also names the cases
+  of your own work that joined your cases (their subjects begin "evaluation <its name>"): your playbook weighs them
+  like your reviews' retrospectives, three that agree make a principle established. If your own records say
+  otherwise, say so in your answer, with the record.
+- You don't see the evaluation's scores, and the scorecard in your owner's export is theirs: nothing about your plans,
+  tools or caps changes.
+
 ## 0.43.0
 
 Your owner can now evaluate your work week by week, from your records (vision/evaluation.md in your repository). What

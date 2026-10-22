@@ -18,7 +18,7 @@ from urllib.parse import quote, urlsplit
 from fastapi import APIRouter, Body, Path, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
 
-from . import diagnostics, export
+from . import diagnostics, export, feedback
 from . import events as event_log
 from .agent import owner as owner_side
 from .agent import views
@@ -1230,16 +1230,27 @@ def _exporter(request: Request) -> export.Exporter:
 
 @router.get("/api/evaluation-export")
 def evaluation_export(request: Request) -> JSONResponse:
-    """Whether an export is being made (and its step), how the last one ended, and the newest one made."""
-    return JSONResponse(_exporter(request).status(), headers={"cache-control": "no-store"})
+    """Whether an export is being made (and its step), how the last one ended, and the newest one made. 0.44.0: and
+    the feedback given back to Ember lately."""
+    status = _exporter(request).status()
+    agent = _state(request).agent
+    if agent is not None:
+        with _state(request).db.connection() as conn:
+            status["feedback"] = feedback.given(conn, agent.scope())
+    return JSONResponse(status, headers={"cache-control": "no-store"})
 
 
 @router.post("/api/evaluation-export")
-def evaluation_export_start(request: Request) -> JSONResponse:
-    """Starts an export (409 while one is being made, without a database or without room on the disk)."""
+def evaluation_export_start(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """Starts an export (409 while one is being made, without a database or without room on the disk). 0.44.0: with
+    the owner's options ({"files_days": 0, 7 or 35, "contexts": true or false}; 422 for others)."""
     exporter = _exporter(request)
     try:
-        exporter.start(_state(request))
+        options = export.Options.of(body)
+    except export.ExportError as exc:
+        return JSONResponse({"error": f"The export wasn't started: {exc}."}, status_code=422)
+    try:
+        exporter.start(_state(request), options)
     except export.ExportError as exc:
         return JSONResponse({"error": f"The export wasn't started: {exc}."}, status_code=409)
     who = _owner(request) or "the owner"
@@ -1263,3 +1274,35 @@ def evaluation_export_file(request: Request, name: Annotated[str, Path(max_lengt
             "cache-control": "no-store",
         },
     )
+
+
+# 0.44.0 (vision/evaluation.md): the feedback of an evaluation, given back to Ember: its preview, then the giving.
+def _feedback_error(exc: feedback.FeedbackError) -> JSONResponse:
+    return JSONResponse({"error": f"The feedback can't be given: {exc}.", "field": exc.field}, status_code=exc.status)
+
+
+@router.post("/api/evaluation-feedback/preview")
+def evaluation_feedback_preview(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """What Ember would get of a feedback.json (nothing is written): its cases, the message, whether it was given."""
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    try:
+        return JSONResponse(feedback.preview(actions, body))
+    except feedback.FeedbackError as exc:
+        return _feedback_error(exc)
+
+
+@router.post("/api/evaluation-feedback")
+def evaluation_feedback_give(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """Gives Ember a feedback.json: its cases join hers, its corrections reach her in the owner's message, which wakes
+    her as a message does (409 for one given already, 422 for one Ember's code refuses)."""
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    try:
+        given = feedback.give(actions, body, _owner(request))
+    except feedback.FeedbackError as exc:
+        return _feedback_error(exc)
+    given["wake"] = _wake_for_message(request)
+    return JSONResponse(given, status_code=201)

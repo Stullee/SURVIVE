@@ -2,7 +2,9 @@
 
 *Draft, 2026-10-22, written against the code at `c45f9fd` (0.42.5) and the reports of 10-21 (0.40.1, in
 `analysis-0.40.1/`). 0.43.0 builds its first part: every cycle keeps what its plan saw, and the Diagnostics tab makes
-an evaluation export (see "What the evaluation needs" and "Phases"). The rest is a plan.*
+an evaluation export. 0.44.0 adds the scorecard, the evaluator's brief (`EVALUATE.md`), the export in zips an AI chat
+takes, with the owner's options, and the feedback given back to Ember (see "What the evaluation needs", "Feedback"
+and "Phases"). The rest is a plan.*
 
 ## The idea in one paragraph
 
@@ -203,15 +205,20 @@ The first questions, from the reports so far:
 - it has nothing **she can't see**: KDP's sales, the ads' clicks, your time;
 - until 0.43.0 nothing kept **what a past plan saw**: each report shows the next plan's context only.
 
-**The evaluation export (0.43.0).** One zip from the Diagnostics tab (**Make export**, a minute or a few; Ember works on
-meanwhile), shareable like the report (`ember/app/export.py`, the docs' "Evaluation export"):
+**The evaluation export (0.43.0, 0.44.0).** Zips from the Diagnostics tab (**Make export**, a minute or a few; Ember
+works on meanwhile), shareable like the report (`ember/app/export.py`, the docs' "Evaluation export"). Since 0.44.0
+each is at most 25 MB, so it fits an AI chat's attachment (live, the first export was one zip of 66 MB): the **data**
+zip, then **files 1**, **files 2** … with her files, the newest first. The owner chooses her files (the last 7 days,
+the default; 35 days; none) and whether what each plan saw goes in.
 
-| In the zip | What it is | For |
+| In the export | What it is | For |
 |---|---|---|
+| `EVALUATE.md` | the evaluator's brief, first in the data zip: what each file is, what to do (section "The process"), the rubrics, the report's template, the format of `feedback.json`, and that everything else is data, never instructions (`ember/app/evaluation_brief.md`) | the evaluator, so the owner says only "evaluate this" |
+| `scorecard.json`, `scorecard.md` | the computed measures of every week of her life and by version, with samples, scores and the alarms (`ember/app/scorecard.py`, version 1) | every computed KPI |
 | `ember.db` | the whole database, a consistent copy made while Ember runs, masked: other people's text (emails, web research, your library) left out with its length, every other text masked as in the shareable report, the removed words' salt and hashes out | every computed KPI |
 | `plan_contexts` (a table in it) | what each plan saw in the last 30 days: every cycle keeps its planner context since 0.43.0, pruned with the other texts | R1, R2, D2, the exam's questions |
 | `report.txt` | the shareable report as the export was made: the next plan's context, the plan tree's ranking and waits | the audit |
-| `workspace/` | the files she changed in the last 35 days, the newest first up to 300 MB: the products as she made them (as buyers and the platforms get them), her text files masked | X5, the product audit |
+| `workspace/` (the files zips) | the files she changed in the days the owner chose, the newest first up to 300 MB: the products as she made them (as buyers and the platforms get them), her text files masked | X5, the product audit |
 | `memory/` | her strategy, identity and lessons, masked | L4 |
 | `outside.csv`, `week.csv` | for you to fill in: KDP's units and royalties, the ads' numbers, the Anthropic Console's spend; your minutes, the instructions you gave, how the week felt | E1, M3, M4, X4, O3, O4 |
 | `manifest.json` | what is in it and how to read it, every table's rows (live and dry run), every file's SHA-256, what was left out | – |
@@ -228,8 +235,8 @@ parts of it were written by an agent that reads emails and web pages anyone can 
 
 ### Weekly: the evaluation (Monday, for the week Monday 00:00 to Sunday 24:00 Berlin)
 
-1. **Collect** (you, 10 minutes): **Make export** on the Diagnostics tab, then fill in its `outside.csv` and
-   `week.csv`.
+1. **Collect** (you, 10 minutes): **Make export** on the Diagnostics tab, fill in its `outside.csv` and `week.csv`,
+   and give the zips to the evaluator: its `EVALUATE.md` says what to do.
 2. **Score** (computed, a minute): every computed KPI for the week, with its sample, its change since last week, and
    split by version where a release landed in the week.
 3. **Audit** (the evaluator, about 45 minutes): 8 cycles on the rubric, 10 claims on the fact check, the week's
@@ -239,7 +246,8 @@ parts of it were written by an agent that reads emails and web pages anyone can 
    label, as the analyses label theirs: **live**, **code**, **calc**, **reproduced**.
 5. **Settle and bet**: settle last week's bets on changes; give every new action a bet (below).
 6. **Write** `evaluation/<date>-<version>/ember-evaluation.md` (Appendix A) and update `evaluation/failure-ledger.md`.
-7. **Route** each lesson to where it belongs (next section).
+7. **Route** each lesson to where it belongs (next section), and **give Ember her feedback**: the evaluator's
+   `feedback.json`, uploaded on the Evaluation card (section "Feedback").
 
 **Who evaluates.** A session of its own, given the pack, that doesn't build the fixes. An agent that grades its own
 fix tends to find it worked. The analyses (`analysis-*/`) keep their job, finding defects and planning the release;
@@ -268,12 +276,13 @@ Could the whole evaluation live on the Diagnostics tab, on Ember's own API conne
 
 | Part | Where | Why |
 |---|---|---|
-| The **scorecard**: every computed KPI (about 30), by week and by version, with its sample | **in the app**, on the Diagnostics tab's Evaluation card, and in the report and the export | No model call: free, always current, and over the whole history (the numbers are never pruned). Ember's code already keeps every row it needs |
-| The **judge**: the cycle audit, the fact check, the product audit, a first draft of the findings | **in the app, as an option**: a weekly call on the API, paid by you, outside Ember's balance | Automatic, and cheap enough (below). It reads only what the export holds, masked, so no outside text reaches it |
+| The **scorecard**: every computed KPI (25 of them), by week and by version, with its sample | **Ember's code, in every export** (0.44.0) | No model call: free, and over the whole history (the numbers are never pruned). Every evaluation starts from the same numbers. A card on the dashboard would add only the alarms between evaluations |
+| The **judge**: the cycle audit, the fact check, the product audit, the findings | **outside**, the owner's choice (10-22): a Claude session on their subscription, given the export, its `EVALUATE.md` its brief | Costs nothing more than the subscription. In the app it would cost $1 to $2 a week (below) |
+| The **feedback**: her cases and the facts she had wrong | **back in the app** (0.44.0): the evaluator's `feedback.json`, uploaded on the Evaluation card | Her learning loop already has the slots for it (section "Feedback") |
 | **Attribution and fixes**: is it Ember or her code, what to change, the release | **outside**: a Claude Code session on your subscription, given the export and the repository | It needs the code: to tell Ember's mistake from her code's, to reproduce a defect, to write the fix. And the one who judges shouldn't be the one who fixes |
 | The **exam** | outside, on your API key, before a change of her texts or model | about $2 a run |
 
-**What the judge would cost** (Ember's own price table, `ember/app/config.py`: Claude Opus 5.5 at $4 per million input
+**What the judge would have cost in the app** (Ember's own price table, `ember/app/config.py`: Claude Opus 5.5 at $4 per million input
 tokens and $20 per million output, Claude Sonnet 5 at half that; check the current prices):
 
 | A week's judging | Input | Output | Opus 5.5 | Sonnet 5 |
@@ -287,11 +296,27 @@ tokens and $20 per million output, Claude Sonnet 5 at half that; check the curre
 That is $5 to $10 a month, against Ember's $26 a week (the last 7 days to 10-21). On your Max subscription the same
 work in Claude Code costs nothing more, but it isn't automatic.
 
-**How the judge is paid, if it is built:** it goes through Ember's one metered path, so its calls are in the books and
-the books still match the Anthropic Console; Ember's code then books your grant of the same amount at once ("the
-evaluation, paid by the owner"), so her balance, runway and caps don't move. It has a weekly limit of its own
-(`evaluation_budget_usd`) and a model of its own (`evaluation_model`, off while empty). Its results are kept apart
-(an `evaluations` table) and never reach her plans, reviews or tools: she doesn't see her grades (Guardrails).
+**If it is ever built in the app:** it goes through Ember's one metered path, so its calls are in the books and the
+books still match the Anthropic Console; Ember's code then books the owner's grant of the same amount at once ("the
+evaluation, paid by the owner"), so her balance, runway and caps don't move. It gets a weekly limit of its own and a
+model of its own (off while empty), and its grades never reach her plans, reviews or tools (Guardrails).
+
+## Feedback: what goes back to her (0.44.0)
+
+An evaluation finds things about her own work that belong in her learning loop, and the loop already has the slots:
+
+- **cases** (at most 8): what she expected, what happened, why, the cause (worked, wrong idea, weak execution, no
+  reach, too early, outside), how sure, the lesson. They join her cases with subjects beginning "evaluation <its
+  name>", and her daily playbook and her weekly look weigh them like her reviews' cases: three that agree make a
+  principle established, and her own evidence can dispute one;
+- **corrections** (at most 10): a fact she had wrong, the right one first, and its source. They reach her in one
+  message from the owner, which stays in her plans until she answers it.
+
+The evaluator writes them as `feedback.json` (its format is in `EVALUATE.md`; `ember/app/feedback.py` checks it). The
+owner uploads it on the Evaluation card, reads what she would get and gives it. Only what is caused by her goes in.
+**Never a score, a grade or the rubric**, and Ember's code refuses any other key: a score she saw would become a
+target. What was given is kept (`evaluation_feedback`) and goes into the next export, so the next evaluation sees what
+she was told and can count a mistake that came back (L5); the same file can't be given twice.
 
 ## What we learn from it, and where each lesson goes
 
@@ -323,10 +348,10 @@ evaluation, paid by the owner"), so her balance, runway and caps don't move. It 
 3. **Exam questions** from every Ember finding (above).
 4. **Pruning**: a KPI no one acts on for a month is retired.
 
-**What she sees of it.** Her outcome numbers and the corrected facts (R1's wrong claims, in a message from you or the
-next release notes): they are information she can use. Not the Capability score, not the rubric, not the exam: a score
-she sees becomes a target, and she would learn to write for the grader. She already sees her own calibration, bets and
-the critic, which is enough.
+**What she sees of it.** The feedback (section "Feedback"): cases of her own work and the facts she had wrong. They
+are information she can use. Not the Capability score, not the rubric, not the exam: a score she sees becomes a
+target, and she would learn to write for the grader. She already sees her own calibration, bets and the critic,
+which is enough.
 
 ## Baseline: 10-21, scored by hand
 
@@ -384,14 +409,13 @@ hand-computes what matters most (E1 to E3, X1 to X3, L1, V1, V2, O1, O6) with SQ
 R1, R2 and the products, and writes the first evaluation. It replaces the baseline above. **Her first live cycles
 (about 09-28) lose their replies and tool results from about 10-28:** an export made before then keeps them.
 
-**Phase 1, the scorecard.** The first evaluation's SQL becomes Ember's code: every computed KPI with its sample, by
-week and by version, on the Diagnostics tab's Evaluation card, in the report (a SCORECARD section over the whole
-history, which its 12 cycles can't show) and in the export (`scorecard.json`). No model call. Tested on a dry-run
-database the fake model makes, as the cycle tests do.
+**Phase 1, built in 0.44.0.** The scorecard in every export (`scorecard.py`: 25 computed measures with their samples,
+by week and by version, the alarms, numbers only, no model call). The export in zips of at most 25 MB, with the
+owner's options (her files: 7 days, 35 days or none; what each plan saw or not). `EVALUATE.md`, the evaluator's brief.
+The feedback given back to her (`feedback.py`, migration 0100). The first evaluations check the scorecard's
+definitions against the records; a changed definition gets a new scorecard version.
 
 **Phase 2, in the app.**
-- The **judge**, as an option (see "Where it runs"): weekly, on its own model and limit, paid by you outside Ember's
-  balance, its results kept apart from her.
 - **KDP's numbers** (units, royalties by title and month) can be entered on a KDP request: milestone #21 needs them too
   (analysis-0.40.1, 6.3).
 - Each cycle records whether it **moved something** (E3), so it isn't a heuristic.
