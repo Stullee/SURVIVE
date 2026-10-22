@@ -177,7 +177,7 @@ ALLOWED = {
     ("app/agent/loop.py", "other"),  # a list
     ("app/agent/metrics.py", "str(row['checked_at'])"),  # shown: when a milestone was read
     ("app/agent/obligations.py", "str(r['created_at'])"),  # shown: an obligation's day
-    ("app/agent/plan.py", "str(spec['since'])"),  # shown: a check's words
+    ("app/agent/plan_model.py", "str(spec['since'])"),  # shown: a check's words
     ("app/agent/quality.py", "str(r['created_at'])"),  # shown: a check's day
     ("app/agent/quality.py", "str(row['created_at'])"),  # shown: a check's day
     ("app/agent/reach.py", "str(note['created_at'])"),  # shown: a demand note's day
