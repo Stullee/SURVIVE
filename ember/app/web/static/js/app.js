@@ -6469,6 +6469,59 @@
   $("diag-copy").addEventListener("click", copyDiagnostics);
   $("diag-download").addEventListener("click", downloadDiagnostics);
 
+  // ------------------------------------------------------------------ the evaluation export (0.43.0)
+  // Made in the background (copying and masking the database takes a while): while one is being made and the tab is
+  // open, the card asks every few seconds how it goes. The newest one made downloads from its own link.
+
+  var EXPORT_POLL_MS = 3000;
+
+  function showExport(s) {
+    var made = isObject(s) && isObject(s.newest) ? s.newest : null;
+    var building = isObject(s) && s.building === true;
+    $("export-make").disabled = building;
+    $("export-make").textContent = building ? "Making the export…" : made ? "Make a new export" : "Make export";
+    var link = $("export-download");
+    link.hidden = !made || building;
+    if (made) {
+      link.href = "api/evaluation-export/" + encodeURIComponent(asText(made.name));
+      link.setAttribute("download", asText(made.name));
+      link.textContent = "Download (" + byteSize(Number(made.bytes) || 0) + ")";
+    }
+    if (building) setStatusText("export-status", "Making the export: " + asText(s.step || "starting") + "…", "");
+    else if (isObject(s) && s.error) setStatusText("export-status", "The last export failed: " + asText(s.error) + ".", "error");
+    else if (made) setStatusText("export-status", "The newest export was made " + fmtDateTime(made.made_at) + " (" + relTime(made.made_at) + ").", "");
+    else setStatusText("export-status", "", "");
+  }
+
+  function loadExport() {
+    window.clearTimeout(ui.exportTimer);
+    request("GET", "api/evaluation-export").then(function (res) {
+      if (!res.ok) throw httpError(res);
+      showExport(res.data);
+      if (isObject(res.data) && res.data.building && ui.tab === "diagnostics") ui.exportTimer = window.setTimeout(loadExport, EXPORT_POLL_MS);
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      setStatusText("export-status", "Couldn't ask how the export goes (" + errorText(err) + ").", "error");
+    });
+  }
+
+  function makeExport() {
+    window.clearTimeout(ui.exportTimer);
+    $("export-make").disabled = true;
+    setStatusText("export-status", "Starting the export…", "");
+    request("POST", "api/evaluation-export", {}).then(function (res) {
+      if (!res.ok) throw httpError(res);
+      showExport(res.data);
+      ui.exportTimer = window.setTimeout(loadExport, EXPORT_POLL_MS);
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      setStatusText("export-status", "The export didn't start: " + errorText(err) + ".", "error");
+      $("export-make").disabled = false;
+    });
+  }
+
+  $("export-make").addEventListener("click", makeExport);
+
   // ------------------------------------------------------------------ workspace
   // The files the agent wrote. Their text is only ever shown with textContent, never rendered as a page (an .html or
   // .svg file stays text, and Markdown is drawn element by element from its text, a link as its words and its
@@ -11042,6 +11095,7 @@
     if (name === "workspace") { ui.ws.visit = true; refreshWorkspace(); }
     if (name === "plan") { loadPlan(); loadRoadmap(); loadVentures(); }
     if (name === "library") loadLibrary();
+    if (name === "diagnostics") loadExport();  // 0.43.0
     if (name === "inbox" && ui.chat.stick) scrollChatToEnd();  // it can't scroll while the tab is hidden
   }
 

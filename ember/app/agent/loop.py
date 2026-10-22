@@ -1035,6 +1035,8 @@ class CycleRunner:
                 break
         else:
             return CycleEnd("failed", "the planning prompt doesn't fit its budget")
+        with self.db.transaction() as conn:  # 0.43.0 (vision/evaluation.md): what this plan saw, for an evaluation
+            store.save_plan_context(conn, cycle_id, self.kind, planner, to_iso(self.clock.now()))
         response = self._plan_answer(cycle_id, plan_for)
         if isinstance(response, CycleEnd):
             return response

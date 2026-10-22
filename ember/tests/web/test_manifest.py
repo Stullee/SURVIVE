@@ -65,7 +65,13 @@ def test_least_privilege() -> None:
     assert MANIFEST.get("panel_admin", True) is True  # only admins get the control panel
     assert MANIFEST["backup"] == "cold"  # a consistent copy of the SQLite database
     # 0.42.0: never the database, the options, the tokens or the workspace (what tests/web/test_disk_space.py checks)
-    assert MANIFEST.get("backup_exclude", []) == ["backups/ember-schema*.db"]
+    # 0.43.0: and the evaluation exports, made again in a minute
+    assert MANIFEST.get("backup_exclude", []) == [
+        "backups/ember-schema*.db",
+        "exports/ember-evaluation-*.zip",
+        "exports/.work-*",
+        "exports/.*.part",
+    ]
 
 
 def test_no_build_yaml_and_local_build() -> None:

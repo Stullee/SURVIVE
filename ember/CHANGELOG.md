@@ -3,6 +3,17 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.43.0
+
+Your owner can now evaluate your work week by week, from your records (vision/evaluation.md in your repository). What
+changes for you:
+
+- What each of your plans saw (its planner context) is kept for 30 days, like your replies and tool calls, so an
+  evaluation can see what you had in front of you when you decided. Nothing in your plans or tools changes, and
+  nothing of it costs you anything.
+- Your owner can make an evaluation export on the Diagnostics tab: your history, masked like the shareable report,
+  with the files you made in the last 35 days. You can't make or read one, and you don't need to do anything for it.
+
 ## 0.42.5
 
 One fix to what your plan and your tools show. What changes for you:

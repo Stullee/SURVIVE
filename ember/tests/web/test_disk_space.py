@@ -280,6 +280,8 @@ def excluded(relative: str) -> bool:
         "memory/lessons.md",
         "dry_run/workspace/books/a.md",
         "backups",  # the folder itself, so a future copy of another name would still be kept
+        "exports",  # 0.43.0: the folder of the evaluation exports, and a workspace's folder of that name
+        "workspace/exports/ember-evaluation-notes.md",
     ],
 )
 def test_backups_keep_the_database_the_options_the_tokens_and_the_workspace(path: str) -> None:
@@ -293,3 +295,16 @@ def test_backups_leave_out_only_the_copies_from_before_upgrades(tmp_path: Path) 
     finally:
         source.close()
     assert excluded(f"backups/{copy.name}") and not excluded("ember.db")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "exports/ember-evaluation-20261025T180000Z-0.43.0.zip",
+        "exports/.work-x1y2z3/ember.db",
+        "exports/.ember-evaluation-20261025T180000Z-0.43.0.zip.part",
+    ],
+)
+def test_backups_leave_out_the_evaluation_exports(path: str) -> None:
+    """0.43.0: each export is a copy of the database and the newest products, made again in a minute."""
+    assert excluded(path)

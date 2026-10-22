@@ -364,7 +364,8 @@ class Database:
         """0.15.0: the large texts older than ``days`` become PRUNED: a finished tool call's input ('{}') and result,
         and what the model wrote in a call. A session's newest research calls stay whole (the plan's RECENT RESEARCH).
         The rows stay, and the model calls with their costs, tokens and purpose are never touched. Returns how many
-        rows were pruned now (at most PRUNE_BATCH of each kind)."""
+        rows were pruned now (at most PRUNE_BATCH of each kind). 0.43.0: and what a plan saw (plan_contexts), its
+        length kept."""
         before = (now - timedelta(days=days)).astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         with self.transaction() as conn:
             tools = conn.execute(
@@ -380,7 +381,12 @@ class Database:
                 " FROM call_texts t JOIN llm_calls l ON l.id = t.llm_call_id WHERE l.ts < ? AND t.text <> ? LIMIT ?)",
                 (PRUNED, before, PRUNED, PRUNE_BATCH),
             ).rowcount
-        return tools + texts
+            contexts = conn.execute(
+                "UPDATE plan_contexts SET context = NULL WHERE cycle_id IN (SELECT cycle_id FROM plan_contexts"
+                " WHERE created_at < ? AND context IS NOT NULL LIMIT ?)",
+                (before, PRUNE_BATCH),
+            ).rowcount
+        return tools + texts + contexts
 
     def recent_events(self, limit: int = 50, min_level: str = "info") -> list[dict[str, Any]]:
         levels = ["debug", "info", "warning", "error"]
