@@ -24,7 +24,7 @@ from app.economy import metering
 from app.economy.service import Economy
 from tests.conftest import HA_CORE
 from tests.economy_helpers import restart
-from tests.test_uncertain_bills import (
+from tests.money.test_uncertain_bills import (
     AGENT,
     CSRF,
     KNOWN,

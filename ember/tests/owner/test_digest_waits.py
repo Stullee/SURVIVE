@@ -21,10 +21,10 @@ pytest.importorskip("httpx2")
 from app.agent import audit  # noqa: E402
 from app.integrations import connectors, etsy, retry  # noqa: E402
 from app.integrations.etsy import FakeShop  # noqa: E402
-from tests.test_approval_boundary import WAIT, refuse  # noqa: E402
-from tests.test_audit import feed  # noqa: E402
-from tests.test_etsy import proposed  # noqa: E402
-from tests.test_owner_loop import owner  # noqa: E402
+from tests.agent_helpers import owner  # noqa: E402
+from tests.channels.test_approval_boundary import WAIT, refuse  # noqa: E402
+from tests.etsy_helpers import proposed  # noqa: E402
+from tests.owner.test_audit import feed  # noqa: E402
 
 WAITED = "1 request(s) waited when their service asked to come back later (not failures)"
 

@@ -24,18 +24,18 @@ from app.economy.clock import to_iso  # noqa: E402
 from app.integrations import connectors, etsy, executor, pinterest, retry  # noqa: E402
 from app.integrations.etsy import FakeShop  # noqa: E402
 from app.integrations.pinterest import FakePinterest  # noqa: E402
+from tests.agent_helpers import owner, rows  # noqa: E402
+from tests.channels.test_approval_boundary import WAIT, journal, refuse, request_of  # noqa: E402
+from tests.channels.test_blog import proposed as page_proposed  # noqa: E402
+from tests.channels.test_bluesky import proposed as post_proposed  # noqa: E402
+from tests.channels.test_etsy import listing_rows  # noqa: E402
+from tests.channels.test_pinterest import BOARD, OTHER_WORDS, a_pin, pin_context, pin_rows, pinned  # noqa: E402
+from tests.channels.test_pinterest import proposed as pin_proposed  # noqa: E402
+from tests.channels.test_printify import proposed as product_proposed  # noqa: E402
+from tests.etsy_helpers import a_change, listed, proposed, shop_context, views_approval  # noqa: E402
+from tests.owner.test_audit import feed, undo  # noqa: E402
+from tests.plan.test_step_brake import waits  # noqa: E402
 from tests.queue_helpers import slot_comes  # noqa: E402
-from tests.test_agent import rows  # noqa: E402
-from tests.test_approval_boundary import WAIT, journal, refuse, request_of  # noqa: E402
-from tests.test_audit import feed, undo  # noqa: E402
-from tests.test_blog import proposed as page_proposed  # noqa: E402
-from tests.test_bluesky import proposed as post_proposed  # noqa: E402
-from tests.test_etsy import a_change, listed, listing_rows, proposed, shop_context, views_approval  # noqa: E402
-from tests.test_fixes_0376 import waits  # noqa: E402
-from tests.test_owner_loop import owner  # noqa: E402
-from tests.test_pinterest import BOARD, OTHER_WORDS, a_pin, pin_context, pin_rows, pinned  # noqa: E402
-from tests.test_pinterest import proposed as pin_proposed  # noqa: E402
-from tests.test_printify import proposed as product_proposed  # noqa: E402
 
 DAYS = connectors.APPROVED_DAYS
 STALE = connectors.STALE.format(days=DAYS)
