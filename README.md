@@ -616,6 +616,19 @@ streets, your name and the words you removed masked), the report, her memory
 and the files she made in the last 35 days, for an evaluation in a session of
 its own. See [Evaluation export](ember/DOCS.md#evaluation-export).
 
+0.44.0 makes the evaluation export fit an AI chat and tell it what to do. It
+comes as zips of at most 25 MB (an AI chat takes attachments of 30 MB; the
+first live export was one zip of 66 MB): the data, then her files, the newest
+first, and you choose which of her files go in (the last 7 days, 35, or none)
+and whether what each plan saw does. The data zip begins with `EVALUATE.md`,
+the evaluator's brief, so "evaluate this" is all you need to say. It also holds
+a scorecard Ember's code computes from her records: 25 measures for every week
+of her life and by version, with today's alarms. And what an evaluation finds
+about her own work goes back to her: upload its `feedback.json` on the same
+card, read what she would get, and give it. Its cases join her playbook's, its
+corrections reach her in one message from you, and scores never do. See
+[Feedback from an evaluation](ember/DOCS.md#feedback-from-an-evaluation).
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

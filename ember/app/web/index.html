@@ -770,12 +770,37 @@
       </article>
       <article class="card" aria-labelledby="export-title">
         <h2 id="export-title">Evaluation export</h2>
-        <p class="card-sub">Everything an evaluation of Ember's work needs, in one zip: her whole history (the database, shared like the report above: other people's text left out with its length, and addresses, codes, phone numbers, IBANs, streets, your name and the words you removed masked), what each of her plans saw in the last 30 days, the report, her memory, and the files she made in the last 35 days. Those files are as she made them, not masked: what buyers and the platforms get. Ember keeps working while it is made. Read its manifest.json before you share it.</p>
+        <p class="card-sub">What an evaluation of Ember's work needs: her whole history (the database, shared like the report above: other people's text left out with its length, and addresses, codes, phone numbers, IBANs, streets, your name and the words you removed masked), her scorecard, the report, her memory and, as you choose, what each of her plans saw and the files she made. Her files are as she made them, not masked: what buyers and the platforms get. It comes as zips of at most 25 MB each, so each fits an AI chat's attachment: the data, then her files. Ember keeps working while it is made. Read the manifest.json in the data zip before you share it.</p>
+        <div class="field">
+          <label for="export-files">Her files</label>
+          <select id="export-files" aria-describedby="export-files-hint">
+            <option value="7" selected>Changed in the last 7 days</option>
+            <option value="35">Changed in the last 35 days</option>
+            <option value="0">None</option>
+          </select>
+          <p class="hint" id="export-files-hint">7 days: the week you evaluate. 35 days: for a first evaluation of her whole life so far.</p>
+        </div>
+        <div class="field field-check">
+          <label class="choice" for="export-contexts"><input type="checkbox" id="export-contexts" checked aria-describedby="export-contexts-hint"> What each of her plans saw</label>
+          <p class="hint" id="export-contexts-hint">The last 30 days of her plans' contexts, for the audit of her reasoning. Without them the data zip is smaller.</p>
+        </div>
         <div class="diag-actions" role="group" aria-label="Evaluation export">
           <button type="button" class="btn btn-primary" id="export-make">Make export</button>
-          <a class="btn" id="export-download" href="api/evaluation-export" download hidden>Download</a>
         </div>
+        <div class="diag-actions" role="group" id="export-downloads" aria-label="The newest export's zips" hidden></div>
         <p class="form-status" id="export-status" role="status"></p>
+        <h3>Feedback from an evaluation</h3>
+        <p class="hint" id="feedback-hint">The feedback.json an evaluation wrote (its EVALUATE.md says how). Its cases of Ember's own work join her cases, which her playbook weighs like her reviews', and its corrections reach her in one message from you. Scores never go back to her. Nothing reaches her before you have read it here and given it.</p>
+        <div class="field">
+          <label for="feedback-file">feedback.json</label>
+          <input type="file" id="feedback-file" accept=".json,application/json" aria-describedby="feedback-hint">
+        </div>
+        <div class="feedback-preview" id="feedback-preview" hidden></div>
+        <div class="diag-actions" role="group" aria-label="Feedback">
+          <button type="button" class="btn btn-primary" id="feedback-give" hidden>Give it to Ember</button>
+        </div>
+        <p class="form-status" id="feedback-status" role="status"></p>
+        <ul class="feedback-given" id="feedback-given" aria-label="Feedback given lately" hidden></ul>
       </article>
     </section>
   </main>

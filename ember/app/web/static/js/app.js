@@ -6475,22 +6475,46 @@
 
   var EXPORT_POLL_MS = 3000;
 
+  var EXPORT_PART_BYTES = 25 * 1024 * 1024;  // 0.44.0: an AI chat takes attachments of 30 MB
+
+  // 0.44.0: the export's zips, the data first: "data", "files 1", "files 2" … (0.43.0's one zip: "all")
+  function exportPart(name) {
+    var found = /-(data|files-(\d+))\.zip$/.exec(name);
+    return !found ? "all" : found[2] ? "files " + found[2] : "data";
+  }
+
   function showExport(s) {
     var made = isObject(s) && isObject(s.newest) ? s.newest : null;
     var building = isObject(s) && s.building === true;
+    var parts = made ? arr(made.parts) : [];
     $("export-make").disabled = building;
     $("export-make").textContent = building ? "Making the export…" : made ? "Make a new export" : "Make export";
-    var link = $("export-download");
-    link.hidden = !made || building;
-    if (made) {
-      link.href = "api/evaluation-export/" + encodeURIComponent(asText(made.name));
-      link.setAttribute("download", asText(made.name));
-      link.textContent = "Download (" + byteSize(Number(made.bytes) || 0) + ")";
-    }
+    var downloads = $("export-downloads");
+    downloads.hidden = !parts.length || building;
+    replace(downloads, parts.map(function (p) {
+      var name = asText(p.name);
+      return h("a", { class: "btn", href: "api/evaluation-export/" + encodeURIComponent(name), download: name,
+        text: "Download " + exportPart(name) + " (" + byteSize(Number(p.bytes) || 0) + ")" });
+    }));
+    var big = parts.filter(function (p) { return Number(p.bytes) > EXPORT_PART_BYTES; });
     if (building) setStatusText("export-status", "Making the export: " + asText(s.step || "starting") + "…", "");
     else if (isObject(s) && s.error) setStatusText("export-status", "The last export failed: " + asText(s.error) + ".", "error");
-    else if (made) setStatusText("export-status", "The newest export was made " + fmtDateTime(made.made_at) + " (" + relTime(made.made_at) + ").", "");
+    else if (made) setStatusText("export-status", "The newest export was made " + fmtDateTime(made.made_at) + " (" + relTime(made.made_at) + "): " +
+      plural(parts.length, "zip") + ", " + byteSize(Number(made.bytes) || 0) + " in all." +
+      (big.length ? " " + big.map(function (p) { return exportPart(asText(p.name)); }).join(", ") + " is over 25 MB, too big for an AI chat's attachment: leave out what each plan saw, or her files." : ""), big.length ? "error" : "");
     else setStatusText("export-status", "", "");
+  }
+
+  // 0.44.0: the feedback given back to Ember lately
+  function showFeedbackGiven(s) {
+    var given = isObject(s) ? arr(s.feedback) : [];
+    var list = $("feedback-given");
+    list.hidden = !given.length;
+    replace(list, given.map(function (f) {
+      var week = Array.isArray(f.week) ? " (week " + asText(f.week[0]) + " to " + asText(f.week[1]) + ")" : "";
+      return h("li", { text: "Given " + fmtDateTime(f.created_at) + ": \u201c" + asText(f.evaluation) + "\u201d" + week + ", " +
+        plural(Number(f.cases) || 0, "case") + ", " + plural(Number(f.corrections) || 0, "correction") + "." });
+    }));
   }
 
   function loadExport() {
@@ -6498,6 +6522,7 @@
     request("GET", "api/evaluation-export").then(function (res) {
       if (!res.ok) throw httpError(res);
       showExport(res.data);
+      showFeedbackGiven(res.data);
       if (isObject(res.data) && res.data.building && ui.tab === "diagnostics") ui.exportTimer = window.setTimeout(loadExport, EXPORT_POLL_MS);
     }).catch(function (err) {
       if (!(err instanceof RequestError)) console.error(err);
@@ -6509,7 +6534,8 @@
     window.clearTimeout(ui.exportTimer);
     $("export-make").disabled = true;
     setStatusText("export-status", "Starting the export…", "");
-    request("POST", "api/evaluation-export", {}).then(function (res) {
+    var options = { files_days: Number($("export-files").value), contexts: $("export-contexts").checked };
+    request("POST", "api/evaluation-export", options).then(function (res) {
       if (!res.ok) throw httpError(res);
       showExport(res.data);
       ui.exportTimer = window.setTimeout(loadExport, EXPORT_POLL_MS);
@@ -6521,6 +6547,71 @@
   }
 
   $("export-make").addEventListener("click", makeExport);
+
+  // 0.44.0: a feedback.json is read here and shown as Ember would get it; only "Give it to Ember" sends it.
+  function clearFeedback() {
+    ui.feedback = null;
+    $("feedback-preview").hidden = true;
+    replace($("feedback-preview"), []);
+    $("feedback-give").hidden = true;
+  }
+
+  function showFeedbackPreview(p) {
+    var cases = arr(p.cases).map(function (c) {
+      return h("li", { text: asText(c.subject) + " (" + asText(c.cause).replace(/_/g, " ") + ", " + asText(c.sure) + "): " +
+        asText(c.why).replace(/\.?$/, ".") + (c.lesson ? " Lesson: " + asText(c.lesson) : "") });
+    });
+    replace($("feedback-preview"), [
+      h("p", { text: "Ember gets " + plural(arr(p.cases).length, "case") + " and this message from you:" }),
+      h("pre", { class: "diag-report", text: asText(p.message) }),
+      cases.length ? h("ul", null, cases) : null,
+    ]);
+    $("feedback-preview").hidden = false;
+  }
+
+  function readFeedback() {
+    clearFeedback();
+    var file = $("feedback-file").files && $("feedback-file").files[0];
+    if (!file) { setStatusText("feedback-status", "", ""); return; }
+    setStatusText("feedback-status", "Reading " + file.name + "…", "");
+    file.text().then(function (text) {
+      var data;
+      try { data = JSON.parse(text); } catch (e) { throw new RequestError("malformed", file.name + " isn't JSON"); }
+      return request("POST", "api/evaluation-feedback/preview", data).then(function (res) {
+        if (!res.ok) throw httpError(res);
+        ui.feedback = data;
+        showFeedbackPreview(res.data);
+        $("feedback-give").hidden = !!res.data.given;
+        setStatusText("feedback-status", res.data.given ? "This feedback was given to Ember already." :
+          "Read it, then give it to Ember, or choose another file.", res.data.given ? "error" : "");
+      });
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      setStatusText("feedback-status", "Ember can't take this file: " + errorText(err) + ".", "error");
+    });
+  }
+
+  function giveFeedback() {
+    if (!ui.feedback) return;
+    $("feedback-give").disabled = true;
+    request("POST", "api/evaluation-feedback", ui.feedback).then(function (res) {
+      if (!res.ok) throw httpError(res);
+      clearFeedback();
+      $("feedback-file").value = "";
+      setStatusText("feedback-status", "Given: " + plural(arr(res.data.cases).length, "case") + " and your message #" +
+        asText(res.data.message_id) + " to Ember.", "ok");
+      loadExport();
+      window.setTimeout(refresh, 1000);
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      setStatusText("feedback-status", "It wasn't given: " + errorText(err) + ".", "error");
+    }).then(function () {
+      $("feedback-give").disabled = false;
+    });
+  }
+
+  $("feedback-file").addEventListener("change", readFeedback);
+  $("feedback-give").addEventListener("click", giveFeedback);
 
   // ------------------------------------------------------------------ workspace
   // The files the agent wrote. Their text is only ever shown with textContent, never rendered as a page (an .html or
