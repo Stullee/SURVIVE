@@ -786,7 +786,9 @@ ruff check app tests && ruff format --check app tests
 ```
 
 GitHub Actions runs the same checks and builds the image for both architectures
-(`.github/workflows/ci.yml`).
+(`.github/workflows/ci.yml`). It splits the tests over three parallel jobs
+(`python -m pytest -n auto --shard 1/3` runs every third test, from the first on),
+and the "Tests and lint" job adds up their coverage and checks its floor.
 
 The tests are grouped by feature, one package each under `ember/tests/`: `cycle/`
 (the wake cycle, its context, prompts, wakes and model calls), `plan/` (the plan
