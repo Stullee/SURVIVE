@@ -676,12 +676,14 @@ and a ready-made YAML snippet are in [`ember/DOCS.md`](ember/DOCS.md#home-assist
   anything changed (no draft, no part of a change, no new board, no post), an
   approved listing, change, pin or post stays approved and Ember's code tries it
   again when the service said (1 minute to 6 hours later, at most 3 times),
-  through every check again (`ember/app/integrations/retry.py`). Nothing that may
-  have changed something is tried again, nor anything an unlock approved, nor an
-  email. 0.42.2: like an email, an approved listing, change, pin, post, Printify
-  product or blog page that Ember's code hasn't begun within 7 days of its
-  approval (also one still waiting for its service) isn't carried out at all:
-  it is closed unsent, and the agent proposes it again if it still fits
+  through every check again (`ember/app/integrations/retry.py`); 0.42.3: a
+  Printify product or change too, when Printify refuses its first call (a
+  product's picture upload, a change's new design or the change itself). Nothing
+  that may have changed something is tried again, nor anything an unlock
+  approved, nor an email. 0.42.2: like an email, an approved listing, change,
+  pin, post, Printify product or blog page that Ember's code hasn't begun within
+  7 days of its approval (also one still waiting for its service) isn't carried
+  out at all: it is closed unsent, and the agent proposes it again if it still fits
   (`ember/app/integrations/connectors.py`). Nothing that began ages out, nor
   the owner's Undo. A card whose file changed since it was proposed says so,
   and its Approve is refused. The kill switch stops whatever

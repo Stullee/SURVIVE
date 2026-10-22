@@ -271,17 +271,18 @@ def halted(conn: sqlite3.Connection) -> bool:
 # at most), and what holds one longer is what held the email.
 APPROVED_DAYS = 7
 # The executors whose requests age out, each with the table its request keeps its row in while it waits for its
-# service (retry.PARKED; None where none waits). Not the owner's Undo (an Undo ends work, as a venture's park doesn't
-# hold it: stages.hold_approved), what the owner carries out (a Reddit link, a KDP book), the sandbox's test pin (only
-# the owner sees it, and Ember's code asks it again, not the agent) nor the last will (Ember is dead: nobody proposes
-# it again, and it fits as long as the live page runs). An email ages out in its own executor (executor.Executor._one).
+# service (retry.PARKED; None where none waits; 0.42.3: a Printify product or change waits too). Not the owner's Undo
+# (an Undo ends work, as a venture's park doesn't hold it: stages.hold_approved), what the owner carries out (a Reddit
+# link, a KDP book), the sandbox's test pin (only the owner sees it, and Ember's code asks it again, not the agent) nor
+# the last will (Ember is dead: nobody proposes it again, and it fits as long as the live page runs). An email ages out
+# in its own executor (executor.Executor._one).
 AGING = {
     "etsy_listing": "etsy_listings",
     "etsy_edit": "etsy_edits",
     "pinterest_pin": "pinterest_pins",
     "bluesky_post": "bluesky_posts",
-    "printify_product": None,
-    "printify_edit": None,
+    "printify_product": "printify_products",
+    "printify_edit": "printify_edits",
     "site_post": None,
     "site_links": None,
 }

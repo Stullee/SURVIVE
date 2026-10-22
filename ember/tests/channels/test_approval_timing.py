@@ -24,10 +24,13 @@ from app.agent.owner import apply_kill_switch_reset, kill
 from app.agent.service import Agent
 from app.economy.clock import to_iso
 from app.integrations import connectors, executor, mail, mailstore
+from app.integrations.printify import FakePrintify
 from app.products import live
 from tests.agent_helpers import owner, rows
 from tests.agent_helpers import tools as calls
 from tests.channels.test_live_view import agent_with
+from tests.channels.test_printify import a_proposal, pod_context
+from tests.channels.test_printify_changes import NEW_TITLE, change, last_change, live_product
 from tests.etsy_helpers import a_change, listed, shop_context
 from tests.mail.test_executor import REPLY, FakeSMTP, approval, approve, dashboard_row, ids, live_approved, proposing
 from tests.mail.test_executor import smtp as smtp  # noqa: F401 - the fixture
@@ -231,6 +234,44 @@ def test_the_kill_switch_pressed_while_an_email_goes_out_stops_the_publishers_of
     assert apply_kill_switch_reset(agent.db, agent.economy, 1)
     assert agent.execute_approved() == [(change, "done")]
     assert agent.etsy.shop().state["listings"][str(listing_id)]["price_cents"] == 390  # type: ignore[union-attr]
+
+
+def test_the_kill_switch_pressed_while_a_printify_product_is_made_stops_that_round_before_the_next(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 0.42.3 (analysis-0.40.1 audit, item 9): Printify's run ends at its next item, as the emails' and Etsy's do
+    agent, _, listing_id, product_id = live_product(data_dir)
+    agent.settings = agent.pod.settings = agent.settings.model_copy(update={"printify_products_per_day": 5})
+    for title in ("Minimalist lake poster", "Minimalist forest poster"):
+        image = f"shop/{title.split()[1]}.png"
+        assert a_proposal(agent, pod_context(agent), title=title, image=image).ok
+    first, second = (r["id"] for r in rows(agent, "SELECT id FROM approvals WHERE executor = 'printify_product'")[1:])
+    assert change(agent, listing_id, title=NEW_TITLE).ok
+    edit = last_change(agent)["id"]
+    for request in (first, second, edit):
+        assert owner(agent).decide(request, {"decision": "approve"}, "Stefan").status == 200
+    apply_kill_switch_reset(agent.db, agent.economy, 0)
+    original = FakePrintify.upload
+
+    def upload(self: FakePrintify, name: str, data: bytes) -> str:
+        press_kill(agent)  # the owner presses the switch while a product's picture goes up
+        return original(self, name, data)
+
+    monkeypatch.setattr(FakePrintify, "upload", upload)
+    assert agent.execute_approved() == [(first, "active"), (second, connectors.HALTED)]  # what began runs on, once
+    account = agent.printify.account()
+    assert len(account.state["products"]) == 2
+    assert rows(agent, f"SELECT * FROM printify_products WHERE approval_id = {second}") == []  # nothing to call unclear
+    statuses = [rows(agent, f"SELECT status FROM approvals WHERE id = {n}")[0]["status"] for n in (second, edit)]
+    assert statuses == ["approved", "approved"]  # they wait
+    assert agent.execute_approved() == []  # the next rounds: nothing while the switch is on
+    assert apply_kill_switch_reset(agent.db, agent.economy, 1)
+    assert agent.execute_approved() == [(second, "active"), (edit, connectors.HALTED)]  # pressed again: a change too
+    assert account.state["products"][product_id]["title"] != NEW_TITLE  # the change isn't begun
+    assert rows(agent, "SELECT * FROM printify_edits") == []
+    assert apply_kill_switch_reset(agent.db, agent.economy, 2)
+    assert agent.execute_approved() == [(edit, "done")]  # the owner approved it
+    assert len(account.state["products"]) == 3 and account.state["products"][product_id]["title"] == NEW_TITLE
 
 
 def test_the_live_page_is_not_uploaded_while_the_kill_switch_is_on(data_dir: Path) -> None:

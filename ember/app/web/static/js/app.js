@@ -3238,6 +3238,7 @@
   var PRODUCT_EXECUTION = {
     waiting: { icon: "◔", label: "Waiting", tone: "accent" },
     waiting_limit: { icon: "◔", label: "Waiting for tomorrow's limit", tone: "warning" },
+    retrying: { icon: "◷", label: "Printify asked to wait", tone: "warning" },
     running: { icon: "●", label: "At Printify now", tone: "accent" },
     publishing: { icon: "◔", label: "Published: the Etsy listing follows", tone: "accent" },
     active: { icon: "✓", label: "In the shop", tone: "good" },
@@ -3249,6 +3250,7 @@
   // 0.39.0: a change of a live Printify product, as Ember's code makes it.
   var PRODUCT_CHANGE_EXECUTION = {
     waiting: { icon: "◔", label: "Waiting", tone: "accent" },
+    retrying: { icon: "◷", label: "Printify asked to wait", tone: "warning" },
     running: { icon: "●", label: "At Printify now", tone: "accent" },
     done: { icon: "✓", label: "Changed", tone: "good" },
     partial: { icon: "!", label: "Changed at Printify, not in the shop", tone: "warning" },
@@ -3263,6 +3265,7 @@
     var detail;
     if (st === "waiting") detail = [name + (executorOf(a) === "printify_delete" ? " deletes it" : changing ? " changes it" : " creates it") + " by itself shortly; it checks every few minutes."];
     else if (st === "waiting_limit") detail = [name + " has made its products for today, so this one waits for tomorrow's limit."];
+    else if (st === "retrying") detail = retryDetail(ex, "Printify");
     else if (st === "running") detail = ex.started_at ? ["At Printify since ", timeEl(ex.started_at), "."] : ["At Printify now."];
     else if (st === "active") detail = ["In the shop", ex.url && !a.simulated ? [": ", etsyLink(ex.url, ex.url)] : "."];
     else if (ex.result) detail = [endSentence(sentence(ex.result))];

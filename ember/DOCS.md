@@ -1711,15 +1711,18 @@ no longer shown); a study that failed three times stops until you press
   product says which of its files changed since it was proposed (as a KDP
   book's does): Ember uploads only the files as proposed, so **Approve** is
   refused for it; reject it and ask the agent to propose it again.
-- **Asked to wait** (0.42.0): when Etsy, Pinterest or Bluesky answers "too many
-  requests" (or "down for now, come back later") before anything changed (no
-  draft, no part of a change, no new board, no post yet), the approved request
-  stays approved: Ember tries it again when the service said, at least a minute
-  and at most 6 hours later, with every check again (the kill switch, a pause,
-  the files, the daily limit, the publishing queue), at most 3 times, then it
-  fails as before. Its card says when; **Cancel** still stops it. A request your
-  unlock approved isn't tried again (the agent proposes it again), nor is an
-  email, nor anything that may have changed something.
+- **Asked to wait** (0.42.0): when Etsy, Pinterest or Bluesky (0.42.3: or
+  Printify) answers "too many requests" (or "down for now, come back later")
+  before anything changed (no draft, no part of a change, no new board, no post
+  yet; at Printify, no picture uploaded yet, nor a change made), the approved
+  request stays approved: Ember tries it again when the service said, at least
+  a minute and at most 6 hours later, with every check again (the kill switch,
+  a pause, the files, the daily limit, the publishing queue), at most 3 times,
+  then it fails as before. Its card says when; **Cancel** still stops it. A
+  request your unlock approved isn't tried again (the agent proposes it again),
+  nor is an email, nor anything that may have changed something: a Printify
+  product that Printify refuses once its picture went up (the picture stays in
+  your Printify library) fails as before.
 - **Approved too long ago** (0.42.2): a listing, a change, a pin, a post, a
   Printify product or change, or a blog page that Ember's code hasn't begun 7
   days after your approval isn't carried out any more, as an email isn't (see
@@ -1843,22 +1846,22 @@ no longer shown); a study that failed three times stops until you press
   you unlocked. The newest digest is at the top of this card and in the System
   log; the sensor has its counts (`digest_day`, `digest_actions`, ...). Days
   without a round (a pause) get their digest afterwards, up to 14 days back
-  (0.15.0). Since 0.42.2 a try that Etsy, Pinterest or Bluesky asked Ember's
-  code to make later (see Asked to wait above) is no failed action: the
-  digest counts the requests that waited apart ("1 request(s) waited when
-  their service asked to come back later (not failures)"), a listing that
-  waited twice and then went out is 1 action, and one that fails at its last
-  try fails once. Since 0.42.3 an approved request that went back unsent
-  because Ember's code didn't begin it within 7 days of your approval (see
-  Approved too long ago above, and for an email Ember's mailbox) is no action
-  and no failure either: the digest counts it apart, with whose approval it
-  had ("1 request went back unsent (1 you approved): it didn't go out within
-  7 days of its approval (Ember proposes it again if it still fits)"), and
-  `digest_actions` and `digest_failed` leave it out. Until then it read
-  "carried out 1 action (1 you approved): 1 failed", though nothing was
-  carried out. The list of what Ember's code did has no entry for it (nothing
-  began; a try that waited for its service before shows there as waited), and
-  a request that really failed still counts as failed.
+  (0.15.0). Since 0.42.2 a try that Etsy, Pinterest, Bluesky or (0.42.3)
+  Printify asked Ember's code to make later (see Asked to wait above) is no
+  failed action: the digest counts the requests that waited apart
+  ("1 request(s) waited when their service asked to come back later (not
+  failures)"), a listing that waited twice and then went out is 1 action, and
+  one that fails at its last try fails once. Since 0.42.3 an approved request
+  that went back unsent because Ember's code didn't begin it within 7 days of
+  your approval (see Approved too long ago above, and for an email Ember's
+  mailbox) is no action and no failure either: the digest counts it apart,
+  with whose approval it had ("1 request went back unsent (1 you approved): it
+  didn't go out within 7 days of its approval (Ember proposes it again if it
+  still fits)"), and `digest_actions` and `digest_failed` leave it out. Until
+  then it read "carried out 1 action (1 you approved): 1 failed", though
+  nothing was carried out. The list of what Ember's code did has no entry for
+  it (nothing began; a try that waited for its service before shows there as
+  waited), and a request that really failed still counts as failed.
 
   **Take back every unlock**, at the top of this card while any unlock
   stands: one click sets every rule of every milestone back to **Ask me**.

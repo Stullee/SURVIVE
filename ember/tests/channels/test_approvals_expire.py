@@ -21,9 +21,10 @@ pytest.importorskip("httpx2")
 from app import version  # noqa: E402
 from app.agent import news, obligations, plan  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
-from app.integrations import connectors, etsy, executor, pinterest, retry  # noqa: E402
+from app.integrations import connectors, etsy, executor, pinterest, printify, retry  # noqa: E402
 from app.integrations.etsy import FakeShop  # noqa: E402
 from app.integrations.pinterest import FakePinterest  # noqa: E402
+from app.integrations.printify import FakePrintify  # noqa: E402
 from tests.agent_helpers import owner, rows  # noqa: E402
 from tests.channels.test_approval_boundary import WAIT, journal, refuse, request_of  # noqa: E402
 from tests.channels.test_blog import proposed as page_proposed  # noqa: E402
@@ -209,6 +210,28 @@ def test_a_pin_that_waits_for_pinterest_ages_out_in_its_next_slot(
     assert request_of(agent, request)["result_note"] == f"Not pinned: {STALE}"
     [row] = [r for r in pin_rows(agent) if r["approval_id"] == request]
     assert (row["status"], row["board_id"], row["error"]) == ("failed", None, STALE)  # no day's pin is counted
+
+
+def test_a_product_that_waits_for_printify_ages_out_before_it_is_tried_again(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 0.42.3 (analysis-0.40.1 audit, M3): a Printify product waits for its service too, and ages out as a listing does
+    agent, request = product(data_dir)
+    calls = refuse(monkeypatch, FakePrintify, "upload", printify.Busy, times=99)
+    owner(agent).decide(request, {"decision": "approve"}, "Owner")
+    agent.clock.advance(days=DAYS - 1, hours=23, minutes=59)
+    assert agent.execute_approved() == [(request, retry.LATER)]  # within its days: tried, and Printify asks to wait
+    agent.clock.advance(seconds=WAIT)
+    assert agent.execute_approved() == [(request, "failed")]
+    assert len(calls) == 1 and agent.printify.account().state["products"] == {}
+    closed = request_of(agent, request)
+    assert (closed["status"], closed["result_note"]) == ("failed", f"Not created: {STALE}")
+    [row] = begun(agent, KINDS["product"][2], request)  # the row of its wait says why it isn't tried again
+    assert (row["status"], row["result"], row["error"]) == ("failed", f"Not created: {STALE}", STALE)
+    shown = views_approval(agent, request)["execution"]
+    assert (shown["status"], shown["error"]) == ("failed", STALE)
+    [entry] = journal(agent, request)  # only its wait: nothing more began
+    assert json.loads(entry["after"])["retry_at"]
 
 
 # --- what began, and the owner's Undo, never age out ----------------------------------------------------------------
