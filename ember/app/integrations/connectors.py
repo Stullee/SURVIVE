@@ -13,7 +13,9 @@ Now:
 * ``begin`` / ``finish`` / ``record``: the shared journal (``action_journal``). The email executor and the Etsy
   publisher write through it at the moments they write their own records (their behaviour is unchanged): the class,
   the request, what it acts on, the state before and after, how it ended, and what would undo it (``undo_of``);
-* ``halted`` (0.37.3): whether the kill switch is on, which every executor reads again before it begins an item.
+* ``halted`` (0.37.3): whether the kill switch is on, which every executor reads again before it begins an item;
+* ``stale`` / ``lapse`` (0.42.2): an approved request that didn't begin within APPROVED_DAYS of its approval, which
+  every executor of a listing, change, pin, post, product or page reads there too, is closed unsent.
 """
 
 from __future__ import annotations
@@ -23,9 +25,11 @@ import re
 import sqlite3
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
 from ..agent.store import AgentScope
+from ..economy.clock import from_iso
 from ..economy.life import KILLED_KEY
 
 
@@ -255,6 +259,71 @@ def halted(conn: sqlite3.Connection) -> bool:
     began runs on, once; the rest waits, and the run ends (HALTED)."""
     row = conn.execute("SELECT value FROM meta WHERE key = ?", (KILLED_KEY,)).fetchone()
     return row is not None and row[0] == "1"
+
+
+# 0.42.2 (analysis-0.40.1 audit, M2): an approved request Ember's code hasn't begun within this many days of its
+# approval is closed unsent, as an email has been since 0.40.3 (executor.APPROVED_DAYS is this one, with its own
+# words). Until 0.42.2 a listing, a change, a pin, a post, a product or a blog page that Ember's pause, the kill
+# switch, money, a disconnected account, a daily limit or its service's waits held went out whenever it was free,
+# weeks later, when it may no longer fit. The same days for every kind: what holds one by design is shorter (the
+# publishing queue keeps publish_queue.WAITING pins or posts at most, a listing's one every LINK_DAYS, so a slot comes
+# within days; a daily limit's backlog is the few requests the owner approved at once; retry.TRIES waits are 18 hours
+# at most), and what holds one longer is what held the email.
+APPROVED_DAYS = 7
+# The executors whose requests age out, each with the table its request keeps its row in while it waits for its
+# service (retry.PARKED; None where none waits). Not the owner's Undo (an Undo ends work, as a venture's park doesn't
+# hold it: stages.hold_approved), what the owner carries out (a Reddit link, a KDP book), the sandbox's test pin (only
+# the owner sees it, and Ember's code asks it again, not the agent) nor the last will (Ember is dead: nobody proposes
+# it again, and it fits as long as the live page runs). An email ages out in its own executor (executor.Executor._one).
+AGING = {
+    "etsy_listing": "etsy_listings",
+    "etsy_edit": "etsy_edits",
+    "pinterest_pin": "pinterest_pins",
+    "bluesky_post": "bluesky_posts",
+    "printify_product": None,
+    "printify_edit": None,
+    "site_post": None,
+    "site_links": None,
+}
+STALE = (
+    "it didn't go out within {days} days of its approval (Ember was paused or stopped, or it waited for money, a"
+    " connection, a daily limit, its slot or its service), so it may no longer fit: it takes a new request if it"
+    " still does"
+)
+CLOSED_BY = "Ember"  # who closes a request an executor carried out (or closed unsent), as each executor names itself
+
+
+def stale(conn: sqlite3.Connection, row: Mapping[str, Any], now: datetime) -> str | None:
+    """0.42.2 (analysis-0.40.1 audit, M2): why an approved request (``row``) isn't begun now, nor tried again after its
+    service asked to wait (retry.py): it was approved more than APPROVED_DAYS ago (None: it may go out). Every
+    executor of AGING reads it in the transaction that would record the request's 'running' row, after ``halted`` and
+    before its daily limit, as the email executor reads its own: what began is never closed by it."""
+    if row["executor"] not in AGING or not row["decided_at"]:
+        return None
+    if now - from_iso(str(row["decided_at"])) <= timedelta(days=APPROVED_DAYS):
+        return None
+    undo = conn.execute("SELECT 1 FROM action_undos WHERE approval_id = ?", (row["id"],)).fetchone()
+    return STALE.format(days=APPROVED_DAYS) if undo is None else None
+
+
+def lapse(conn: sqlite3.Connection, row: Mapping[str, Any], done: str, why: str, now: str) -> str:
+    """0.42.2 (analysis-0.40.1 audit, M2): a request ``stale`` found too old is closed as an email is: failed, by
+    Ember, unsent, with "``done``: ``why``" ("Not listed: ..."), and the agent hears it at its next wake (an obligation
+    to decide what now, and its plan proposes it again). Nothing is journaled, as nothing began; one that waited for
+    its service keeps its executor's row (retry.park), which now says why it isn't tried again. Returns the note."""
+    note = f"{done}: {why}"
+    table = AGING.get(str(row["executor"]))
+    if table is not None:
+        conn.execute(
+            f"UPDATE {table} SET finished_at = ?, result = ?, error = ? WHERE approval_id = ? AND status = 'failed'",
+            (now, note[:500], why[:500], row["id"]),
+        )
+    conn.execute(
+        "UPDATE approvals SET status = 'failed', closed_at = ?, closed_by = ?, result_note = ?, version = version + 1,"
+        " seen_cycle_id = NULL WHERE id = ? AND status IN ('approved', 'approved_with_changes')",
+        (now, CLOSED_BY, note[:2000], row["id"]),
+    )
+    return note
 
 
 def begin(

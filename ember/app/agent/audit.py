@@ -82,6 +82,13 @@ def _load(raw: str | None) -> Any:
         return None
 
 
+def _service_wait(row: sqlite3.Row) -> bool:
+    """0.42.2: whether a journal entry is an attempt that ended waiting for its service (retry.park: 'failed', with when
+    it is tried again): a wait, not a failed action, in the digest and the feed."""
+    after = _load(row["after"])
+    return row["status"] == "failed" and isinstance(after, dict) and after.get("retry_at") is not None
+
+
 def _who(row: sqlite3.Row) -> str:
     if row["undoes"] is not None:
         return "undo"
@@ -306,7 +313,7 @@ def _entry(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> dic
         "subject": row["subject"],
         "started_at": row["started_at"],
         "finished_at": row["finished_at"],
-        "status": row["status"],
+        "status": "waited" if _service_wait(row) else row["status"],  # 0.42.2: asked to wait, tried again later
         "note": row["note"],
         "approval_id": row["approval_id"],
         "request_title": row["request_title"],
@@ -517,16 +524,23 @@ def _waited(conn: sqlite3.Connection, scope: AgentScope, start: str, end: str) -
 def digest(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, day: date) -> tuple[str, dict[str, Any]]:
     """One of the owner's days, in words and numbers."""
     start, end = to_iso(clock.day_start(day)), to_iso(clock.day_start(day + timedelta(days=1)))
-    actions = _journal(conn, scope, " AND j.finished_at >= ? AND j.finished_at < ?", (start, end)).fetchall()
+    entries = _journal(conn, scope, " AND j.finished_at >= ? AND j.finished_at < ?", (start, end)).fetchall()
+    # 0.42.2: an attempt that waited for its service (retry.py: Etsy, Pinterest or Bluesky asked Ember's code to come
+    # back later, before anything changed) is a wait, not an action: a listing that waited twice and then went out
+    # read "3 actions: 2 failed". The requests that waited are counted apart; one that fails at its last try fails once.
+    actions = [r for r in entries if not _service_wait(r)]
+    service = len({r["approval_id"] for r in entries if _service_wait(r)})
     by = Counter(_who(r) for r in actions)
     trouble = Counter(str(r["status"]) for r in actions if r["status"] in ("failed", "partial", "unclear"))
     where, params = scope.where("a")
     # 0.15.0: what Ember's code carried out before the journal began (0.13.0) is only in the requests it closed: the
-    # first digest after the upgrade said "carried out nothing" for a day of 5 listings and 3 changes.
+    # first digest after the upgrade said "carried out nothing" for a day of 5 listings and 3 changes. 0.42.2: its waits
+    # for its service aside: one that aged out while it waited (connectors.stale) failed once, as one that never began.
     for r in conn.execute(
         f"SELECT a.status, a.decided_by FROM approvals a WHERE {where} AND a.closed_by = ? AND a.closed_at >= ?"
         " AND a.closed_at < ? AND a.executor IS NOT NULL"
-        " AND NOT EXISTS (SELECT 1 FROM action_journal j WHERE j.approval_id = a.id)",
+        " AND NOT EXISTS (SELECT 1 FROM action_journal j WHERE j.approval_id = a.id"
+        " AND json_extract(j.after, '$.retry_at') IS NULL)",
         (*params, etsy_publisher.CLOSED_BY, start, end),
     ):
         by["unlock" if r["decided_by"] == policy.POLICY_BY else "owner"] += 1
@@ -552,6 +566,7 @@ def digest(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, day: date)
     data = {
         "actions": dict(by),
         "trouble": dict(trouble),
+        "waited_for_service": service,  # 0.42.2: requests whose try waited for their service, not failures
         "approved_by_unlocks": {"auto": approved.get("auto", 0), "veto_window": approved.get("veto_window", 0)},
         "held": len(held),
         "first_held_until": held[0]["veto_until"] if held else None,
@@ -583,6 +598,10 @@ def _digest_text(day: date, data: dict[str, Any], clock: Clock) -> str:
         )
     else:
         parts.append("Ember's code carried out nothing")
+    if data["waited_for_service"]:  # 0.42.2
+        parts.append(
+            f"{data['waited_for_service']} request(s) waited when their service asked to come back later (not failures)"
+        )
     approved = data["approved_by_unlocks"]
     if approved["auto"] or approved["veto_window"]:
         parts.append(

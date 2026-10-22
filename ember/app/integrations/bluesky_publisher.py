@@ -13,7 +13,8 @@ theirs (executor 'bluesky_delete'), carried out here too, at once. The sync read
 post's numbers (likes, reposts, replies, quotes, moderation's labels) at most every SYNC_HOURS. 0.42.0 (M3): when
 Bluesky asks Ember's code to come back later (HTTP 429, or 503 with Retry-After) while it posts (the login, a picture's
 upload, which nothing shows until a post uses it, or the post), the post stays approved and waits for its slot again,
-from then on (retry.py).
+from then on (retry.py). 0.42.2 (M2): a post not begun within connectors.APPROVED_DAYS of its approval, or still
+waiting for Bluesky then, is closed unsent, as an email is (connectors.stale).
 """
 
 from __future__ import annotations
@@ -375,7 +376,8 @@ class Publisher:
                 return "skipped"
             if connectors.halted(conn):
                 return connectors.HALTED  # 0.37.3: the kill switch came on while this round ran
-            if created_today(conn, self.clock, scope) >= self.settings.bluesky_posts_per_day:
+            aged = connectors.stale(conn, row, self.clock.now()) is not None  # 0.42.2 (M2): closed below, limit or not
+            if not aged and created_today(conn, self.clock, scope) >= self.settings.bluesky_posts_per_day:
                 return "waiting_limit"
         problem = ""
         image = thumb = None
@@ -392,6 +394,8 @@ class Publisher:
                 return "skipped"
             if connectors.halted(conn):
                 return connectors.HALTED  # 0.37.3: pressed while its pictures were made
+            if (stale := connectors.stale(conn, row, self.clock.now())) is not None:  # 0.42.2 (M2): too old to begin
+                return self._lapsed(conn, row, stale, stamp)
             if not problem:
                 try:
                     fixed = self._link(conn, scope, post.link, stamp)
@@ -466,6 +470,13 @@ class Publisher:
                 stamp,
             ),
         )
+
+    def _lapsed(self, conn: sqlite3.Connection, row: sqlite3.Row, why: str, stamp: str) -> str:
+        """0.42.2 (analysis-0.40.1 audit, M2): a post approved more than connectors.APPROVED_DAYS ago that never began
+        (or that waited for Bluesky since) is closed unsent (connectors.lapse)."""
+        note = connectors.lapse(conn, row, "Not posted", why, stamp)
+        events.record(self.db, "warning", "bluesky", f"Request #{row['id']}: {note}"[:300])
+        return "failed"
 
     def _wait(self, approval_id: int, exc: Exception) -> str | None:
         """0.42.0 (M3): Bluesky asked to come back later before the post was made (``bluesky.Busy``): it stays approved

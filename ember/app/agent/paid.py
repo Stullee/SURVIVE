@@ -28,7 +28,8 @@ MAX_DAYS = 60
 SHOWN_DAYS = 3  # STATUS shows an ended test this many days after its end
 DECIDED = ("approved", "approved_with_changes", "done")
 _NUMBER = re.compile(r"(?<!\d)(\d{9,12})(?!\d)")  # a listing's number, alone or in its address
-_DAYS = re.compile(r"(?<![\d/])(\d{1,2})\s*-?\s*(?:days?|tage[n]?)\b", re.IGNORECASE)
+# 0.42.2 (analysis-0.40.1 audit): one \s* each side of the "-": two in a row split a run of spaces every way (quadratic)
+_DAYS = re.compile(r"(?<![\d/])(\d{1,2})\s*(?:-\s*)?(?:days?|tage[n]?)\b", re.IGNORECASE)
 
 
 def listings_named(conn: sqlite3.Connection, scope: AgentScope, text: str) -> list[int]:
@@ -127,6 +128,20 @@ def keep(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> list[str]
         )
         said.append(f"The paid test of request #{test['approval_id']} ended: {_gained(test, final)}.")
     return said
+
+
+def running(conn: sqlite3.Connection, scope: AgentScope, today: date) -> dict[int, sqlite3.Row]:
+    """0.42.1 (analysis-0.40.1 codebase, 6.2 "A paid test in the plan"): each of Ember's listings in a paid test that
+    runs on ``today`` (to its last day, ends_on), with that test (the one that ends last): no change of it goes through
+    (preconditions.PAID), and its line's keep-or-drop dates wait for the end (plan._decide_by)."""
+    where, params = scope.where()
+    found: dict[int, sqlite3.Row] = {}
+    for test in conn.execute(
+        f"SELECT * FROM paid_tests WHERE {where} AND status = 'running' AND ends_on >= ? ORDER BY ends_on, id",
+        (*params, today.isoformat()),
+    ).fetchall():
+        found.update(dict.fromkeys((int(n) for n in json.loads(test["listings"])), test))
+    return found
 
 
 def _gained(test: sqlite3.Row, now: dict[str, dict[str, int]]) -> str:
