@@ -1401,12 +1401,15 @@ def shop_text(
     shop_name: str,
     daily_limit: int,
     auto_revenue: bool = False,
+    aside: frozenset[int] = frozenset(),
 ) -> str:
     """The ETSY SHOP section of the plan: every live listing and how it does (0.12.0: all of them, top sellers first),
     this week's orders, what to fix, and the newest listings and requests one by one. ``auto_revenue``: Ember's code
-    records the orders' revenue (0.12.0, the owner's option), else the owner does."""
+    records the orders' revenue (0.12.0, the owner's option), else the owner does. 0.47.0: ``aside``, the listings
+    her predecessor handed on that aren't hers, are left out (the estate's line names them)."""
     world, shop = scope.world_where()  # 0.46.0: the shop is the world's; the requests for it are her mind's
     rows = conn.execute(f"SELECT * FROM etsy_listings WHERE {world} ORDER BY id DESC", shop).fetchall()
+    rows = [r for r in rows if r["listing_id"] not in aside]
     week = to_iso(clock.now() - timedelta(days=7))
     orders = conn.execute(
         f"SELECT total_cents, currency, items, fees_cents FROM etsy_orders WHERE {world} AND {etsy.COUNTED_ORDERS}"

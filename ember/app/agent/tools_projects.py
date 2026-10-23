@@ -17,6 +17,7 @@ from ..economy.clock import to_iso
 from . import (
     bets,
     econ,
+    estate,
     evidence,
     knockouts,
     learning,
@@ -217,6 +218,9 @@ def _move_listing(ctx: ToolContext, conn: Any, row: Any, listing_id: int, why: s
     A listing belongs to the line of the request that made it, and nothing changed that: live, the coach licence
     bundle was made by a request of line #4, so line #12 (whose only listing it is) had none, and each Bluesky post
     for it in a line-#12 cycle was refused. Not out of or into a line the owner holds or whose venture they stopped."""
+    received = estate.not_hers(conn, ctx.scope, listing_id)  # 0.47.0: adopting one is your owner's decision
+    if received is not None:
+        raise ToolError(estate.refusal(received))
     found = ventures.listing_line(conn, ctx.scope, listing_id)
     if found is None:
         raise ToolError(f"listing #{listing_id} isn't one of yours (etsy_listing shows them)")

@@ -1597,3 +1597,12 @@ body[data-stale="true"] .live { display: none; }
 .pl-why-input { width: 100%; max-width: 36em; margin: 6px 0; }
 .pl-decide-buttons { display: inline-flex; gap: 6px; }
 .pl-changes-list li { margin: 2px 0; }
+
+/* 0.47.0: the next generation's card: the estate's verdicts and what the change waits for */
+.estate-test { display: inline-block; margin-top: 4px; font-size: 0.85rem; }
+.estate-test input[type="number"] { width: 5.5em; }
+.generation-checks { list-style: none; padding-left: 0; }
+.generation-checks .check-ok { color: var(--muted); }
+.generation-checks .check-open { font-weight: 600; }
+.generation-prepare { margin-top: 12px; }
+.generation-prepare > summary { cursor: pointer; font-weight: 600; }

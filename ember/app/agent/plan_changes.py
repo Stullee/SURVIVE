@@ -15,7 +15,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from . import obligations, templates, weights
-from .plan_keep import REVIEW_HOLD, _close_product, _reworkable
+from .plan_keep import ESTATE_HOLD, REVIEW_HOLD, _close_product, _reworkable
 from .plan_model import (
     _close,
     _cut,
@@ -590,6 +590,8 @@ def resume(
         raise PlanError("project_id", f"product line #{line} isn't on hold")
     if actor == "agent" and product["hold_by"] == "owner":  # 0.36.0: the owner's hold is theirs to lift
         raise PlanError("project_id", f"your owner holds product line #{line}: only they resume it")
+    if actor == "agent" and str(product["hold_reason"]).startswith(ESTATE_HOLD):  # 0.47.0: their decision too
+        raise PlanError("project_id", f"line #{line} missed its first test: your owner keeps it or drops it")
     _update(conn, product["id"], now, hold_reason=None, hold_by=None)
     change(conn, scope, product["id"], cycle_id, actor, "resume", why, now)
     return f"Product line #{line} is resumed: Ember's code weighs its steps again."
@@ -809,7 +811,8 @@ def owner_keep(conn: sqlite3.Connection, scope: AgentScope, node_id: int, why: s
     line = int(row["project_id"])
     for product in nodes(conn, scope, "level = 'product' AND status = 'open' AND project_id = ?", (line,)):
         # 0.40.2: the hold a review's stop put on the line (_review_holds) ends with the owner's keep
-        if product["hold_by"] == "agent" and str(product["hold_reason"] or "").startswith(REVIEW_HOLD):
+        held = str(product["hold_reason"] or "")
+        if product["hold_by"] == "agent" and held.startswith((REVIEW_HOLD, ESTATE_HOLD)):  # 0.47.0: and a missed test
             _update(conn, product["id"], now, hold_reason=None, hold_by=None)
             change(conn, scope, product["id"], None, "owner", "resume", f"{(who or 'your owner')[:60]} kept it", now)
     return line

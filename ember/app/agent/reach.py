@@ -137,6 +137,24 @@ def funnels(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, Funnel]:
     return found
 
 
+def by_listing(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, int]:
+    """0.47.0 (the estate): the reach done for each listing of the world, whoever made it: the blog posts, pins and
+    Bluesky posts live that link it and the changes carried out at Etsy or Printify, as ``funnels`` counts them."""
+    found: dict[int, int] = {}
+    for text in [*_posts(conn, scope), *_pins(conn, scope), *_bluesky(conn, scope)]:
+        for listing in set(listing_ids(text)):
+            found[listing] = found.get(listing, 0) + 1
+    where, params = scope.world_where()
+    for e in conn.execute(
+        f"SELECT listing_id FROM etsy_edits WHERE {where} AND status IN ('done', 'partial') AND listing_id IS NOT NULL"
+        f" UNION ALL SELECT listing_id FROM printify_edits WHERE {where} AND status IN ('done', 'partial')"
+        " AND listing_id IS NOT NULL",
+        (*params, *params),
+    ).fetchall():
+        found[int(e["listing_id"])] = found.get(int(e["listing_id"]), 0) + 1
+    return found
+
+
 def _linked(texts: list[str], owner: dict[int, int]) -> list[int]:
     """For each text, the projects whose listings it links (each project once a text)."""
     projects = []

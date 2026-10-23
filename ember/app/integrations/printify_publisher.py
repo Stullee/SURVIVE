@@ -793,11 +793,14 @@ def execution(
     }
 
 
-def text(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, limit: int = 6) -> str:
+def text(
+    conn: sqlite3.Connection, scope: AgentScope, clock: Clock, limit: int = 6, aside: frozenset[int] = frozenset()
+) -> str:
     """The plan's PRINTIFY: Ember's newest products with their prices, costs and numbers, and the orders. 0.42.5: a
     product Printify asked to wait for says so, with until when (it read "failed: HTTP 429", and the agent could
-    propose it again)."""
-    made = products(conn, scope, limit)
+    propose it again). 0.47.0: not the products her predecessor handed on that aren't hers (``aside``: their Etsy
+    listings), which the estate's line names."""
+    made = [r for r in products(conn, scope, limit + len(aside)) if r["listing_id"] not in aside][:limit]
     if not made:  # 0.15.0: it said one waited for the owner's decision when none was proposed
         clause, params = scope.where()
         waiting, approved, closed = conn.execute(

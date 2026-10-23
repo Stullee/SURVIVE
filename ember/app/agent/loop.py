@@ -78,7 +78,9 @@ from . import (
     critic,
     digest,
     econ,
+    estate,
     evidence,
+    generation,
     knockouts,
     learning,
     library,
@@ -816,6 +818,8 @@ class CycleRunner:
         self._guarded(self._keep_playbook, cycle_id or 0, "the playbook's keeper")  # 0.30.0: the cases' lessons
         predictions.settle_all(self.db, self.scope, scope, self.clock)  # 0.13.0: after the milestones are graded
         self._keep_obligations()  # 0.12.0: after the grading, so a miss it closed is owed a decision now
+        if cycle_id:  # 0.47.0: the products adopted from her predecessor become her lines (a preview files nothing)
+            self._guarded(self._keep_estate, cycle_id, "the estate's keeper")
         self._guarded(self._keep_plan, cycle_id or 0, "the plan tree's keeper")  # 0.34.0: after the obligations
         # 0.29.0: once more after the grading (the owner's goal met or missed: the money goal stands in for it); the
         # money goal was settled already
@@ -866,6 +870,7 @@ class CycleRunner:
                 else ""
             )
             shop = ""
+            aside = estate.not_hers_ids(conn, self.scope)  # 0.47.0: the listings handed on that aren't hers
             if self.etsy_on and self.etsy is not None:
                 name = self.etsy.shop_name() or "your shop"
                 # 0.12.0: Ember's code records the orders' revenue when the owner turned that on (and can convert it)
@@ -873,8 +878,16 @@ class CycleRunner:
                     self.settings.etsy_usd_per_eur > 0 or self.etsy.currency() == "USD"
                 )
                 shop = etsy_publisher.shop_text(
-                    conn, self.scope, self.clock, name, self.settings.etsy_listings_per_day, auto_revenue=auto
+                    conn,
+                    self.scope,
+                    self.clock,
+                    name,
+                    self.settings.etsy_listings_per_day,
+                    auto_revenue=auto,
+                    aside=frozenset(aside),
                 )
+                handed = estate.shop_line(conn, self.scope)  # 0.47.0: what her predecessor handed on, not hers
+                shop += f"\n{handed}" if handed else ""
             pins = ""
             if self.pinterest_on and self.pinterest is not None:  # 0.13.0 (Phase E2)
                 account = self.pinterest.username() or "your owner's account"
@@ -901,7 +914,7 @@ class CycleRunner:
                 pod = (
                     f"Printify shop: {known.get('title') or 'yours'} (prices in {self.settings.printify_currency};"
                     f" at most {self.settings.printify_products_per_day} products a day).\n"
-                    + printify_publisher.text(conn, self.scope, self.clock)
+                    + printify_publisher.text(conn, self.scope, self.clock, aside=frozenset(aside))
                 )
             elif self.printify is not None:  # 0.15.0: switched on, but not set up
                 pod = _waiting("Printify", self.printify.status(), self._etsy_state(), self.printify_waits)
@@ -926,6 +939,8 @@ class CycleRunner:
                 if self.kdp_on
                 else ""
             )
+            handed_books = estate.book_lines(conn, self.scope) if self.kdp_on else ""  # 0.47.0
+            books += f"\n{handed_books}" if handed_books else ""
             return context.snapshot(
                 conn,
                 self.scope,
@@ -1326,6 +1341,17 @@ class CycleRunner:
             happened = paid.keep(conn, self.scope, self.clock)
         for line in happened:
             events.record(self.db, "info", "agent", line[:300])
+
+    def _keep_estate(self, cycle_id: int) -> None:
+        """0.47.0 (vision/generations.md): the products a generation change handed this mind as adopted become her
+        lines, filed under this cycle, before the plan tree lays them out (generation.file); guarded like a learning
+        step."""
+        with self.db.transaction() as conn:
+            made = generation.file(conn, self.scope, cycle_id, to_iso(self.clock.now()))
+        for project_id in made:
+            events.record(
+                self.db, "info", "agent", f"A product adopted from the last generation became line #{project_id}"
+            )
 
     def _keep_playbook(self, cycle_id: int) -> None:
         """0.30.0: the lessons of the cases kept since the last plan join the playbook (learning.adopt), before every

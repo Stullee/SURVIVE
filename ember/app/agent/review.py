@@ -27,7 +27,7 @@ from ..economy.ledger import OWN_CORRECTIONS, SETTLED_COST, Books, Scope
 from ..economy.life import LifeStatus, Runway
 from ..integrations import etsy, etsy_publisher, retry
 from ..version import app_version
-from . import learning, plan, predictions, prompts, quality, reach, roadmap, ventures
+from . import estate, learning, plan, predictions, prompts, quality, reach, roadmap, ventures
 from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope, open_projects
 
 WINDOW_DAYS = 7
@@ -641,7 +641,9 @@ def _etsy(conn: sqlite3.Connection, scope: AgentScope, clock: Clock, since: str)
     sellers in the period first (0.12.0: the newest 8 only, so the listings live the longest dropped out first), and
     the newest requests that didn't become one (0.42.5: one Etsy asked to wait for as waiting, not failed)."""
     where, params = scope.world_where()
+    aside = estate.not_hers_ids(conn, scope)  # 0.47.0: the ones her predecessor handed on that aren't hers
     rows = conn.execute(f"SELECT * FROM etsy_listings WHERE {where} ORDER BY id DESC", params).fetchall()
+    rows = [r for r in rows if r["listing_id"] not in aside]
     if not rows:
         return ""
     sold = etsy_publisher.sold_counts(conn, scope, since)

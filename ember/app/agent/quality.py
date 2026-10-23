@@ -28,7 +28,7 @@ from typing import Any
 from ..economy.clock import local_date
 from ..integrations import etsy_publisher, printify, printify_publisher
 from ..products import images
-from . import prompts, reach, ventures
+from . import estate, prompts, reach, ventures
 from .sandbox import Jail, SandboxError
 from .store import AgentScope
 
@@ -62,6 +62,8 @@ def due(conn: sqlite3.Connection, scope: AgentScope, today: date) -> tuple[int, 
         for listing in funnel.listings:
             if ventures.listing_stopped(conn, scope, listing) is not None:
                 continue  # 0.24.0: none for a listing the owner's park stopped (0.23.3: none may change it)
+            if estate.not_hers(conn, scope, listing) is not None:
+                continue  # 0.47.0: nor for one her predecessor handed on that isn't hers
             ok = next((r for r in rows if r["status"] == "ok" and r["listing_id"] == listing), None)
             if ok is None:
                 candidates.append(("", project_id, listing))

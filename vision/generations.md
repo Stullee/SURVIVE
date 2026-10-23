@@ -3,9 +3,10 @@
 *Draft, 2026-10-23, written against `ed592b1` (0.45.4), the diagnostics report of 10-23 20:55 UTC and the evaluation
 of 10-22 (`evaluation/2026-10-22-0.44.0/`). 0.46.0 builds its foundation: the mind/world split (see "The
 engineering"), with the counts of a platform's limits on the world and migration 0102; nothing begins a generation
-yet. It answers the owner's question: how can Ember evolve into a next generation that carries over the important
-learnings, starts with a clean mind, and is smarter for it, without holding on to the products her first generation
-failed with?*
+yet. 0.47.0 builds the estate and the generation change ("The estate", "The change, step by step"; Prepare is the
+card's hand-over and its checks). The inheritance (principles, facts, craft, the letter) is next. It answers the
+owner's question: how can Ember evolve into a next generation that carries over the important learnings, starts with a
+clean mind, and is smarter for it, without holding on to the products her first generation failed with?*
 
 ## The idea in one paragraph
 
@@ -164,11 +165,12 @@ already spent on it, and she would defend it from her first plan. Three rules ke
 
    | Verdict | What it means |
    |---|---|
-   | **Adopt** | The product becomes one of her lines at birth. It has a first test with a date fixed at the handover (a KDP book: its first sale by 12-15, say). A missed test moves it to passive by itself, with no rescue spending. |
+   | **Adopt** | The product becomes one of her lines at birth. It has a first test with a date fixed at the handover (a KDP book: its first sale by 12-15, say). A missed test holds its line until the owner keeps or drops it (0.47.0), which she can't lift herself: no rescue spending. |
    | **Passive** | The product stays live, which is free: Etsy charges only at a renewal, and Printify only when an order comes in. It is still synced, and its sales are still recorded. Her plan shows one line about it: "6 listings from generation 1 stay live, passive: 0 sales. Not yours to work on." She can't propose a change to it. If a passive product sells, it is offered to her to adopt: evidence brings it back, sunk cost never does. |
    | **Retire** | The product is taken down before the change: an Etsy deactivate request, and Printify, KDP and pins by the owner's hand or Undo. |
 
-   **The evaluator proposes each product's verdict from the data,** in `inheritance.json`: its views, favourites,
+   **The evaluator proposes each product's verdict from the data,** in its `feedback.json` (`estate`, 0.47.0; the
+   inheritance will carry the same): its views, favourites,
    clicks, sales, days live, the reach done for it, what it cost, and why that verdict. Ember's code checks each
    proposal against its own rule, and the dashboard shows both side by side. The owner decides. The rule:
    - adopt what is too new to judge or shows a buyer signal;

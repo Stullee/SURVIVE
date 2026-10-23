@@ -694,6 +694,25 @@ works in (migration 0102). Until a generation change both numbers are the same,
 so nothing Ember sees or does changes. Nothing begins a generation yet: that is
 the next step, with the estate of products and the inheritance.
 
+0.47.0 builds the generation change itself and the estate
+([The next generation](ember/DOCS.md#the-next-generation)). On the System tab
+you sort the products Ember would hand on: adopt (it becomes a line of the next
+generation, with a first test you set; a missed test holds the line until you
+keep or drop it, and she can't lift that hold), passive (it stays live, synced
+and its sales recorded, but she doesn't work on it; her tools refuse to, and a
+sale is yours to give her) or retire (taken down before the change). Ember's
+code suggests each verdict by a rule (too new to judge or a buyer's signal:
+adopt; a fair test without one: passive; a text that breaks a rule or a product
+that is down: retire), and an evaluation judges them from the data too: its
+`feedback.json` may propose a verdict for each product, with why, which shows
+beside the rule's (Ember never sees it). Once
+nothing waits, you type the agent's name and the next generation's number:
+Ember's code copies the database, moves her memory and workspace aside, ends the
+life (state ended: not a death) and begins the next with a clean mind in the
+same world, the money included. The adopted products become her lines at her
+first cycle, with their files. What she inherits of what her predecessor
+learned is the next step.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

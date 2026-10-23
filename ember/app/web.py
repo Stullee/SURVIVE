@@ -20,8 +20,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 
 from . import diagnostics, export, feedback
 from . import events as event_log
+from .agent import estate, generation, views
 from .agent import owner as owner_side
-from .agent import views
 from .agent.views import WorkspaceFileError
 from .db import utcnow
 from .economy.ledger import OWNER_KINDS
@@ -1276,6 +1276,55 @@ def evaluation_export_file(request: Request, name: Annotated[str, Path(max_lengt
     )
 
 
+# 0.47.0 (vision/generations.md): the next generation: the estate the owner sorts, and the change they begin.
+@router.get("/api/generation")
+def generation_status(request: Request) -> JSONResponse:
+    """Which generation Ember is, the products she would hand on (each with its numbers, the rule's suggestion, an
+    evaluation's proposal and the owner's verdict), those she received, and what the change waits for."""
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    with _state(request).db.transaction() as conn:
+        found = generation.status(conn, agent)
+    found["agent_name"] = _state(request).loaded.settings.agent_name
+    return JSONResponse(found, headers={"cache-control": "no-store"})
+
+
+@router.post("/api/estate/{kind}/{ref}")
+def estate_decide(
+    request: Request,
+    kind: Annotated[str, Path(max_length=20)],
+    ref: Annotated[str, Path(max_length=40)],
+    body: Annotated[Any, Body()] = None,
+) -> JSONResponse:
+    """The owner's verdict on a product: {"verdict": "adopt" | "passive" | "retire", "test": {"metric", "target",
+    "due"} for adopt (the defaults without it)}."""
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.estate_decide(kind, ref, body, _owner(request)))
+
+
+@router.post("/api/generation")
+def generation_begin(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """Begins the next generation: {"confirm": "<the agent's name> <the next generation's number>"}, as the owner
+    typed it. 409 with what is in the way (``checks``) while the change waits for something."""
+    state = _state(request)
+    agent = state.agent
+    if agent is None:
+        return NO_AGENT
+    number = estate.generation(agent.scope()) + 1
+    expected = f"{state.loaded.settings.agent_name} {number}"
+    typed = body.get("confirm") if isinstance(body, dict) else None
+    if not isinstance(typed, str) or " ".join(typed.split()).casefold() != expected.casefold():
+        return JSONResponse({"error": f'type "{expected}" to begin generation {number}', "field": "confirm"}, 422)
+    try:
+        done = agent.begin_generation(_owner(request) or "The owner")
+    except generation.GenerationError as exc:
+        return JSONResponse({"error": str(exc), "checks": [c.to_json() for c in exc.checks]}, status_code=exc.status)
+    return JSONResponse(done, status_code=201)
+
+
 # 0.44.0 (vision/evaluation.md): the feedback of an evaluation, given back to Ember: its preview, then the giving.
 def _feedback_error(exc: feedback.FeedbackError) -> JSONResponse:
     return JSONResponse({"error": f"The feedback can't be given: {exc}.", "field": exc.field}, status_code=exc.status)
@@ -1304,5 +1353,5 @@ def evaluation_feedback_give(request: Request, body: Annotated[Any, Body()] = No
         given = feedback.give(actions, body, _owner(request))
     except feedback.FeedbackError as exc:
         return _feedback_error(exc)
-    given["wake"] = _wake_for_message(request)
+    given["wake"] = _wake_for_message(request) if given["message_id"] is not None else None  # 0.47.0: sent nothing
     return JSONResponse(given, status_code=201)

@@ -17,7 +17,7 @@ from ..integrations import etsy, etsy_publisher, kdp, printify, printify_publish
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
 from ..products import images, make, pagecheck
-from . import claims, demand, plan, preconditions, store, ventures
+from . import claims, demand, estate, plan, preconditions, store, ventures
 from .sandbox import SandboxError
 from .store import AgentScope
 from .tools_context import Drawn, EtsyAccess, KdpAccess, Outcome, PrintifyAccess, ToolContext, ToolError, _cut, _local
@@ -198,7 +198,8 @@ def _etsy_listing(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     as_read = f"Etsy's numbers as Ember's code read them at {_local(ctx, read)}" if read else "not read from Etsy yet"
     try:
         if listing_id is None:
-            found = etsy_publisher.live_listings(conn, ctx.scope)
+            aside = estate.not_hers_ids(conn, ctx.scope)  # 0.47.0: handed on, not hers (ETSY SHOP's line names them)
+            found = [(i, f) for i, f in etsy_publisher.live_listings(conn, ctx.scope) if i not in aside]
             idle = etsy_publisher.idle_listings(conn, ctx.scope)  # 0.12.0: they were listed as live
             gone = "; ".join(f"#{r['listing_id']} {etsy_publisher.state_text(r)}" for r in idle)
             pod = _printify_listings(conn, ctx.scope)
@@ -280,6 +281,9 @@ def _propose_etsy_edit(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Out
             raise ToolError(f"#{listing_id} is a listing Printify made of a product of yours: propose_printify_edit")
         raise ToolError(f"#{listing_id} isn't one of your live listings; etsy_listing without a number lists them")
     state, action, stands = etsy_publisher.etsy_state(row), args.get("state"), etsy_publisher.state_text(row)
+    received = estate.not_hers(conn, ctx.scope, listing_id)  # 0.47.0: a passive one stays as it is, deactivated too
+    if received is not None and not (action == "deactivate" and received["verdict"] == "retire"):
+        raise ToolError(estate.refusal(received))
     if action != "deactivate":  # 0.23.3: taking it out of the shop stays possible (0.28.0: from any line's cycle)
         _listing_stopped(conn, ctx.scope, listing_id, "change or renewal (deactivate it, if it shouldn't sell)")
         _listing_line(ctx, conn, listing_id, "change")

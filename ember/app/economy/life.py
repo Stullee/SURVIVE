@@ -256,6 +256,17 @@ class Life:
         events.record(self.db, "info", "life", f"A new {_mode_label(mode)} life began: {reason}", {"life_id": life_id})
         return life_id
 
+    def succeed(self, conn: sqlite3.Connection, now: str, ended: str, begun: str) -> tuple[int, int]:
+        """0.47.0 (vision/generations.md): the current life ends by the owner's choice, not by money (state 'ended',
+        with ``ended`` as its reason), and the next generation's begins from it (``begun``; its revived_from names
+        the life it follows). The money carries on: the ledger is the world's. Returns the two lives' ids."""
+        life = _current(conn, self.mode)
+        if life is None or life["ended_at"] is not None:
+            raise ValueError("there is no life to hand on")
+        self._end(conn, life, "ended", ended, now)
+        born = self._birth(conn, self.mode, now, begun, revived_from=int(life["id"]))
+        return int(life["id"]), born
+
     def _end(self, conn: sqlite3.Connection, life: sqlite3.Row, state: str, reason: str, now: str) -> None:
         conn.execute(
             "UPDATE lives SET state = ?, state_reason = ?, ended_at = ?, end_reason = ?, ended_mark = ?,"

@@ -34,7 +34,7 @@ from typing import Any
 from ..economy.clock import Clock, from_iso, to_iso
 from ..integrations import etsy, mailstore
 from ..integrations.mail import valid_address
-from . import metrics
+from . import estate, metrics
 from .store import AgentScope
 
 KINDS = ("order", "reply", "inquiry", "favorites", "milestone_due")
@@ -98,6 +98,12 @@ def _orders(conn: sqlite3.Connection, scope: AgentScope, since: str, now: str) -
         )
         when = str(order["ordered_at"])[:16].replace("T", " ")
         text = f"An Etsy order (receipt #{order['receipt_id']}, {when} UTC) of your listing {what}"
+        handed = [i["listing_id"] for i in items if estate.not_hers(conn, scope, int(i["listing_id"])) is not None]
+        if handed:  # 0.47.0: a sale is what brings a listing her predecessor handed on back: the owner's to give her
+            text += (
+                f" (#{', #'.join(str(i) for i in handed)} came from your predecessor and isn't yours to work on: tell"
+                " your owner it sold; they can give it to you)"
+            )
         if _add(conn, scope, "order", str(order["receipt_id"]), text, now):
             noted.append(text)
     return noted

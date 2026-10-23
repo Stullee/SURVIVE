@@ -60,7 +60,21 @@ from ..integrations.mail import Mailbox, select_mailbox
 from ..integrations.pinterest_connection import PinterestConnection
 from ..integrations.printify_connection import PrintifyConnection
 from ..products import blog, site
-from . import agenda, audit, metrics, netguard, news, policy, stages, store, tools, ventures, website, workfiles
+from . import (
+    agenda,
+    audit,
+    generation,
+    metrics,
+    netguard,
+    news,
+    policy,
+    stages,
+    store,
+    tools,
+    ventures,
+    website,
+    workfiles,
+)
 from . import plan as plan_tree
 from .loop import NO_STEP, CycleEnd, CycleRunner, expire_requests, recover_records
 from .memory import CAPS, Memory
@@ -775,6 +789,19 @@ class Agent:
             return end
         finally:
             self.running_cycle = False
+            self._lock.release()
+
+    # --- the next generation (0.47.0) ---
+
+    def begin_generation(self, by: str) -> dict[str, Any]:
+        """0.47.0 (vision/generations.md): the owner's generation change (generation.begin), while no cycle can start:
+        it holds the cycle lock, so a wake waits until the new mind is ready. GenerationError says what is in the
+        way."""
+        if not self._lock.acquire(blocking=False):
+            raise generation.GenerationError("A wake cycle is running: try again when it ends", 409)
+        try:
+            return generation.begin(self, by)
+        finally:
             self._lock.release()
 
     # --- the words the owner removed (0.11.2) ---

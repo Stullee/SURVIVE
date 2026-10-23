@@ -6316,6 +6316,201 @@
     });
   });
 
+  // ------------------------------------------------------------------ next generation
+  // 0.47.0 (vision/generations.md): the estate the owner sorts, a verdict for each product (an adopted one with the
+  // first test they set), and the change they begin in a dialog, typing the agent's name and the next generation's
+  // number, as the kill switch asks for the name.
+
+  var ESTATE_VERDICTS = { adopt: "Adopt", passive: "Passive", retire: "Retire" };
+  var ESTATE_KINDS = { etsy_listing: "Etsy listing", printify_product: "Printify product", kdp_book: "KDP book" };
+
+  function estateLink(value, text) {
+    var url;
+    try { url = new URL(String(value)); } catch (e) { url = null; }
+    if (!url || !/^https:$/.test(url.protocol) || url.username || url.password) return h("span", { text: text });
+    var a = document.createElement("a");
+    a.setAttribute("href", url.href);
+    a.setAttribute("rel", "noopener noreferrer");
+    a.setAttribute("target", "_blank");
+    append(a, [text, h("span", { class: "visually-hidden", text: " (opens in a new tab)" })]);
+    return a;
+  }
+
+  function estateNumbers(e) {
+    var n = isObject(e.numbers) ? e.numbers : {};
+    if (n.gone) return "Gone from the shop.";
+    var days = n.days === null || n.days === undefined ? "?" : count(n.days);
+    var parts = e.kind === "kdp_book"
+      ? ["published " + days + " days ago", count(n.royalties) + " royalty entries recorded", n.linked ? "linked at Amazon" : "no Amazon link yet"]
+      : [days + " days live", plural(n.views, "view"), plural(n.favorites, "favorite"), count(n.sold) + " sold", count(n.reach) + " reach done for it"];
+    if (n.state && n.state !== "active") parts.unshift("at Etsy: " + asText(n.state));
+    return sentence(parts.join(", ")) + "." + (n.rule ? " Its text: " + asText(n.rule) : "");
+  }
+
+  function dayIn(days) { return new Date(Date.now() + days * 86400000).toISOString().slice(0, 10); }
+
+  function estateVerdict(e) {
+    if (e.project_id !== null && e.project_id !== undefined) {  // a line of hers now: the Plan tab keeps or drops it
+      return h("span", { text: "Adopted: line #" + e.project_id + ", first test " + count(e.test_target) + " " + asText(e.test_metric) +
+        " by " + fmtDay(e.test_due) + (e.test_result ? " (" + asText(e.test_result) + ")" : "") });
+    }
+    var label = asText(e.title);
+    var select = h("select", { "aria-label": "Your verdict on " + label }, [h("option", { value: "", text: "Decide…" })].concat(
+      ["adopt", "passive", "retire"].map(function (v) { return h("option", { value: v, text: ESTATE_VERDICTS[v] }); })));
+    select.value = e.verdict || "";
+    var test = isObject(e.default_test) ? e.default_test : {};
+    var metric = h("select", { "aria-label": "First test of " + label + ": what" },
+      (e.kind === "kdp_book" ? ["orders"] : ["views", "favorites", "orders"]).map(function (m) { return h("option", { value: m, text: m }); }));
+    metric.value = e.test_metric || test.metric || metric.options[0].value;
+    var target = h("input", { type: "number", min: "1", max: "100000", class: "estate-target", "aria-label": "First test of " + label + ": how many",
+      value: String(e.test_target || test.target || 1) });
+    var due = h("input", { type: "date", "aria-label": "First test of " + label + ": by", value: e.test_due || dayIn(num(test.days) || 28) });
+    var testBox = h("span", { class: "estate-test" }, "first test: ", target, " ", metric, " by ", due);
+    testBox.hidden = select.value !== "adopt";
+    var save = h("button", { type: "button", class: "btn btn-small", text: "Save" });
+    var said = h("span", { class: "muted small", role: "status" });
+    select.addEventListener("change", function () { testBox.hidden = select.value !== "adopt"; said.textContent = ""; });
+    save.addEventListener("click", function () {
+      if (!select.value) { said.textContent = " Choose a verdict first."; return; }
+      var body = { verdict: select.value };
+      if (select.value === "adopt") body.test = { metric: metric.value, target: Number(target.value), due: due.value };
+      save.disabled = true;
+      said.textContent = " Saving…";
+      request("POST", "api/estate/" + encodeURIComponent(e.kind) + "/" + encodeURIComponent(e.ref), body).then(function (res) {
+        if (!res.ok) throw httpError(res);
+        loadGeneration();
+      }).catch(function (err) {
+        if (!(err instanceof RequestError)) console.error(err);
+        said.textContent = " Not saved: " + errorText(err) + ".";
+      }).then(function () { save.disabled = false; });
+    });
+    return [select, " ", save, said, h("br"), testBox];
+  }
+
+  function estateTable(rows, received) {
+    if (!rows.length) return h("p", { class: "muted", text: received ? "Nothing was handed on." : "No product of hers in the shop yet." });
+    return h("div", { class: "table-wrap" }, h("table", null,
+      h("thead", null, h("tr", null, ["Product", "The rule suggests", "An evaluation proposes", "Your verdict"].map(function (c) {
+        return h("th", { scope: "col", text: c });
+      }))),
+      h("tbody", null, rows.map(function (e) {
+        var title = asText(e.title);
+        return h("tr", null,
+          h("td", null, e.link ? estateLink(e.link, title) : h("span", { text: title }),
+            h("span", { class: "muted small", text: " " + (ESTATE_KINDS[e.kind] || e.kind) + " " + asText(e.ref) }),
+            h("p", { class: "muted small", text: estateNumbers(e) })),
+          h("td", null, h("strong", { text: ESTATE_VERDICTS[e.suggested] || asText(e.suggested) }),
+            h("p", { class: "muted small", text: asText(e.suggested_why) })),
+          h("td", null, e.proposed ? [h("strong", { text: ESTATE_VERDICTS[e.proposed] || asText(e.proposed) }),
+            h("p", { class: "muted small", text: asText(e.proposed_why) + (e.proposed_by ? " (" + asText(e.proposed_by) + ")" : "") })]
+            : h("span", { class: "muted", text: "–" })),
+          h("td", null, estateVerdict(e)));
+      }))));
+  }
+
+  function showGeneration(g) {
+    ui.generation = g;
+    $("generation-now").textContent = "This is generation " + count(g.generation) + " of " + asText(g.agent_name || agentName()) + ".";
+    replace($("generation-estate"), estateTable(arr(g.estate), false));
+    var received = arr(g.received);
+    $("generation-received-head").hidden = !received.length;
+    replace($("generation-received"), received.length ? estateTable(received, true) : []);
+    replace($("generation-checks"), arr(g.checks).map(function (c) {
+      return h("li", { class: c.ok ? "check-ok" : "check-open" }, h("span", { "aria-hidden": "true", text: c.ok ? "✓ " : "✕ " }),
+        h("span", { class: "visually-hidden", text: c.ok ? "Done: " : "Not yet: " }), asText(c.name) + (c.detail ? ": " + asText(c.detail) : ""));
+    }));
+    // The hand-over is folded away in a generation that received one (it was just made), open in the first
+    if (!ui.generationShown) $("generation-prepare").open = !received.length;
+    ui.generationShown = true;
+    $("generation-prepare-summary").textContent = "Prepare the hand-over to generation " + count(g.next);
+    $("generation-begin").textContent = "Begin generation " + count(g.next) + "…";
+    $("generation-begin").disabled = !g.ready;
+  }
+
+  function loadGeneration() {
+    request("GET", "api/generation").then(function (res) {
+      if (!res.ok) throw httpError(res);
+      showGeneration(res.data);
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      setStatusText("generation-status", "Couldn't read the estate (" + errorText(err) + ").", "error");
+    });
+  }
+
+  function generationWord() {
+    var g = ui.generation || {};
+    return asText(g.agent_name || agentName()) + " " + count(g.next);
+  }
+
+  function syncGenerationGo() {
+    $("generation-go").disabled = ui.generationBusy || $("generation-confirm").value.trim().toLowerCase() !== generationWord().toLowerCase();
+  }
+
+  function closeGenerationDialog() {
+    var dialog = $("generation-dialog");
+    if (dialog.open && typeof dialog.close === "function") dialog.close();
+    else dialog.removeAttribute("open");
+  }
+
+  $("generation-begin").addEventListener("click", function () {
+    if (this.disabled || !ui.generation) return;
+    $("generation-confirm-show").textContent = generationWord();
+    $("generation-dialog-title").textContent = "Begin generation " + count(ui.generation.next) + "?";
+    $("generation-confirm").value = "";
+    killFieldError("generation-confirm", "");
+    setStatusText("generation-dialog-status", "", "");
+    syncGenerationGo();
+    var dialog = $("generation-dialog");
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+    $("generation-confirm").focus();
+  });
+  $("generation-confirm").addEventListener("input", function () { killFieldError("generation-confirm", ""); syncGenerationGo(); });
+  $("generation-cancel").addEventListener("click", closeGenerationDialog);
+  $("generation-dialog").addEventListener("close", function () {
+    var btn = $("generation-begin");
+    if (!btn.disabled) btn.focus();
+  });
+  $("generation-form").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    if (ui.generationBusy) return;
+    ui.generationBusy = true;
+    syncGenerationGo();
+    setStatusText("generation-dialog-status", "Beginning the next generation…", "");
+    request("POST", "api/generation", { confirm: $("generation-confirm").value.trim() }, { timeout: 120000 }).then(function (res) {
+      var data = isObject(res.data) ? res.data : {};
+      if (res.ok) {
+        closeGenerationDialog();
+        setStatusText("generation-status", "Generation " + count(data.generation) + " began: life #" + count(data.ended) + " ended, life #" +
+          count(data.born) + " began. The database was copied to " + asText(data.backup) + " first.", "ok");
+        ui.generationShown = false;  // the next hand-over folds away again
+        loadGeneration();
+        refresh();
+        return;
+      }
+      if (res.status === 422 && data.field === "confirm" && typeof data.error === "string") {
+        killFieldError("generation-confirm", endSentence(sentence(data.error)));
+        setStatusText("generation-dialog-status", "Nothing was changed.", "error");
+        return;
+      }
+      if (res.status === 409 && Array.isArray(data.checks) && data.checks.length) {
+        closeGenerationDialog();
+        showGeneration(Object.assign({}, ui.generation, { checks: data.checks, ready: false }));
+        setStatusText("generation-status", "It can't begin yet: see what it waits for. Nothing was changed.", "error");
+        return;
+      }
+      ownerFailure(res, {}, function (msg) { setStatusText("generation-dialog-status", msg, "error"); }, null);
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      setStatusText("generation-dialog-status", (err.kind === "timeout" ? "Ember did not answer in time" : "Couldn't reach Ember") +
+        ", so it's not clear whether the next generation began. Look at the Status card after the next update.", "error");
+      refresh();
+    }).then(function () {
+      ui.generationBusy = false;
+      syncGenerationGo();
+    });
+  });
+
   // ------------------------------------------------------------------ inbox composer
 
   $("composer").addEventListener("submit", function (ev) { ev.preventDefault(); sendMessage(); });
@@ -6513,7 +6708,8 @@
     replace(list, given.map(function (f) {
       var week = Array.isArray(f.week) ? " (week " + asText(f.week[0]) + " to " + asText(f.week[1]) + ")" : "";
       return h("li", { text: "Given " + fmtDateTime(f.created_at) + ": \u201c" + asText(f.evaluation) + "\u201d" + week + ", " +
-        plural(Number(f.cases) || 0, "case") + ", " + plural(Number(f.corrections) || 0, "correction") + "." });
+        plural(Number(f.cases) || 0, "case") + ", " + plural(Number(f.corrections) || 0, "correction") +
+        (Number(f.estate) ? ", " + plural(Number(f.estate), "proposal") + " for the estate" : "") + "." });
     }));
   }
 
@@ -6561,10 +6757,17 @@
       return h("li", { text: asText(c.subject) + " (" + asText(c.cause).replace(/_/g, " ") + ", " + asText(c.sure) + "): " +
         asText(c.why).replace(/\.?$/, ".") + (c.lesson ? " Lesson: " + asText(c.lesson) : "") });
     });
+    // 0.47.0: its proposals for the estate are yours, on the System tab's Next generation card; Ember never sees them
+    var proposals = arr(p.estate).map(function (e) {
+      return h("li", { text: (ESTATE_KINDS[e.kind] || asText(e.kind)) + " " + asText(e.ref) + ": " +
+        (ESTATE_VERDICTS[e.verdict] || asText(e.verdict)) + ". " + asText(e.why) });
+    });
     replace($("feedback-preview"), [
-      h("p", { text: "Ember gets " + plural(arr(p.cases).length, "case") + " and this message from you:" }),
-      h("pre", { class: "diag-report", text: asText(p.message) }),
+      p.message ? h("p", { text: "Ember gets " + plural(arr(p.cases).length, "case") + " and this message from you:" }) : null,
+      p.message ? h("pre", { class: "diag-report", text: asText(p.message) }) : null,
       cases.length ? h("ul", null, cases) : null,
+      proposals.length ? h("p", { text: plural(proposals.length, "proposal") + " for the estate go to the Next generation card on the System tab, beside the rule's (Ember doesn't see them):" }) : null,
+      proposals.length ? h("ul", null, proposals) : null,
     ]);
     $("feedback-preview").hidden = false;
   }
@@ -6598,8 +6801,9 @@
       if (!res.ok) throw httpError(res);
       clearFeedback();
       $("feedback-file").value = "";
-      setStatusText("feedback-status", "Given: " + plural(arr(res.data.cases).length, "case") + " and your message #" +
-        asText(res.data.message_id) + " to Ember.", "ok");
+      setStatusText("feedback-status", res.data.message_id === null || res.data.message_id === undefined
+        ? "Given: its proposals for the estate are on the System tab's Next generation card."
+        : "Given: " + plural(arr(res.data.cases).length, "case") + " and your message #" + asText(res.data.message_id) + " to Ember.", "ok");
       loadExport();
       window.setTimeout(refresh, 1000);
     }).catch(function (err) {
@@ -11187,6 +11391,7 @@
     if (name === "plan") { loadPlan(); loadRoadmap(); loadVentures(); }
     if (name === "library") loadLibrary();
     if (name === "diagnostics") loadExport();  // 0.43.0
+    if (name === "system") loadGeneration();  // 0.47.0
     if (name === "inbox" && ui.chat.stick) scrollChatToEnd();  // it can't scroll while the tab is hidden
   }
 

@@ -3,6 +3,12 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.47.0
+
+Ember's code can keep a record of the shop's products for your owner (their numbers and a suggested verdict) and,
+should your owner choose one day, hand them on to a later generation of this agent. Nothing changes in what you see
+or can do.
+
 ## 0.46.0
 
 Ember's code keeps your records in two parts now: your own, and the world's you work in. Nothing changes in what you

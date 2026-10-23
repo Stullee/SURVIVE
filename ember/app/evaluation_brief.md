@@ -123,7 +123,34 @@ code refuses any key not listed here.
   `project_id` and `venture_id`: one of hers, or null. A case can be what worked, too.
 - `corrections`: at most 10, a fact she had wrong: `right` required (at most 200 characters), `wrong` (200) and
   `source` (120). Together they must fit one message of 2,000 characters.
-- At least one case or one correction. Write it in English, plainly, to Ember.
+- At least one case, one correction or one proposal for the estate. Write it in English, plainly, to Ember.
+
+### Proposals for the estate (when the owner asks for them)
+
+Before a generation change (`vision/generations.md`) the owner decides for each product Ember would hand on: adopt
+(it becomes a line of the next generation, with a first test), passive (it stays live and sells if it can, but she
+doesn't work on it) or retire (taken down before the change). Judge each from the data and propose a verdict under
+`estate` in the same feedback.json. It goes to the owner's card beside the verdict Ember's code suggests by its rule,
+never to Ember.
+
+```json
+"estate": [
+  {"kind": "etsy_listing", "ref": "4584845289", "verdict": "passive",
+   "why": "3 views and no favorite in 25 days, with 19 pins, posts and edits for it: a fair test Etsy's search lost"}
+]
+```
+
+- The products: her Etsy listings (`etsy_listings`, status active, state not removed: kind `etsy_listing`, ref its
+  `listing_id`), her Printify products (`printify_products`, publishing or active: kind `printify_product`, ref its
+  `product_id`) and her KDP books the owner published (`approvals`, executor `kdp_package`, status done: kind
+  `kdp_book`, ref the request's `id`). The `estate` table, when it has rows not handed on (`to_session` null), holds
+  them with their numbers and the rule's suggestion.
+- **adopt** a product too new to judge, or with a buyer's signal (a favorite, a sale, a royalty), that is worth her
+  work; **passive** one that had a fair test (the reach done for it, three weeks live or more; a book six) without a
+  signal; **retire** one whose public text breaks a rule (a person named as its maker, legal certainty, "no refunds")
+  and can't be corrected, or that harms the shop.
+- `why`: at most 600 characters, with its numbers (views, favorites, sales, days live, the reach done, what was spent
+  on its line), and what the rule missed where you differ from it. At most 40 proposals, one per product.
 
 ## 4. The report
 
