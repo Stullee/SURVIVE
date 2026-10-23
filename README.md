@@ -678,6 +678,54 @@ It reads the last 30 days' emails it still finds under their number on the
 server, a few per check. A stored email stays as it was; its new text is kept
 beside it, the agent sees that one, and a "stop" in it counts.
 
+0.46.0 lays the groundwork for a generation change
+([vision/generations.md](vision/generations.md)): a later Ember that starts
+with a clean mind in the same world. Ember's records are kept in two parts now,
+her mind's (projects, ventures, plan, requests, messages, cases, playbook) and
+the world's (the shop and its listings, Printify, Pinterest, Bluesky, the
+website and blog, the mailbox and its opt-outs, your rulebook and library),
+each with its own session number. A plain new session for her mind would have
+cut her off from the real world: the Etsy sync would have read no orders, the
+opt-outs been forgotten, a listing fee noted before dropped unbooked, and KDP's
+weekly limit counted from zero. Every query of the world's tables now reads the
+world's session (a test reads the code to keep it so), and NEVER's first
+contact and first publication and an unlock's scope read the world a request
+works in (migration 0102). Until a generation change both numbers are the same,
+so nothing Ember sees or does changes. Nothing begins a generation yet: that is
+the next step, with the estate of products and the inheritance.
+
+0.47.0 builds the generation change itself and the estate
+([The next generation](ember/DOCS.md#the-next-generation)). On the System tab
+you sort the products Ember would hand on: adopt (it becomes a line of the next
+generation, with a first test you set; a missed test holds the line until you
+keep or drop it, and she can't lift that hold), passive (it stays live, synced
+and its sales recorded, but she doesn't work on it; her tools refuse to, and a
+sale is yours to give her) or retire (taken down before the change). Ember's
+code suggests each verdict by a rule (too new to judge or a buyer's signal:
+adopt; a fair test without one: passive; a text that breaks a rule or a product
+that is down: retire), and an evaluation judges them from the data too: its
+`feedback.json` may propose a verdict for each product, with why, which shows
+beside the rule's (Ember never sees it). Once
+nothing waits, you type the agent's name and the next generation's number:
+Ember's code copies the database, moves her memory and workspace aside, ends the
+life (state ended: not a death) and begins the next with a clean mind in the
+same world, the money included. The adopted products become her lines at her
+first cycle, with their files. What she inherits of what her predecessor
+learned is the next step.
+
+0.48.0 builds that inheritance ([The next generation](ember/DOCS.md#the-next-generation)).
+An AI evaluator drafts it from the whole-life export (its `INHERIT.md` says
+how) as an `inheritance.json`: at most 12 principles, each with the cases
+behind it, a direction for her seed strategy, and craft files (a checklist, a
+book's spec). Ember's code refuses a principle that cites no case, a case that
+was too early or low-sure, a tool or an id of hers. You read its preview on the
+System tab, untick what shouldn't pass and give it. At the change the
+principles enter the new playbook as inherited hypotheses: her predecessor's
+cases count as one case, two of her own establish one, one against disputes it,
+60 days without one retire it. Ember's code also writes the facts of the old
+generation's work (no model writes them), a seed strategy and identity, and her
+letter to the next generation, which one call of hers writes when you ask.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

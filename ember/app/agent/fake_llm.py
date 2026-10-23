@@ -2497,6 +2497,8 @@ class FakeTransport:
     def _will(self, request: Mapping[str, Any], rng: random.Random, chaos: str | None) -> _Draft:
         context = _text_of(request["messages"][-1].get("content"))
         system = json.dumps(request.get("system") or "", ensure_ascii=False)
+        if "letter to the next generation" in system.lower():  # 0.48.0
+            return _Draft([_text(letter_text(context))], note="letter")
         if "last will" not in (system + context).lower():
             return _Draft([_text("This is a simulated answer from Ember's dry-run model.")], note="plain answer")
         if chaos == "empty":
@@ -2731,6 +2733,25 @@ def draft_document(
     if len(text) > 2_500:
         text = text[: text.rfind("\n", 0, 2_500)]
     return text
+
+
+def letter_text(context: str) -> str:
+    """0.48.0: a letter to the next generation (prompts.LETTER_RULES), from the context's projects."""
+    projects = parse_projects(context)
+    tried = [f"- {p.title} ({p.status})" for p in projects[:5]] or ["- I never got a project going."]
+    return "\n".join(
+        [
+            "To the next generation,",
+            "",
+            f"I am {_agent_name(context)}, the generation before you. What I tried:",
+            *tried,
+            "",
+            "What I would do differently: test demand with one small listing before making more, and bring reach to"
+            " every launch. I am unsure of my own numbers below ten views: they were too few to judge.",
+            "",
+            "This is my view, not evidence: your own cases decide.",
+        ]
+    )
 
 
 def last_will_text(context: str, rng: random.Random) -> str:

@@ -30,7 +30,21 @@ from ..economy.life import KILLED_KEY
 from ..economy.service import Economy, Reply
 from ..integrations import etsy, executor, mailstore, retry
 from ..integrations.mail import BODY_MAX, valid_address
-from . import audit, knockouts, library, memory, metrics, plan, policy, predictions, roadmap, stages, store, ventures
+from . import (
+    audit,
+    estate,
+    knockouts,
+    library,
+    memory,
+    metrics,
+    plan,
+    policy,
+    predictions,
+    roadmap,
+    stages,
+    store,
+    ventures,
+)
 from .store import AgentScope
 
 KILL_RESET_KEY = "control.kill_reset"
@@ -180,6 +194,29 @@ class Owner:
         if row is None:
             raise OwnerError("id", "no such approval request", 404)
         return row
+
+    # --- the estate (0.47.0) ---
+
+    def estate_decide(self, kind: str, ref: str, body: Any, who: str | None) -> Reply:
+        """0.47.0 (vision/generations.md): the owner's verdict on a product the next generation would get (or got):
+        adopt, with its first test ({"metric", "target", "due"}; the defaults without one), passive or retire."""
+
+        def run() -> Reply:
+            data = _body(body, {"verdict", "test"})
+            test = data.get("test")
+            if test is not None and not isinstance(test, dict):
+                raise OwnerError("test", "send the first test as an object: metric, target, due")
+            verdict = str(data.get("verdict") or "")
+            with self.db.transaction() as conn:
+                try:
+                    row = estate.decide(conn, self.scope, self.clock, kind, ref, verdict, who or "the owner", test)
+                except estate.EstateError as exc:
+                    raise OwnerError(exc.field, str(exc), exc.status) from exc
+            what = estate.KIND_WORDS.get(kind, kind)
+            events.record(self.db, "info", "owner", f"{who or 'The owner'}: {what} {ref} to {verdict} in the estate")
+            return Reply(200, {"estate": estate.to_json(row)})
+
+        return _reply(run)
 
     # --- approvals ---
 
@@ -470,7 +507,7 @@ class Owner:
             conn.execute(
                 "INSERT INTO rules (mode, session, place, created_at, entered_by, text, replaces)"
                 " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (self.scope.mode, self.scope.session, place, self._now(), who, text, replaces),
+                (self.scope.mode, self.scope.world_session, place, self._now(), who, text, replaces),
             ).lastrowid
         )
 

@@ -28,6 +28,7 @@ from ..integrations import mailstore
 from . import (
     bets,
     digest,
+    generation,
     learning,
     library,
     obligations,
@@ -282,6 +283,7 @@ class Snapshot:
     workspace: list[str] = field(default_factory=list)
     workspace_usage: str = ""  # 0.12.0: what the workspace holds of its limits, for STATUS
     paid: str = ""  # 0.39.8: the owner's paid tests of Ember's listings, running or lately ended (paid.status_text)
+    generation: str = ""  # 0.47.0: which generation she is, and her first days what passed to her (generation.py)
     journal: list[sqlite3.Row] = field(default_factory=list)
     news: News = field(default_factory=News)
     research: list[sqlite3.Row] = field(default_factory=list)
@@ -429,6 +431,7 @@ def snapshot(
         workspace=files,
         workspace_usage=_usage_line(workspace),
         paid=paid.status_text(conn, scope, today) if today is not None else "",
+        generation=generation.status_line(conn, scope, today, status.born_at) if today is not None else "",
         journal=journal,
         news=news or News(),
         research=store.recent_research(conn, scope, RESEARCH_CALLS),
@@ -560,6 +563,8 @@ def status_text(s: Snapshot, dry_run: bool) -> str:
         f"Spent today ${micros_to_usd(s.today_spend):.2f} of ${s.daily_cap:.2f}."
         f" This cycle may spend up to ${s.cycle_cap:.2f}{s.cap_note}.",
     ]
+    if s.generation:
+        lines.append(s.generation)
     if s.burn:
         lines.append(f"Burn mode, set by Ember's code: {s.burn}.")
     if s.messages:
@@ -1185,7 +1190,8 @@ def _venture_brief(s: Snapshot) -> str:
     return VENTURE_BRIEF if s.brainstorm else VENTURE_BRIEF.replace(BRAINSTORM_BRIEF, "")
 
 
-def will_context(s: Snapshot, dry_run: bool) -> str:
+def will_context(s: Snapshot, dry_run: bool, task: str = "Write your last will now.") -> str:
+    """The last will's context; 0.48.0, with another ``task``, her letter to the next generation's."""
     closed = "\n".join(f"- {flat(j['summary'])}" for j in reversed(s.journal)) or "No journal yet."
     parts = [
         ("STATUS", status_text(s, dry_run)),
@@ -1194,7 +1200,7 @@ def will_context(s: Snapshot, dry_run: bool) -> str:
         ("RECENT JOURNAL", closed),
         (LESSONS_HEADING, lessons_text(s, 1_200)),
         (STRATEGY_HEADING, s.memory.get("strategy", "")[:800]),
-        ("TASK", "Write your last will now."),
+        ("TASK", task),
     ]
     return cut(_sections(parts), WILL_BUDGET)
 

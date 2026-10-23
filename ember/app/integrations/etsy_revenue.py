@@ -92,7 +92,7 @@ def record(db: Database, clock: Clock, economy: Economy, scope: AgentScope, sett
     if not since:  # turned on without a restart's audit (tests): from today
         since = clock.today().isoformat()
         db.set_meta(SINCE_KEY, since)
-    where, params = scope.where()
+    where, params = scope.world_where()
     with db.connection() as conn:
         # An order from before 0.12.0 has no status: its total is the whole receipt's, so it stays the owner's.
         orders = conn.execute(
@@ -277,7 +277,7 @@ def _listing_fees(db: Database, clock: Clock, economy: Economy, scope: AgentScop
         fee = json.loads(row["value"])
         if fee["mode"] != scope.mode:
             continue  # recorded when that mode runs again
-        if fee["session"] == scope.session:
+        if fee["session"] == scope.world_session:  # 0.46.0: a listing's fee is the world's
             with db.connection() as conn:
                 project_id, venture_id = order_project(conn, scope, [{"listing_id": fee["listing_id"]}])
             prepared = PreparedEntry(

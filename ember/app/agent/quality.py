@@ -28,7 +28,7 @@ from typing import Any
 from ..economy.clock import local_date
 from ..integrations import etsy_publisher, printify, printify_publisher
 from ..products import images
-from . import prompts, reach, ventures
+from . import estate, prompts, reach, ventures
 from .sandbox import Jail, SandboxError
 from .store import AgentScope
 
@@ -62,6 +62,8 @@ def due(conn: sqlite3.Connection, scope: AgentScope, today: date) -> tuple[int, 
         for listing in funnel.listings:
             if ventures.listing_stopped(conn, scope, listing) is not None:
                 continue  # 0.24.0: none for a listing the owner's park stopped (0.23.3: none may change it)
+            if estate.not_hers(conn, scope, listing) is not None:
+                continue  # 0.47.0: nor for one her predecessor handed on that isn't hers
             ok = next((r for r in rows if r["status"] == "ok" and r["listing_id"] == listing), None)
             if ok is None:
                 candidates.append(("", project_id, listing))
@@ -77,7 +79,7 @@ def due(conn: sqlite3.Connection, scope: AgentScope, today: date) -> tuple[int, 
 
 def _title(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> str | None:
     """A listing's title as Ember's records keep it (its own or the one Printify made), or None."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     row = conn.execute(
         f"SELECT title FROM etsy_listings WHERE {where} AND listing_id = ? UNION ALL SELECT title FROM"
         f" printify_products WHERE {where} AND listing_id = ? LIMIT 1",
@@ -121,11 +123,11 @@ def case(
 ) -> tuple[str, bytes | None]:
     """What the critic reads of a project's live listing (``listing_id``): the listing as text, and its cover photo (a
     PNG) if readable. 0.36.0: on ``today``, the owner's freeze of titles and tags (a fix of them can't be made)."""
-    where, params = scope.where()
+    world, shop = scope.world_where()
     project = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
     rows = conn.execute(
-        f"SELECT * FROM etsy_listings WHERE {where} AND listing_id = ? AND status = 'active' ORDER BY id DESC",
-        (*params, listing_id),
+        f"SELECT * FROM etsy_listings WHERE {world} AND listing_id = ? AND status = 'active' ORDER BY id DESC",
+        (*shop, listing_id),
     ).fetchall()
     lines = [f"PRODUCT LINE: {project['title'] if project else project_id}", f"LISTING: #{listing_id}"]
     picture = None
@@ -163,6 +165,7 @@ def case(
             lines.append("Its listing isn't in Ember's records: judge from its title.")
             title = _title(conn, scope, listing_id)
             lines += [f"Title: {title}"] if title else []
+    where, params = scope.where()
     note = conn.execute(
         f"SELECT * FROM demand_notes WHERE {where} AND project_id = ? ORDER BY id DESC LIMIT 1", (*params, project_id)
     ).fetchone()
@@ -325,7 +328,7 @@ def changed_since(conn: sqlite3.Connection, scope: AgentScope, check: sqlite3.Ro
     listing is checked again next, ``due``). 0.39.0: a change of a Printify product's listing, at Printify, too."""
     if check["listing_id"] is None:
         return False
-    where, params = scope.where()
+    where, params = scope.world_where()
     return (
         conn.execute(
             f"SELECT 1 FROM etsy_edits WHERE {where} AND listing_id = ? AND status IN ('done', 'partial')"

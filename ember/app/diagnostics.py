@@ -36,6 +36,7 @@ from . import paths, privacy
 from .agent import library, plan, ventures
 from .agent.context import RESEARCH_HEADING
 from .agent.sandbox import kind_of
+from .agent.store import WORLD_TABLES
 from .agent.tools import LIBRARY_TOOLS
 from .db import MAX_BACKUPS, utcnow
 from .economy.clock import to_iso
@@ -997,7 +998,7 @@ def _agent(state: AppState, full: bool = True) -> str:
         return "agent not running"
     scope = agent.scope()
     where, params = scope.where()
-    out = [f"scope: mode={scope.mode} session={scope.session} life={scope.life_id}"]
+    out = [f"scope: mode={scope.mode} session={scope.session} world={scope.world_session} life={scope.life_id}"]
     tables: list[tuple[str, list[Any], list[str]]] = []  # each table's heading, rows and columns
     with state.db.connection() as conn:
         for table, columns, limit in (
@@ -1224,9 +1225,10 @@ def _agent(state: AppState, full: bool = True) -> str:
                 20,
             ),
         ):
+            mine, kept = scope.world_where() if table in WORLD_TABLES else (where, params)  # 0.46.0: the world's
             rows = conn.execute(
-                f"SELECT * FROM {table} WHERE {where} ORDER BY id DESC LIMIT ?",
-                (*params, limit),  # noqa: S608 - fixed names
+                f"SELECT * FROM {table} WHERE {mine} ORDER BY id DESC LIMIT ?",
+                (*kept, limit),  # noqa: S608 - fixed names
             ).fetchall()
             if table == "messages":
                 rows = [{**dict(r), "seen": _seen(r)} for r in rows]
@@ -1265,8 +1267,9 @@ def _agent(state: AppState, full: bool = True) -> str:
         tables.append(("-- observations (by subject and metric)", observed, columns))
         learned = []
         if full:  # what the study learned: Ember's words, but drawn from the owner's documents (full report only)
+            world, shop = scope.world_where()  # 0.46.0: the owner's library is the world's
             learned = conn.execute(
-                f"SELECT document_id, part, topic, text FROM learnings WHERE {where} ORDER BY id DESC LIMIT 20", params
+                f"SELECT document_id, part, topic, text FROM learnings WHERE {world} ORDER BY id DESC LIMIT 20", shop
             ).fetchall()
         # The scripts upgrade requests carry: what the one who builds the upgrade needs (the report is its hand-off).
         scripts = conn.execute(
@@ -1431,8 +1434,8 @@ def _integrations(state: AppState, full: bool = True) -> str:
     if agent is None:
         return "agent not running"
     scope = agent.scope()
-    where, params = scope.where()
-    joined, _ = scope.where("a")
+    where, params = scope.world_where()  # 0.46.0: the mailbox is the world's, the requests to send her mind's
+    joined, mind = scope.where("a")
     email = agent.integrations()["email"]
     if not full:  # 0.15.0: an opt-out's reason quotes the sender's words
         email["suppressed"] = [{**s, "reason": _their_words(s["reason"])} for s in email["suppressed"]]
@@ -1447,7 +1450,7 @@ def _integrations(state: AppState, full: bool = True) -> str:
         sends = conn.execute(
             "SELECT x.id, x.approval_id, x.status, x.started_at, x.finished_at, x.result, x.error FROM email_actions x"
             f" JOIN approvals a ON a.id = x.approval_id WHERE {joined} ORDER BY x.id DESC LIMIT 15",
-            params,
+            mind,
         ).fetchall()
         suppressed = conn.execute(f"SELECT COUNT(*) FROM email_suppressions WHERE {where}", params).fetchone()[0]
     columns = [

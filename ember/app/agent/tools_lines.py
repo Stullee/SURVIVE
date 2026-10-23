@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from . import paid, plan, roadmap, store, ventures, workfiles
+from . import estate, paid, plan, roadmap, store, ventures, workfiles
 from .store import OPEN_STATUSES, AgentScope
 from .tools_context import ToolContext, ToolError, _cut
 from .tools_limits import WORKSHOP_FOLDER
@@ -50,7 +50,11 @@ def _stopped(conn: Any, scope: AgentScope, project_id: int, channel: str | None 
 
 
 def _listing_stopped(conn: Any, scope: AgentScope, listing_id: int, what: str) -> None:
-    """0.23.3: no work on a listing of a product line the owner's park or kill stopped (``what`` is refused)."""
+    """0.23.3: no work on a listing of a product line the owner's park or kill stopped (``what`` is refused). 0.47.0:
+    nor on one her predecessor handed on that isn't hers (passive, or retired: estate.not_hers)."""
+    received = estate.not_hers(conn, scope, listing_id)
+    if received is not None:
+        raise ToolError(estate.refusal(received))
     venture = ventures.listing_stopped(conn, scope, listing_id)
     if venture is not None:
         did = "killed" if venture["stage"] == "killed" else "parked"

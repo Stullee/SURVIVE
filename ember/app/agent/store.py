@@ -24,19 +24,69 @@ INBOX_PAGE = 30  # the Inbox's messages at a time (0.15.0: older ones on request
 
 @dataclass(frozen=True)
 class AgentScope:
-    """Whose records: the mode, the dry-run session (0 when live) and the current life."""
+    """Whose records: the mode, the session of her mind (the dry-run session; 0 when live until a generation change)
+    and the current life.
+
+    0.46.0 (vision/generations.md): ``world`` is the session of the world she works in, which a generation change
+    keeps: the shop and its listings, the Printify products, the boards, pins and posts, the website and blog, the
+    mailbox and its opt-outs, the owner's rulebook and library (``WORLD_TABLES``). Live it is 0, always; in dry run the
+    session its test world began with. None: the mind's session, as every scope was before (the two are the same until
+    a generation change)."""
 
     mode: str
     session: int
     life_id: int
+    world: int | None = None
 
     @property
     def simulated(self) -> bool:
         return self.mode == "dry_run"
 
+    @property
+    def world_session(self) -> int:
+        return self.session if self.world is None else self.world
+
     def where(self, alias: str = "") -> tuple[str, tuple[Any, ...]]:
+        """Her mind's records: her projects, ventures, plan, requests, messages, journal, cases and playbook."""
         prefix = f"{alias}." if alias else ""
         return f"{prefix}mode = ? AND {prefix}session = ?", (self.mode, self.session)
+
+    def world_where(self, alias: str = "") -> tuple[str, tuple[Any, ...]]:
+        """0.46.0: the world's records (``WORLD_TABLES``), which every generation of hers shares."""
+        prefix = f"{alias}." if alias else ""
+        return f"{prefix}mode = ? AND {prefix}session = ?", (self.mode, self.world_session)
+
+    def minds_where(self, alias: str = "") -> tuple[str, tuple[Any, ...]]:
+        """0.46.0: the records of every mind of this world, hers and her predecessors': what a platform's own limit
+        counts (KDP's new titles a week), which a generation change doesn't reset. A mind's session is never below
+        its world's: sessions only count up, and a world begins with the session it is first worked in."""
+        prefix = f"{alias}." if alias else ""
+        return f"{prefix}mode = ? AND {prefix}session >= ?", (self.mode, self.world_session)
+
+
+# 0.46.0 (vision/generations.md): the tables of the world, read with ``AgentScope.world_where`` and written with its
+# ``world_session``; every other table of hers is her mind's. tests/generations/test_world_audit.py checks every query.
+WORLD_TABLES = (
+    "etsy_listings",
+    "etsy_edits",
+    "etsy_orders",
+    "etsy_photo_ids",
+    "printify_products",
+    "printify_edits",
+    "printify_orders",
+    "pinterest_boards",
+    "pinterest_pins",
+    "bluesky_posts",
+    "site_pages",
+    "site_downloads",
+    "site_uploads",
+    "blog_posts",
+    "emails",
+    "email_suppressions",
+    "rules",
+    "library_documents",
+    "learnings",
+)
 
 
 def canonical(value: Any) -> str:
@@ -687,14 +737,14 @@ def upgrades_for_owner(conn: sqlite3.Connection, scope: AgentScope, decided: int
 
 def rules(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
     """0.36.0: the owner's rulebook (in place of the standing instructions): the rules in force, in their places."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     return conn.execute(
         f"SELECT * FROM rules WHERE {where} AND removed_at IS NULL ORDER BY place, id", params
     ).fetchall()
 
 
 def rule(conn: sqlite3.Connection, scope: AgentScope, rule_id: int) -> sqlite3.Row | None:
-    where, params = scope.where()
+    where, params = scope.world_where()
     return conn.execute(f"SELECT * FROM rules WHERE {where} AND id = ?", (*params, rule_id)).fetchone()
 
 

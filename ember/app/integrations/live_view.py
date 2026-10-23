@@ -314,11 +314,12 @@ def snapshot(agent: Agent) -> live.Snapshot:
         milestones = [(t.text, t.note) for t in doing.titles if t.kind == "milestone" and t.state == "shown"]
         notes += [f"a {t.kind}'s title" for t in doing.titles if t.state != "shown"]
         fresh = to_iso(now - timedelta(hours=ETSY_SHOWN_HOURS))
+        world, shop = scope.world_where()  # 0.46.0: the shop is the world's
         for row in conn.execute(
-            f"SELECT listing_id, title, views, favorites FROM etsy_listings WHERE {where} AND status = 'active'"
+            f"SELECT listing_id, title, views, favorites FROM etsy_listings WHERE {world} AND status = 'active'"
             f" AND COALESCE(state, '{etsy.LIVE_STATE}') = '{etsy.LIVE_STATE}' AND listing_id IS NOT NULL"
             " AND synced_at >= ? ORDER BY id DESC LIMIT ?",
-            (*params, fresh, LISTINGS_SHOWN),
+            (*shop, fresh, LISTINGS_SHOWN),
         ):
             views, favorites = row["views"], row["favorites"]
             listings.append(

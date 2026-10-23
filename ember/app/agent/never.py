@@ -137,10 +137,14 @@ def legal(conn: sqlite3.Connection, row: Mapping[str, Any]) -> bool:
     return _legal(f" {kept['words'] if kept else ''} {raw} ")
 
 
-_WROTE = f"SELECT 1 FROM emails WHERE mode = ? AND session = ? AND {mailstore.person()} AND lower(from_addr) = lower(?)"
-_PUBLISHED = "SELECT 1 FROM etsy_listings WHERE mode = ? AND session = ? AND status = 'active'"
-_BOARD = "SELECT 1 FROM pinterest_boards WHERE mode = ? AND session = ? AND status = 'active'"
-_PRODUCT = "SELECT 1 FROM printify_products WHERE mode = ? AND session = ? AND status IN ('publishing', 'active')"
+# 0.46.0 (migration 0102): what Ember received and published is the world's, kept with its world's session, which is
+# never above the session of a mind that works in it: a request of a later generation reads its predecessors' too.
+_WROTE = (
+    f"SELECT 1 FROM emails WHERE mode = ? AND session <= ? AND {mailstore.person()} AND lower(from_addr) = lower(?)"
+)
+_PUBLISHED = "SELECT 1 FROM etsy_listings WHERE mode = ? AND session <= ? AND status = 'active'"
+_BOARD = "SELECT 1 FROM pinterest_boards WHERE mode = ? AND session <= ? AND status = 'active'"
+_PRODUCT = "SELECT 1 FROM printify_products WHERE mode = ? AND session <= ? AND status IN ('publishing', 'active')"
 
 
 def _one(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...]) -> bool:
@@ -157,7 +161,8 @@ def _to(row: Mapping[str, Any]) -> Any:
 
 def reasons(conn: sqlite3.Connection, row: Mapping[str, Any]) -> list[str]:
     """The NEVER classes a request (a row of approvals) falls in (keys of CLASSES), none when an unlock may carry it.
-    What Ember received and published counts in the request's own mode and session."""
+    What Ember received and published counts in the request's own mode, in its world (0.46.0: at or below its
+    session)."""
     found = []
     if row["type"] == "create_account":
         found.append("account")

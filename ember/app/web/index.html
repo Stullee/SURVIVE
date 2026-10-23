@@ -663,6 +663,46 @@
         <h2>Status</h2>
         <dl class="facts" id="system-facts"></dl>
       </article>
+      <!-- 0.47.0 (vision/generations.md): the estate the owner sorts, and the generation change they begin -->
+      <article class="card" id="generation-card" aria-labelledby="generation-title">
+        <h2 id="generation-title">Next generation</h2>
+        <p class="card-sub">When you end this life by your choice, the next generation begins with a clean mind in the same world: her projects, ventures, plan, requests, messages, cases, playbook, memory and files start empty (the old ones are kept beside them); the money, the shop, the accounts, the mailbox and its opt-outs, your rulebook and your library carry on. Her products pass without their history: you decide for each.</p>
+        <p class="muted small" id="generation-now"></p>
+        <h3 class="small-head" id="generation-received-head" hidden>What this generation received</h3>
+        <div id="generation-received"></div>
+        <div id="generation-received-inheritance"></div>
+        <details class="generation-prepare" id="generation-prepare">
+          <summary id="generation-prepare-summary">Prepare the hand-over to the next generation</summary>
+          <h3 class="small-head">The estate: what she would hand on</h3>
+          <p class="hint">Adopt: it becomes a line of the next generation, with a first test you set; a missed test holds the line until you keep or drop it. Passive: it stays live, synced and its sales recorded, but she doesn't work on it; if it sells, you can adopt it then. Retire: take it down before the change. Ember's code suggests a verdict by its rule; an evaluation's proposal shows beside it.</p>
+          <div id="generation-estate"></div>
+          <h3 class="small-head">Her letter to the next generation</h3>
+          <p class="hint" id="generation-letter-hint">Her own words: what she tried, what worked and what didn't, what she would do differently. When you ask, one call of hers writes it at her next wake, as a last will is written. It passes as a file in her successor's workspace: her view, not evidence.</p>
+          <div id="generation-letter"></div>
+          <div class="diag-actions" role="group" aria-label="Her letter">
+            <button type="button" class="btn" id="generation-letter-ask">Ask for her letter</button>
+          </div>
+          <p class="form-status" id="generation-letter-status" role="status"></p>
+          <h3 class="small-head">The inheritance: what she learned</h3>
+          <p class="hint" id="inheritance-hint">An evaluation drafts it from the whole-life export as an inheritance.json (the export's INHERIT.md says how): at most 12 principles with the cases of hers behind them, a direction for the seed strategy, and craft files. Ember's code checks it, and you strike what shouldn't pass. The principles enter the next generation's playbook as hypotheses to test, not rules: two cases of her own establish one, one against disputes it. The facts of her work, a seed strategy and identity are written at the change whatever you give.</p>
+          <div id="generation-inheritance"></div>
+          <div class="field">
+            <label for="inheritance-file">inheritance.json</label>
+            <input type="file" id="inheritance-file" accept=".json,application/json" aria-describedby="inheritance-hint">
+          </div>
+          <div class="inheritance-preview" id="inheritance-preview" hidden></div>
+          <div class="diag-actions" role="group" aria-label="Inheritance">
+            <button type="button" class="btn btn-primary" id="inheritance-give" hidden>Give the inheritance</button>
+          </div>
+          <p class="form-status" id="inheritance-status" role="status"></p>
+          <h3 class="small-head">What the change waits for</h3>
+          <ul class="generation-checks" id="generation-checks"></ul>
+          <div class="diag-actions" role="group" aria-label="Next generation">
+            <button type="button" class="btn btn-danger-solid" id="generation-begin" disabled>Begin the next generation…</button>
+          </div>
+        </details>
+        <p class="form-status" id="generation-status" role="status"></p>
+      </article>
       <article class="card" id="email-card" hidden>
         <h2>Email</h2>
         <p class="card-sub" id="email-sub">The agent's own mailbox: it reads mail by itself and sends only emails you approved.</p>
@@ -827,6 +867,27 @@
       <div class="form-actions">
         <button type="submit" class="btn btn-danger-solid" id="kill-confirm" disabled>Stop with the kill switch</button>
         <button type="button" class="btn btn-ghost" id="kill-cancel">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="dialog" id="generation-dialog" aria-labelledby="generation-dialog-title" aria-describedby="generation-dialog-desc">
+    <form id="generation-form" novalidate>
+      <h2 id="generation-dialog-title">Begin the next generation?</h2>
+      <div id="generation-dialog-desc" class="dialog-text">
+        <p>This life ends now, by your choice: not a death, and no last will. The next generation's mind starts empty, the products you adopted become her lines at her first cycle, and the passive ones stay live but aren't hers to work on.</p>
+        <p id="generation-dialog-inheritance"></p>
+        <p>Ember's code copies the database to the backups folder first, and keeps the old memory and workspace under generations/ beside the new ones. The dashboard can't undo it: going back means restoring that copy.</p>
+      </div>
+      <div class="field">
+        <label for="generation-confirm">Type <strong id="generation-confirm-show">Ember 2</strong> to confirm</label>
+        <input type="text" id="generation-confirm" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="generation-confirm-error">
+        <p class="field-error" id="generation-confirm-error" hidden></p>
+      </div>
+      <p class="form-status" id="generation-dialog-status" role="status"></p>
+      <div class="form-actions">
+        <button type="submit" class="btn btn-danger-solid" id="generation-go" disabled>Begin it</button>
+        <button type="button" class="btn btn-ghost" id="generation-cancel">Cancel</button>
       </div>
     </form>
   </dialog>

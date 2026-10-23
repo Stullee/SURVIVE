@@ -265,7 +265,7 @@ def _why_not(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> s
     # may be repeated (what is gone already counts as deleted)
     if last is not None and last["made"] and not (last["ended"] == "unclear" and undo["action"] in REPEATABLE):
         return f"your Undo of it ended {last['ended']}: check it at {_place(row)}"
-    where, params = scope.where()
+    where, params = scope.world_where()
     if undo["action"] == "delete_pin":  # 0.13.0 (Phase E2)
         pin = conn.execute(
             f"SELECT status FROM pinterest_pins WHERE {where} AND pin_id = ?", (*params, row["subject"])
@@ -343,7 +343,7 @@ def _entry(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> dic
 
 def _post_url(conn: sqlite3.Connection, scope: AgentScope, rkey: str) -> str:
     """0.19.0: where a post of Ember's is on bsky.app (its record key alone, if Ember's records don't say)."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     row = conn.execute(f"SELECT did FROM bluesky_posts WHERE {where} AND rkey = ?", (*params, rkey)).fetchone()
     return bluesky.post_url(row["did"], rkey) if row is not None and row["did"] else rkey
 

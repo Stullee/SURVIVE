@@ -3170,7 +3170,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.45.4 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.48.0 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3463,6 +3463,11 @@ Ember would get. **Give it to Ember** then
   until she answers it, and wakes her as a message does;
 - keeps what was given: it is listed on the card, the next export carries it, and the same file can't be given twice.
 
+0.47.0: when you ask for it, an evaluation also judges the estate from the data (see
+[The next generation](#the-next-generation)): its file proposes a verdict for each product Ember would hand on, with
+why, under `estate`. The proposals go to the Next generation card on the System tab, beside the verdict Ember's
+code's rule suggests, and you decide; Ember never sees them, and a file of proposals only sends her no message.
+
 Scores never go back to her: a score she saw would become a target. A file with anything but its keys (a score, a
 grade) is refused, and nothing reaches her before you have read the preview and given it.
 
@@ -3680,6 +3685,106 @@ session. Each time you switch dry run on, a new session starts from scratch.
 | paused | You paused it, or Ember's code did because a refund or an Etsy listing fee left it without money (the reason says so; in dry run the test balance decides). Nothing runs until you resume. |
 | unfunded | No money yet and nothing spent: grant funds to start. |
 | dead | The balance ran out, or it could no longer afford even its last will. No model calls. The dashboard shows a memorial. A grant large enough for a fresh start begins a new life (the dashboard shows the amount needed); resuming alone never revives. |
+| ended | A dry-run session ended, or (0.47.0) you ended this life to begin the next generation (see [The next generation](#the-next-generation)): not a death, and no last will. |
+
+## The next generation
+
+0.47.0 (the design is in `vision/generations.md` in the repository): you can
+end Ember's life by your choice, so that the next generation begins with a
+clean mind in the same world. Its card is on the **System** tab.
+
+**What starts empty, what carries on.** Her mind starts empty: her projects
+(lines), ventures, plan, requests, messages, promises, journal, reviews, bets,
+cases, playbook, unlocks, and her `memory` and `workspace` folders. The old
+folders move to `/data/generations/<n>/` (in dry run under `dry_run/`), and
+the old records stay in the database. The world carries on: the money (the
+ledger), the Etsy shop, Printify, Pinterest, Bluesky, the website and blog, the
+mailbox and its opt-outs, your rulebook and your library. KDP's two new titles a
+week and the email day limit count every generation's requests, as Amazon and
+your mailbox count them.
+
+**The estate.** Her products pass without their lines: the next generation
+gets the listing, the book, the poster, never its hypothesis, history and the
+money spent on it. For each product the card shows its numbers, a verdict
+Ember's code suggests by its rule, and an evaluation's proposal when there is
+one (from an evaluation's `feedback.json`, see [Feedback from an evaluation](#feedback-from-an-evaluation)). You
+decide:
+
+- **Adopt.** It becomes a line of the next generation at her first cycle, with
+  a first test you set: its views, favorites or orders (a KDP book: its orders,
+  the royalty entries you record) to reach by a day 7 to 120 days away (by
+  default a favorite in four weeks, a book's first sale in six and a half). Met,
+  it is noted; missed, Ember's code holds the line until you keep or drop it on
+  the Plan tab, and she can't lift that hold herself. Its files (photos, the
+  buyer's files, a book's interior and cover) are copied into her new workspace
+  at the same paths.
+- **Passive.** It stays live (Etsy charges only at a renewal, Printify only
+  when it sells), the syncs read it and its sales are recorded, but it isn't
+  hers to work on: her plans name such products in one line, and her tools
+  refuse changes, pins, posts and blog posts for them. When one sells, her plan
+  says so and that it is yours to give her: change its verdict to adopt on the
+  card, and it becomes her line at her next cycle.
+- **Retire.** Take it down before the change: deactivate an Etsy listing,
+  delete a Printify product, unpublish a KDP book at KDP. The change waits until
+  Etsy's and Printify's next sync reads it down (a KDP book's state Ember's code
+  can't read: your verdict says you took it down).
+
+The rule suggests adopt for a product too new to judge (under 21 days live; a
+book under 45 days since it was published) or with a buyer's signal (a favorite
+or a sale; a book's royalty entry), passive after a fair test without one, and
+retire for a product whose public text breaks a rule (a person named as its
+maker, legal certainty, "no refunds") or that is down.
+
+**Her letter.** 0.48.0: **Ask for her letter** on the card, and one call of hers
+writes her letter to the next generation at her next wake, as a last will is
+written (about the same cost): what she tried, what worked and what didn't,
+what she would do differently. The card shows it; ask again for a new one. It
+passes as `inheritance/letter.md` in her successor's workspace, as her view,
+not evidence, unless you strike it.
+
+**The inheritance.** 0.48.0: what she learned passes only as you give it. Make
+an evaluation export (Diagnostics tab) and ask an AI evaluator for the
+inheritance: the export's `INHERIT.md` tells it how to draft an
+`inheritance.json` from her whole life:
+
+- **principles**, at most 12: business lessons with the cases of hers behind
+  them. Ember's code refuses one that cites no case, a case that was too early
+  or low-sure, names a tool (her tools change with her code) or names an id of
+  hers (the next generation has none of her records);
+- **a direction** for her seed strategy, at most 600 characters;
+- **craft files**, at most 8: files of her workspace she would need again (a
+  checklist, a book's spec), or a short note the evaluator wrote (your quality
+  bar).
+
+Upload it on the card: the preview shows each principle with its cases, the
+seed strategy and identity as they would be written, the craft files, and the
+facts of her work. Untick what shouldn't pass and **Give the inheritance**. A
+newer one you give replaces it; nothing of it reaches her before the change.
+
+At the change the principles enter the new playbook as inherited hypotheses,
+shown with their evidence ("inherited: generation 1, 8 cases for, 0 against"):
+her predecessor's cases count as one case, so two cases of her own establish
+one, her first case against disputes it, and 60 days without a case of hers
+retire it. Priors to test, not rules. Whatever you give, Ember's code writes
+the facts of her predecessor's work (spend, sales, views, clicks, followers,
+each product's numbers; no model writes them) to `inheritance/facts.md`, a seed
+strategy that opens with them, and a seed identity that says which generation
+she is and why her predecessor's life ended. Her lessons file starts empty.
+
+**Beginning it.** The change waits until no wake cycle runs, no request waits
+for your decision or to be carried out (mark the KDP books you published done),
+no action is under way, every product has a verdict and the retired ones are
+down: the card lists what is in the way. **Begin generation N…** asks you to
+type the agent's name and the new generation's number. Then Ember's code copies
+the database to `/data/backups` (`ember-generation…`), moves the old folders
+aside, ends the life (state ended) and begins the next, which a grant isn't
+needed for: the money carries on. The inheritance passes in the same step. The
+new generation's plans say which generation she is and, in her first days,
+what passed to her and where (`inheritance/` in her workspace).
+
+**Going back.** The dashboard can't undo a generation change. To go back, stop
+the app, restore the `ember-generation…` copy as `/data/ember.db`, move the
+folders back from `/data/generations/<n>/`, and start it again.
 
 ## Home Assistant sensors (optional)
 
@@ -3823,7 +3928,10 @@ automation, for example:
 Everything Ember keeps lives in the app's `/data` folder: `ember.db` (SQLite,
 with the emails Ember received and sent), the agent's `workspace` and `memory`
 folders, and the same two folders for dry
-run under `dry_run` (started fresh with every dry-run session). Home Assistant backups include
+run under `dry_run` (started fresh with every dry-run session). 0.47.0: a
+generation change keeps the old folders under `generations/<n>/` beside them,
+and its copy of the database in `/data/backups` (`ember-generation…`, the
+newest 10). Home Assistant backups include
 it. The app is stopped briefly while a backup is taken so the database is copied
 in a consistent state. Before a database upgrade, Ember also keeps a copy in
 `/data/backups` (the newest 10). Home Assistant's backups leave these copies

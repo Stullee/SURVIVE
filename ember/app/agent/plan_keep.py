@@ -21,7 +21,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from ..economy.clock import from_iso, local_date
-from . import demand, obligations, paid, policy, reach, roadmap, store, templates, ventures
+from . import demand, estate, obligations, paid, policy, reach, roadmap, store, templates, ventures
 from .plan_layout import _platform, _reaudience, _retemplate, _untype, could_earn, lay_out
 from .plan_model import (
     CHANNEL_AUDIENCES,
@@ -118,6 +118,7 @@ def keep(
         said += _decide_by(facts, product, now, today)
     said += _ventures(conn, scope, now)  # 0.37.0: each venture a node, its next decision a step
     said += _owner_owed(conn, scope, now)  # 0.37.0: and what is owed to the owner of no product
+    said += _estate_tests(conn, scope, now, today)  # 0.47.0: an adopted product's first test, met or missed
     said += _review_stops(conn, scope, now, today)  # 0.39.1: a line the review says stop is the owner's to close
     said += _review_holds(conn, scope, now, today)  # 0.40.2: and it waits on hold until they decide
     said += _review_changes(conn, scope, now, today)  # 0.39.6: and a change it decides is a step of the line's
@@ -872,6 +873,36 @@ def _review_stops(conn: sqlite3.Connection, scope: AgentScope, now: str, today: 
 
 
 REVIEW_HOLD = "Your review of"  # 0.40.2: how the hold a review's stop puts on its line begins (_review_holds)
+ESTATE_HOLD = "Its first test from the hand-over"  # 0.47.0: how the hold a missed test puts on its line begins
+
+
+def _estate_tests(conn: sqlite3.Connection, scope: AgentScope, now: str, today: date) -> list[str]:
+    """0.47.0 (vision/generations.md): a product the last generation handed on and the owner had adopted carries its
+    first test, theirs. Met (at any time before it falls due), it is noted; missed, Ember's code holds its line until
+    the owner keeps or drops it: no rescue spending on a product handed on without a buyer's signal."""
+    said: list[str] = []
+    for row in estate.received(conn, scope):
+        if row["verdict"] != "adopt" or row["project_id"] is None or row["test_result"] is not None:
+            continue
+        gained, target = estate.progress(conn, scope, row), int(row["test_target"])
+        test = f"{gained} of {target} {row['test_metric']} by {row['test_due']}"
+        if gained >= target:
+            conn.execute("UPDATE estate SET test_result = 'met', updated_at = ? WHERE id = ?", (now, row["id"]))
+            said.append(f"Line #{row['project_id']} met its first test from the hand-over: {test}.")
+            continue
+        if date.fromisoformat(row["test_due"]) >= today:
+            continue
+        conn.execute("UPDATE estate SET test_result = 'missed', updated_at = ? WHERE id = ?", (now, row["id"]))
+        product = nodes(conn, scope, "level = 'product' AND status = 'open' AND project_id = ?", (row["project_id"],))
+        if not product:
+            continue
+        missed = _cut(f"{ESTATE_HOLD} was missed: {test}", 200)
+        _update(conn, product[0]["id"], now, hold_reason=missed, hold_by="agent")
+        change(
+            conn, scope, product[0]["id"], None, "code", "hold", f"{missed} (until your owner keeps or drops it)", now
+        )
+        said += _owner_decides(conn, scope, product[0], now, missed, "missed its first test from the hand-over")
+    return said
 
 
 def _review_holds(conn: sqlite3.Connection, scope: AgentScope, now: str, today: date) -> list[str]:

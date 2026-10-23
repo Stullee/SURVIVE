@@ -78,7 +78,10 @@ from . import (
     critic,
     digest,
     econ,
+    estate,
     evidence,
+    generation,
+    inheritance,
     knockouts,
     learning,
     library,
@@ -114,6 +117,8 @@ from .workshop import report as workshop_report
 log = logging.getLogger(__name__)
 
 MAX_TOOL_CALLS_PER_TURN = tools.MAX_TOOL_CALLS_PER_TURN
+# The cycles of one call and no plan (no sync, no sleep cut): the last will; 0.48.0, her letter to the next generation
+ONE_CALL = ("last_will", "letter")
 # The work conversation's size limit (bytes of JSON, pictures counted as below). At 24,000 (until 0.9.0) it ended every
 # cycle that made a product and looked at its pictures after 5 to 10 tool steps. Money is checked before each step.
 # 0.40.1 (analysis-0.40.0, 3.3): at 64,000 four of the five cycles on the KDP book ended before they could propose it,
@@ -429,7 +434,7 @@ class CycleRunner:
             mode = self._cycle_burn(cycle_id)
             # 0.15.0: no workshop runs in maintenance (a run costs about what the whole cycle may)
             ctx.workshop = self._workshop_fn(ctx) if prompts.workshop_on(self.settings) and mode.workshop else None
-            if trigger != "last_will":
+            if trigger not in ONE_CALL:
                 # 0.28.0: what the cycle is (an ordinary, a marketing or a venture one) is decided once Ember's code
                 # kept its rules, right before the plan (_plan_act_reflect): it reads the obligations they keep
                 with self.db.connection() as conn:
@@ -444,11 +449,12 @@ class CycleRunner:
                 ctx.kdp = tools.KdpAccess(self.settings.kdp_author) if self.kdp_on else None  # 0.25.0
                 self._expire_requests()
             with netguard.sealed() if self.dry_run else contextlib.nullcontext():
-                end = (
-                    self._last_will(cycle_id)
-                    if trigger == "last_will"
-                    else self._plan_act_reflect(cycle_id, ctx, trigger, mode)
-                )
+                if trigger == "last_will":
+                    end = self._last_will(cycle_id)
+                elif trigger == "letter":
+                    end = self._letter(cycle_id)
+                else:
+                    end = self._plan_act_reflect(cycle_id, ctx, trigger, mode)
         except Stopping:
             end = CycleEnd("interrupted", "the app was stopping")
         except EndCycle as exc:
@@ -478,7 +484,7 @@ class CycleRunner:
         sleep at most. 0.37.6: steps a cycle can advance (plan.busy): not one a cycle took with nothing it is checked
         by moving since, nor this cycle's own step if it moved nothing (live on 2026-10-09 a step no cycle could
         advance cut every sleep to 30 minutes until the daily cap was spent)."""
-        if end.status != "completed" or trigger == "last_will":
+        if end.status != "completed" or trigger in ONE_CALL:
             return
         mode_now = burn.peek(self.db, self.economy.life.evaluate()).mode
         shortest = self.settings.min_sleep_minutes
@@ -816,6 +822,8 @@ class CycleRunner:
         self._guarded(self._keep_playbook, cycle_id or 0, "the playbook's keeper")  # 0.30.0: the cases' lessons
         predictions.settle_all(self.db, self.scope, scope, self.clock)  # 0.13.0: after the milestones are graded
         self._keep_obligations()  # 0.12.0: after the grading, so a miss it closed is owed a decision now
+        if cycle_id:  # 0.47.0: the products adopted from her predecessor become her lines (a preview files nothing)
+            self._guarded(self._keep_estate, cycle_id, "the estate's keeper")
         self._guarded(self._keep_plan, cycle_id or 0, "the plan tree's keeper")  # 0.34.0: after the obligations
         # 0.29.0: once more after the grading (the owner's goal met or missed: the money goal stands in for it); the
         # money goal was settled already
@@ -866,6 +874,7 @@ class CycleRunner:
                 else ""
             )
             shop = ""
+            aside = estate.not_hers_ids(conn, self.scope)  # 0.47.0: the listings handed on that aren't hers
             if self.etsy_on and self.etsy is not None:
                 name = self.etsy.shop_name() or "your shop"
                 # 0.12.0: Ember's code records the orders' revenue when the owner turned that on (and can convert it)
@@ -873,8 +882,16 @@ class CycleRunner:
                     self.settings.etsy_usd_per_eur > 0 or self.etsy.currency() == "USD"
                 )
                 shop = etsy_publisher.shop_text(
-                    conn, self.scope, self.clock, name, self.settings.etsy_listings_per_day, auto_revenue=auto
+                    conn,
+                    self.scope,
+                    self.clock,
+                    name,
+                    self.settings.etsy_listings_per_day,
+                    auto_revenue=auto,
+                    aside=frozenset(aside),
                 )
+                handed = estate.shop_line(conn, self.scope)  # 0.47.0: what her predecessor handed on, not hers
+                shop += f"\n{handed}" if handed else ""
             pins = ""
             if self.pinterest_on and self.pinterest is not None:  # 0.13.0 (Phase E2)
                 account = self.pinterest.username() or "your owner's account"
@@ -901,7 +918,7 @@ class CycleRunner:
                 pod = (
                     f"Printify shop: {known.get('title') or 'yours'} (prices in {self.settings.printify_currency};"
                     f" at most {self.settings.printify_products_per_day} products a day).\n"
-                    + printify_publisher.text(conn, self.scope, self.clock)
+                    + printify_publisher.text(conn, self.scope, self.clock, aside=frozenset(aside))
                 )
             elif self.printify is not None:  # 0.15.0: switched on, but not set up
                 pod = _waiting("Printify", self.printify.status(), self._etsy_state(), self.printify_waits)
@@ -926,6 +943,8 @@ class CycleRunner:
                 if self.kdp_on
                 else ""
             )
+            handed_books = estate.book_lines(conn, self.scope) if self.kdp_on else ""  # 0.47.0
+            books += f"\n{handed_books}" if handed_books else ""
             return context.snapshot(
                 conn,
                 self.scope,
@@ -1326,6 +1345,17 @@ class CycleRunner:
             happened = paid.keep(conn, self.scope, self.clock)
         for line in happened:
             events.record(self.db, "info", "agent", line[:300])
+
+    def _keep_estate(self, cycle_id: int) -> None:
+        """0.47.0 (vision/generations.md): the products a generation change handed this mind as adopted become her
+        lines, filed under this cycle, before the plan tree lays them out (generation.file); guarded like a learning
+        step."""
+        with self.db.transaction() as conn:
+            made = generation.file(conn, self.scope, cycle_id, to_iso(self.clock.now()))
+        for project_id in made:
+            events.record(
+                self.db, "info", "agent", f"A product adopted from the last generation became line #{project_id}"
+            )
 
     def _keep_playbook(self, cycle_id: int) -> None:
         """0.30.0: the lessons of the cases kept since the last plan join the playbook (learning.adopt), before every
@@ -2662,6 +2692,43 @@ class CycleRunner:
                 self.db, "warning", "agent", f"{self.settings.agent_name} wrote a last will", {"cycle_id": cycle_id}
             )
         return CycleEnd("completed", "last will written")
+
+    def _letter(self, cycle_id: int) -> CycleEnd:
+        """0.48.0 (vision/generations.md): her letter to the next generation, which the owner asked for: one call, as
+        the last will's (its context, its budget), kept in ``letters``; the change passes the newest one."""
+        snap = self._snapshot(cycle_id=cycle_id)
+        self._progress(cycle_id, phase="letter", current_action="Writing the letter to the next generation")
+        task = "Write your letter to the next generation now."
+        request = prompts.letter_request(self.settings, context.will_context(snap, self.dry_run, task))
+        if not context.fits(request, LAST_WILL.input_tokens):
+            cut = context.cut(context.will_context(snap, self.dry_run, task), 2_000)
+            request = prompts.letter_request(self.settings, cut)
+        try:
+            result = self._call(cycle_id, "letter", request)
+        except CallRefused as exc:
+            return CycleEnd("refused", f"letter refused: {exc.reason}")
+        except CallFailed as exc:
+            return CycleEnd("failed", f"letter failed: {exc.result.error or exc.result.status}")
+        response = result.response or {}
+        text = _text_of(response).strip()
+        if not text:
+            return CycleEnd("failed", "the letter was empty")
+        cut_off = response.get("stop_reason") == "max_tokens"
+        now = to_iso(self.clock.now())
+        with self.db.transaction() as conn:
+            store.save_call_text(conn, result.call_id, text)
+            inheritance.save_letter(conn, self.scope, cycle_id, result.call_id, text, cut_off, now)
+            store.write_journal(
+                conn, self.scope, cycle_id, "agent", "Wrote my letter to the next generation", text[:2000], now
+            )
+            events.record(
+                self.db,
+                "info",
+                "agent",
+                f"{self.settings.agent_name} wrote her letter to the next generation",
+                {"cycle_id": cycle_id},
+            )
+        return CycleEnd("completed", "letter written")
 
     def _save_text(self, call_id: int, text: str, response: dict[str, Any]) -> None:
         details = response.get("stop_details") if isinstance(response.get("stop_details"), dict) else None

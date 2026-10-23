@@ -55,6 +55,12 @@ RUNWAY_CAP_DAYS = 365.0
 LAST_MODE_KEY = "economy.last_mode"
 SESSION_KEY = "economy.dry_run.session_mark"  # newest ledger id when the dry-run session began
 SESSION_NO_KEY = "economy.dry_run.session_no"  # counts dry-run sessions (the agent's records are kept per session)
+# 0.46.0 (vision/generations.md): the session the current dry-run world began with (its shop, mailbox and rulebook,
+# AgentScope.world); unset, the dry-run session's own. A dry-run session begins a new world and a new mind at once.
+WORLD_KEY = "economy.dry_run.world_session"
+# 0.46.0: the live mind's session, her generation's (0 for the first; unset, 0). Only a generation change counts it
+# up; the live world's session stays 0.
+LIVE_SESSION_KEY = "economy.live.session_no"
 PAUSED_KEY = "control.paused"
 KILLED_KEY = "control.killed"
 # 0.15.0: why Ember's code paused the agent: a fact from Etsy's numbers (a refund, a listing fee) left it without money.
@@ -159,11 +165,18 @@ class Life:
         return ledger_scope(self.db, self.mode)
 
     def session(self) -> int:
-        """The dry-run session number (0 in live mode): the agent keeps its projects, files and journal per session."""
+        """The session of the agent's mind: the dry-run session number, or live her generation's (0.46.0; 0 for the
+        first). The agent keeps its projects, files and journal per session."""
+        value = self.db.get_meta(LIVE_SESSION_KEY if self.mode == "live" else SESSION_NO_KEY)
+        return int(value) if value and value.isdigit() else 0
+
+    def world(self) -> int:
+        """0.46.0 (vision/generations.md): the session of the world the agent works in (AgentScope.world): 0 live,
+        always; in dry run the session its test world began with."""
         if self.mode == "live":
             return 0
-        value = self.db.get_meta(SESSION_NO_KEY)
-        return int(value) if value and value.isdigit() else 0
+        value = self.db.get_meta(WORLD_KEY)
+        return int(value) if value and value.isdigit() else self.session()
 
     def current(self) -> sqlite3.Row | None:
         with self.db.connection() as conn:
@@ -213,6 +226,7 @@ class Life:
                         self._end(conn, dry, "ended", "dry-run session ended", now)
                     self.db.set_meta(SESSION_KEY, str(self.books.last_id()))
                     self.db.set_meta(SESSION_NO_KEY, str(self.session() + 1))
+                    self.db.set_meta(WORLD_KEY, str(self.session()))  # 0.46.0: and a new test world
                     self._birth(conn, "dry_run", now, "new dry-run session")
                 if live is not None and live["ended_at"] is None and live["state"] != "dormant":
                     self._transition(conn, live, "dormant", REASONS["dormant"], now)
@@ -241,6 +255,17 @@ class Life:
         life_id = int(cursor.lastrowid)
         events.record(self.db, "info", "life", f"A new {_mode_label(mode)} life began: {reason}", {"life_id": life_id})
         return life_id
+
+    def succeed(self, conn: sqlite3.Connection, now: str, ended: str, begun: str) -> tuple[int, int]:
+        """0.47.0 (vision/generations.md): the current life ends by the owner's choice, not by money (state 'ended',
+        with ``ended`` as its reason), and the next generation's begins from it (``begun``; its revived_from names
+        the life it follows). The money carries on: the ledger is the world's. Returns the two lives' ids."""
+        life = _current(conn, self.mode)
+        if life is None or life["ended_at"] is not None:
+            raise ValueError("there is no life to hand on")
+        self._end(conn, life, "ended", ended, now)
+        born = self._birth(conn, self.mode, now, begun, revived_from=int(life["id"]))
+        return int(life["id"]), born
 
     def _end(self, conn: sqlite3.Connection, life: sqlite3.Row, state: str, reason: str, now: str) -> None:
         conn.execute(

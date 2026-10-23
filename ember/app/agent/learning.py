@@ -22,6 +22,11 @@ was skipped (weekly.VIEW_CHARS), and a principle the look drew from too_early ca
 each retrospective's lesson joins the playbook as a hypothesis the day its case is kept (``adopt``; a lesson that says
 the same as an active principle is one more case for it instead, and three make it established), and the weekly look
 curates: it confirms, merges, disputes and retires. What the look's answer can't keep is said (``apply_principles``).
+
+0.48.0 (vision/generations.md, "The inheritance"): a principle can be **inherited** from the generation before hers
+(inheritance.py writes it at the change, with its evidence there). It is a prior to test, not dogma: her
+predecessor's cases count as one case of hers (``confidence``), so two cases of her own establish it, her first case
+against disputes it, and INHERITED_FADE_DAYS without a case of hers retire it (``fade``).
 """
 
 from __future__ import annotations
@@ -46,6 +51,7 @@ ESTABLISHED = 3  # cases that support a principle, with none against it
 FADE_DAYS = 42  # a hypothesis or disputed principle no case confirmed for this long is retired
 ESTABLISHED_FADE_DAYS = 120
 MAX_PRINCIPLES = 40  # active at once; the weekly look retires or merges past it
+INHERITED_FADE_DAYS = 60  # 0.48.0: an inherited principle no case of hers confirmed for this long is retired
 LIMITS = {"subject": 80, "expected": 300, "happened": 300, "why": 300, "lesson": 300}
 # 0.30.0: a retrospective's lesson joins the playbook (adopt). It says the same as a principle only when nearly all its
 # words and word pairs are the principle's and both deny the same things ("pins bring views" isn't "pins bring no
@@ -199,10 +205,11 @@ def cases(conn: sqlite3.Connection, scope: AgentScope, since: str | None = None,
 # --- the playbook ---
 
 
-def confidence(supports: list[int], against: list[int]) -> str:
+def confidence(supports: list[int], against: list[int], inherited: bool = False) -> str:
+    """0.48.0: an inherited principle's evidence in the generation before counts as one case (``inherited``)."""
     if against:
         return "disputed"
-    return "established" if len(set(supports)) >= ESTABLISHED else "hypothesis"
+    return "established" if len(set(supports)) + (1 if inherited else 0) >= ESTABLISHED else "hypothesis"
 
 
 def principles(conn: sqlite3.Connection, scope: AgentScope) -> list[Any]:
@@ -228,9 +235,23 @@ def cited(p: Any) -> tuple[list[int], list[int]]:
     return _ids(p["supports"]), _ids(p["against"])
 
 
+def inherited(p: Any) -> dict[str, Any] | None:
+    """0.48.0: where an inherited principle came from: {"generation", "principle", "for", "against", "inheritance"}
+    (its evidence there); None for one of hers."""
+    try:
+        origin = json.loads(p["inherited"] or "null")
+    except (IndexError, KeyError, ValueError):
+        return None
+    return origin if isinstance(origin, dict) else None
+
+
 def principle_line(p: Any) -> str:
     supports, against = _ids(p["supports"]), _ids(p["against"])
     count = f"{len(supports)} case(s) for" + (f", {len(against)} against" if against else "")
+    origin = inherited(p)
+    if origin is not None:  # 0.48.0: its evidence there, and her own
+        there = f"{len(origin.get('for') or [])} cases for, {len(origin.get('against') or [])} against"
+        count = f"inherited: generation {origin.get('generation')}, {there}; yours: {count}"
     return f"[{p['confidence']}, {count}] {p['text']} (principle #{p['id']})"
 
 
@@ -265,7 +286,7 @@ def apply_principles(
                 continue
             all_for = sorted(set(_ids(old["supports"])) | set(supports))
             all_against = sorted(set(_ids(old["against"])) | set(against))
-            level = confidence(_own(all_for, pid, active), all_against)
+            level = confidence(_own(all_for, pid, active), all_against, inherited(old) is not None)
             if level == "hypothesis" and old["confidence"] == "established" and not all_against:
                 level = "established"  # 0.23.1: what was established stays so; sharing cases only gates a promotion
             confirmed = now if set(supports) - set(_ids(old["supports"])) else old["confirmed_at"]
@@ -370,7 +391,7 @@ def _support(conn: sqlite3.Connection, active: dict[int, Any], pid: int, case_id
     old = active[pid]
     supports = sorted(set(_ids(old["supports"])) | {case_id})
     against = _ids(old["against"])
-    level = confidence(_own(supports, pid, active), against)
+    level = confidence(_own(supports, pid, active), against, inherited(old) is not None)
     if level == "hypothesis" and old["confidence"] == "established" and not against:
         level = "established"  # 0.23.1's rule: what was established stays so
     conn.execute(
@@ -414,13 +435,17 @@ def _own(supports: list[int], pid: int | None, active: dict[int, Any]) -> list[i
 
 
 def fade(conn: sqlite3.Connection, scope: AgentScope, now: str) -> list[str]:
-    """Retire the principles no case confirmed for FADE_DAYS (ESTABLISHED_FADE_DAYS once established)."""
+    """Retire the principles no case confirmed for FADE_DAYS (ESTABLISHED_FADE_DAYS once established; 0.48.0, an
+    inherited one no case of hers confirmed yet INHERITED_FADE_DAYS from the change)."""
     happened = []
     moment = from_iso(now)
     for p in principles(conn, scope):
+        untested = inherited(p) is not None and not _ids(p["supports"])
         days = ESTABLISHED_FADE_DAYS if p["confidence"] == "established" else FADE_DAYS
+        if untested:
+            days = INHERITED_FADE_DAYS
         if from_iso(str(p["confirmed_at"])) + timedelta(days=days) <= moment:
-            why = f"no case confirmed it for {days} days"
+            why = f"no case {'of yours ' if untested else ''}confirmed it for {days} days"
             conn.execute(
                 "UPDATE principles SET status = 'retired', retired_at = ?, retired_why = ? WHERE id = ?",
                 (now, why, p["id"]),
@@ -434,6 +459,11 @@ def playbook_text(rows: list[Any], budget: int) -> str:
     if not rows:
         return ""
     lines = ["Your playbook (from your cases; Ember's code sets the confidence):"]
+    if any(inherited(p) is not None for p in rows):  # 0.48.0
+        lines = [
+            "Your playbook (from your cases, and your predecessor's inherited ones: hypotheses to test, which two cases"
+            " of yours establish and one against disputes; Ember's code sets the confidence):"
+        ]
     used = len(lines[0])
     for p in rows:
         line = f"- {principle_line(p)}"

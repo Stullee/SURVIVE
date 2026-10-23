@@ -333,7 +333,7 @@ def listings(
     """Ember's listings on Etsy (with their numbers at the last sync), those of the project or venture if given.
     0.15.0: with the listings Printify made of Ember's products (``printify`` 1), whose numbers Etsy's sync keeps too:
     the metrics, a product line's listing test and the ventures' rules left them out."""
-    where, params = scope.where("l")
+    where, params = scope.world_where("l")  # 0.46.0: the listings are the world's, the ventures her mind's
     joins = (
         " JOIN approvals a ON a.id = l.approval_id LEFT JOIN cycles y ON y.id = a.cycle_id"
         f" LEFT JOIN projects p ON p.id = {ventures.line_sql()} WHERE {where}"  # 0.39.8: or the line it was moved to
@@ -342,17 +342,19 @@ def listings(
     # 0.15.0: a listing of a product line with no venture (a closed one the upgrade couldn't link) counts for its
     # channel's venture, as ventures.adopt would link it: the Etsy leg, or the print-on-demand venture. 0.16.3 (analysis
     # bug 1): not for the venture its request's cycle aimed at (a digital download counted for print on demand).
+    mind, minds = scope.where("v")
     mine = (
         "p.id AS for_project, COALESCE(p.venture_id, (SELECT v.id FROM ventures v WHERE"
-        " v.mode = l.mode AND v.session = l.session AND v.stage NOT IN ('parked', 'killed') AND {leg}"
-        " ORDER BY v.id LIMIT 1)) AS for_venture"
+        f" {mind} AND v.stage NOT IN ('parked', 'killed') AND {{leg}} ORDER BY v.id LIMIT 1)) AS for_venture"
     )
     etsy_leg = mine.format(leg="v.parent_id IS NULL AND v.title = '{}'".format(ventures.ETSY_LEG.replace("'", "''")))
-    rows = conn.execute(f"SELECT l.*, 0 AS printify, {etsy_leg} FROM etsy_listings l{joins}", params).fetchall()
+    rows = conn.execute(
+        f"SELECT l.*, 0 AS printify, {etsy_leg} FROM etsy_listings l{joins}", (*minds, *params)
+    ).fetchall()
     rows += conn.execute(
         "SELECT l.id, l.approval_id, l.listing_id, l.title, l.status, l.state, l.views, l.favorites, l.synced_at,"
         f" 1 AS printify, {mine.format(leg="v.channel = 'printify'")} FROM printify_products l{joins}",
-        params,
+        (*minds, *params),
     ).fetchall()
     if project_id:
         return [r for r in rows if r["for_project"] == project_id]
@@ -460,7 +462,7 @@ def _read_etsy(
 def orders_of(conn: sqlite3.Connection, scope: AgentScope, ours: set[int], since: str, until: str = "") -> list[int]:
     """The receipts of the (counted) Etsy orders with one of the listings ``ours``, from ``since`` on ("": all) and
     before ``until`` ("": to now)."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     found = []
     for order in conn.execute(
         f"SELECT receipt_id, items FROM etsy_orders WHERE {where} AND {etsy.COUNTED_ORDERS} AND ordered_at >= ?"

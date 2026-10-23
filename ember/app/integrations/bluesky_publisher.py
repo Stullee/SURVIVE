@@ -75,7 +75,7 @@ def meta_key(mode: str, name: str) -> str:
 
 def posts(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) -> list[sqlite3.Row]:
     """Ember's posts, the newest first."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     return conn.execute(
         f"SELECT * FROM bluesky_posts WHERE {where} ORDER BY id DESC LIMIT ?", (*params, limit)
     ).fetchall()
@@ -111,7 +111,7 @@ def reactions(r: sqlite3.Row) -> int:
 def totals(conn: sqlite3.Connection, scope: AgentScope) -> tuple[int, int]:
     """Ember's live posts, and the likes, reposts, replies and quotes they had at the last sync (the metrics
     bluesky_posts_live and bluesky_reactions)."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     row = conn.execute(
         "SELECT COUNT(*), COALESCE(SUM(COALESCE(likes, 0) + COALESCE(reposts, 0) + COALESCE(replies, 0)"
         f" + COALESCE(quotes, 0)), 0) FROM bluesky_posts WHERE {where} AND status = 'active'",
@@ -123,7 +123,7 @@ def totals(conn: sqlite3.Connection, scope: AgentScope) -> tuple[int, int]:
 def created_today(conn: sqlite3.Connection, clock: Clock, scope: AgentScope) -> int:
     """The posts sent to Bluesky today, for bluesky_posts_per_day: not one its checks refused before anything was sent,
     so it doesn't hold a valid post back a day."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     start = to_iso(clock.day_start(clock.today()))
     return int(
         conn.execute(
@@ -470,7 +470,7 @@ class Publisher:
             " VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?)",
             (
                 scope.mode,
-                scope.session,
+                scope.world_session,
                 approval_id,
                 text[:3000],
                 (link or "")[:500] or None,
@@ -598,7 +598,7 @@ class Publisher:
             return status
         with self.db.transaction() as conn:
             now = to_iso(self.clock.now())
-            where, params = scope.where()
+            where, params = scope.world_where()
             conn.execute(f"UPDATE bluesky_posts SET status = 'deleted' WHERE {where} AND rkey = ?", (*params, rkey))
             note = f"Deleted post {rkey} at Bluesky" + (" (dry run: the fake account)" if account.simulated else "")
             if gone:
@@ -668,7 +668,7 @@ class Publisher:
             self._lock.release()
 
     def _read_posts(self, account: Account, scope: AgentScope, now: Any) -> str | None:
-        where, params = scope.where()
+        where, params = scope.world_where()
         with self.db.connection() as conn:
             live = conn.execute(
                 f"SELECT approval_id, uri FROM bluesky_posts WHERE {where} AND status = 'active' AND uri IS NOT NULL"

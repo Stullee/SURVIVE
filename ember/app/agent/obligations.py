@@ -31,7 +31,7 @@ from typing import Any
 
 from ..economy.clock import local_date
 from ..integrations import etsy_publisher, mailstore, qa, site_publisher
-from . import roadmap, stages, ventures
+from . import estate, roadmap, stages, ventures
 from .store import OPEN_STATUSES, AgentScope
 
 KINDS = ("promise", "decision", "miss")
@@ -421,7 +421,8 @@ def text(conn: sqlite3.Connection, scope: AgentScope, today: date, strategy: str
             f" and {len(overdue) - 6} more" if len(overdue) > 6 else ""
         )
         lines.append(f"- Overdue milestones {ids}: close, move or drop each (YOUR PLAN).")
-    few = etsy_publisher.few_photos(conn, scope)
+    aside = estate.not_hers_ids(conn, scope)  # 0.47.0: not hers to give photos
+    few = [(listing, count) for listing, count in etsy_publisher.few_photos(conn, scope) if listing not in aside]
     if few:
         shown = ", ".join(  # 0.28.0: with each listing's line
             f"#{listing_id} ({count}{_on_line(ventures.listing_project(conn, scope, listing_id))})"

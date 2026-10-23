@@ -107,12 +107,12 @@ def problems(settings: Settings, mode: str) -> list[str]:
 
 def posts(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
     """The blog's list as Ember's code last read or wrote it on the server, the newest first."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     return conn.execute(f"SELECT * FROM blog_posts WHERE {where} ORDER BY day DESC, position", params).fetchall()
 
 
 def known(conn: sqlite3.Connection, scope: AgentScope, slug: str) -> sqlite3.Row | None:
-    where, params = scope.where()
+    where, params = scope.world_where()
     return conn.execute(f"SELECT * FROM blog_posts WHERE {where} AND slug = ?", (*params, slug)).fetchone()
 
 
@@ -186,7 +186,7 @@ def remember(
     by: dict[str, int | None] | None = None,
 ) -> None:
     """The server's list as it is now (``by``: the requests that published posts in it, by slug)."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     before = {r["slug"]: r["approval_id"] for r in posts(conn, scope)}
     conn.execute(f"DELETE FROM blog_posts WHERE {where}", params)
     for position, entry in enumerate(index.entries):
@@ -196,7 +196,7 @@ def remember(
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 scope.mode,
-                scope.session,
+                scope.world_session,
                 entry.slug,
                 entry.title[:200],
                 entry.description[:340],
@@ -213,7 +213,7 @@ def propose(conn: sqlite3.Connection, scope: AgentScope, approval_id: int, path:
     conn.execute(
         "INSERT INTO site_uploads (mode, session, approval_id, path, op, content, sha256, status)"
         " VALUES (?, ?, ?, ?, 'write', ?, ?, 'proposed')",
-        (scope.mode, scope.session, approval_id, path, data, blog.sha256(data)),
+        (scope.mode, scope.world_session, approval_id, path, data, blog.sha256(data)),
     )
 
 
@@ -230,7 +230,7 @@ def waiting_for(conn: sqlite3.Connection, scope: AgentScope, executor: str, slug
 
 def page(conn: sqlite3.Connection, scope: AgentScope, approval_id: int) -> tuple[str, bytes] | None:
     """The page a request uploads (its path and bytes), for the owner's preview."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     row = conn.execute(
         f"SELECT path, content FROM site_uploads WHERE {where} AND approval_id = ? AND path <> ? AND content IS NOT"
         " NULL ORDER BY id LIMIT 1",
@@ -299,7 +299,7 @@ def why_not(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) -> st
         " 'done') ORDER BY j.id LIMIT 1",
         (*params, row["subject"], row["id"]),
     ).fetchone()
-    where, params = scope.where()
+    where, params = scope.world_where()
     if later is not None:
         return f"a later change of this page (#{later['id']}) is newer: undo that one first"
     waiting = conn.execute(
@@ -632,7 +632,7 @@ class Publisher:
                 " before_sha256, status, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)",
                 (
                     scope.mode,
-                    scope.session,
+                    scope.world_session,
                     approval_id,
                     path,
                     op,

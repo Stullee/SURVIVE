@@ -20,8 +20,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 
 from . import diagnostics, export, feedback
 from . import events as event_log
+from .agent import estate, generation, inheritance, views
 from .agent import owner as owner_side
-from .agent import views
 from .agent.views import WorkspaceFileError
 from .db import utcnow
 from .economy.ledger import OWNER_KINDS
@@ -1276,6 +1276,104 @@ def evaluation_export_file(request: Request, name: Annotated[str, Path(max_lengt
     )
 
 
+# 0.47.0 (vision/generations.md): the next generation: the estate the owner sorts, and the change they begin.
+@router.get("/api/generation")
+def generation_status(request: Request) -> JSONResponse:
+    """Which generation Ember is, the products she would hand on (each with its numbers, the rule's suggestion, an
+    evaluation's proposal and the owner's verdict), those she received, and what the change waits for."""
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    with _state(request).db.transaction() as conn:
+        found = generation.status(conn, agent)
+    found["agent_name"] = _state(request).loaded.settings.agent_name
+    return JSONResponse(found, headers={"cache-control": "no-store"})
+
+
+@router.post("/api/estate/{kind}/{ref}")
+def estate_decide(
+    request: Request,
+    kind: Annotated[str, Path(max_length=20)],
+    ref: Annotated[str, Path(max_length=40)],
+    body: Annotated[Any, Body()] = None,
+) -> JSONResponse:
+    """The owner's verdict on a product: {"verdict": "adopt" | "passive" | "retire", "test": {"metric", "target",
+    "due"} for adopt (the defaults without it)}."""
+    actions = _owner_actions(request)
+    if actions is None:
+        return NO_AGENT
+    return _reply(actions.estate_decide(kind, ref, body, _owner(request)))
+
+
+@router.post("/api/generation")
+def generation_begin(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """Begins the next generation: {"confirm": "<the agent's name> <the next generation's number>"}, as the owner
+    typed it. 409 with what is in the way (``checks``) while the change waits for something."""
+    state = _state(request)
+    agent = state.agent
+    if agent is None:
+        return NO_AGENT
+    number = estate.generation(agent.scope()) + 1
+    expected = f"{state.loaded.settings.agent_name} {number}"
+    typed = body.get("confirm") if isinstance(body, dict) else None
+    if not isinstance(typed, str) or " ".join(typed.split()).casefold() != expected.casefold():
+        return JSONResponse({"error": f'type "{expected}" to begin generation {number}', "field": "confirm"}, 422)
+    try:
+        done = agent.begin_generation(_owner(request) or "The owner")
+    except generation.GenerationError as exc:
+        return JSONResponse({"error": str(exc), "checks": [c.to_json() for c in exc.checks]}, status_code=exc.status)
+    return JSONResponse(done, status_code=201)
+
+
+# 0.48.0 (vision/generations.md): the inheritance: an evaluation's inheritance.json, its preview and the owner's
+# giving (with what they struck), and her letter to the next generation, which the owner asks for.
+def _inheritance_error(exc: inheritance.InheritanceError) -> JSONResponse:
+    return JSONResponse(
+        {"error": f"The inheritance can't be given: {exc}.", "field": exc.field}, status_code=exc.status
+    )
+
+
+@router.post("/api/inheritance/preview")
+def inheritance_preview(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """What would pass of an inheritance.json (nothing is written): the principles with the cases behind them, the
+    craft files, the seed strategy and identity as the change would write them today, the facts and her letter."""
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    try:
+        return JSONResponse(inheritance.preview(agent, body), headers={"cache-control": "no-store"})
+    except inheritance.InheritanceError as exc:
+        return _inheritance_error(exc)
+
+
+@router.post("/api/inheritance")
+def inheritance_give(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """Gives the inheritance, to pass at the change: {"inheritance": <inheritance.json>, "strike": {"principles":
+    [numbers], "craft": [numbers], "strategy": bool, "letter": bool}}. It replaces one given before."""
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    if not isinstance(body, dict) or set(body) - {"inheritance", "strike"}:
+        return JSONResponse({"error": 'send {"inheritance": {...}, "strike": {...}}', "field": "inheritance"}, 422)
+    try:
+        given = inheritance.give(agent, body.get("inheritance"), body.get("strike"), _owner(request))
+    except inheritance.InheritanceError as exc:
+        return _inheritance_error(exc)
+    return JSONResponse(given, status_code=201)
+
+
+@router.post("/api/generation/letter")
+def generation_letter(request: Request) -> JSONResponse:
+    """Asks her for her letter to the next generation: one call of hers writes it at the next round."""
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    status, body = agent.ask_letter(_owner(request))
+    if status == 202:
+        _poke(request)
+    return JSONResponse(body, status_code=status)
+
+
 # 0.44.0 (vision/evaluation.md): the feedback of an evaluation, given back to Ember: its preview, then the giving.
 def _feedback_error(exc: feedback.FeedbackError) -> JSONResponse:
     return JSONResponse({"error": f"The feedback can't be given: {exc}.", "field": exc.field}, status_code=exc.status)
@@ -1304,5 +1402,5 @@ def evaluation_feedback_give(request: Request, body: Annotated[Any, Body()] = No
         given = feedback.give(actions, body, _owner(request))
     except feedback.FeedbackError as exc:
         return _feedback_error(exc)
-    given["wake"] = _wake_for_message(request)
+    given["wake"] = _wake_for_message(request) if given["message_id"] is not None else None  # 0.47.0: sent nothing
     return JSONResponse(given, status_code=201)

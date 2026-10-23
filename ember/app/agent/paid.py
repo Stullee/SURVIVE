@@ -53,7 +53,7 @@ def days_named(text: str) -> int:
 def _views(conn: sqlite3.Connection, scope: AgentScope, listing: int, on: str | None = None) -> dict[str, int]:
     """A listing's views and favorites: those Ember's code observed on the day ``on`` or the last day before it, else
     (or with no day) its numbers at the last sync."""
-    where, params = scope.where()
+    where, params = scope.world_where()  # 0.46.0: a listing's numbers are the world's
     found: dict[str, int] = {}
     if on is not None:
         for metric in ("views", "favorites"):
@@ -65,7 +65,7 @@ def _views(conn: sqlite3.Connection, scope: AgentScope, listing: int, on: str | 
             if row is not None:
                 found[metric] = int(row["value"])
     if len(found) < 2:
-        where_l, params_l = scope.where("l")
+        where_l, params_l = scope.world_where("l")
         for table in ("etsy_listings", "printify_products"):
             favorites = "l.favorites" if table == "etsy_listings" else "0"
             row = conn.execute(
