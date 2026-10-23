@@ -726,6 +726,13 @@ cases count as one case, two of her own establish one, one against disputes it,
 generation's work (no model writes them), a seed strategy and identity, and her
 letter to the next generation, which one call of hers writes when you ask.
 
+0.49.0 makes the evaluation export's scorecard count by generation: each
+generation's weeks end at the change, her own records count for the generation
+that made them, and a **Generations** table compares the generations over the
+same stretches of their lives (the first 14 and 28 days, the last 28), with what
+became of the principles each inherited. It is how the owner and the evaluator
+see whether the next generation is smarter.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

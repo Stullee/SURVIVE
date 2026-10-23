@@ -20,7 +20,10 @@ This export: {{parts}}. Options the owner chose: {{options}}.
 - **`manifest.json`**: what is in each zip, every table's rows, how to read the database (`how_to_read`), what was
   left out. Read it first. If a zip it lists is missing, say so and evaluate what you have.
 - **`scorecard.json`** and **`scorecard.md`**: the computed measures, by week (Monday to Sunday, the owner's time zone)
-  over her whole life, by app version, and today's and the last 7 days' alarms. Computed by Ember's code from her
+  over her whole life, by app version, and today's and the last 7 days' alarms. After a generation change, by
+  generation too: each week names its generation (a week of the change is cut in two), her own records count for
+  the generation that made them (the shop's numbers are every generation's), and `generations` puts each
+  generation's first 14 and 28 days and last 28 days side by side, with what became of the principles it inherited. Computed by Ember's code from her
   records, before masking: take them as they are. Recompute one only when it looks wrong, and then say so.
 - **`ember.db`**: her whole database (SQLite), masked for sharing. Other people's text is `[N characters left out]`,
   addresses are `[email N]`, the owner is `[the owner]`. Live rows have `mode = 'live'`; cycles, llm_calls and what
@@ -43,7 +46,10 @@ Evaluate **{{week}}**, unless the owner names another week.
 
 1. **The computed measures.** From `scorecard.json`, the week's measures, part scores, Outcome and Capability, with
    their change since the week before and since the last release (the `versions` table). A measure under its sample
-   is "too early", never a verdict.
+   is "too early", never a verdict. In a generation's first weeks, compare it with the generation before over the
+   same stretch (`generations`: first 14 and 28 days), and say which inherited principles her own cases confirmed,
+   disputed or retired; L5 then also counts the failure classes she repeated despite an inherited principle against
+   them.
 2. **The graded measures.** Grade these yourself, from the export:
    - **R1 Belief accuracy**: take at least 10 checkable claims from her messages of the week (`messages`, sender
      agent), the week's daily reviews and the weekly look: a number, a date, a state, a rule. Check each against her

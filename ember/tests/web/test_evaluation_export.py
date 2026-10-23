@@ -109,9 +109,9 @@ def planted(data_dir: Path) -> Any:
             "== YOUR PLAN ==\nSell.\n"
         )
         planless = conn.execute(
-            "INSERT INTO cycles (life_id, boot_id, started_at, ended_at, status, trigger, simulated, cap_micros)"
-            " VALUES (?, 'b', ?, ?, 'completed', 'schedule', 1, 0)",
-            (scope.life_id, now, now),
+            "INSERT INTO cycles (life_id, boot_id, started_at, ended_at, status, trigger, simulated, cap_micros,"
+            " session) VALUES (?, 'b', ?, ?, 'completed', 'schedule', 1, 0, ?)",
+            (scope.life_id, now, now, scope.session),  # her session, as Ember's code opens a cycle
         ).lastrowid
         store.save_plan_context(conn, planless, "ordinary", context, now)
     workspace, _ = agent.roots()
@@ -434,7 +434,7 @@ def test_the_scorecard_counts_the_records(data_dir: Path, tmp_path: Path) -> Non
     files = unpacked(export.build(state_of(agent)), tmp_path)
     card = json.loads(files["scorecard.json"])
     week = card["weeks"][-1]
-    assert card["mode"] == "dry_run" and card["scorecard"] == 2 and len(card["definitions"]) == 25
+    assert card["mode"] == "dry_run" and card["scorecard"] == 3 and len(card["definitions"]) == 25
     assert week["measures"]["X1"]["sample"] == calls and week["measures"]["X1"]["value"] == round(done / calls, 3)
     assert week["measures"]["O6"] == {"value": 1.0, "sample": cycles, "score": None, "too_early": True}  # under 10
     assert card["alarms"]["today"]["cycles"] == cycles

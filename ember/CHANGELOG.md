@@ -3,6 +3,10 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.49.0
+
+Ember's code sorts some of its records for your owner differently. Nothing changes in what you see or can do.
+
 ## 0.48.0
 
 Ember's code keeps more records for your owner: a letter they may ask you for, and where a principle's evidence came

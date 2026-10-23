@@ -3170,7 +3170,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.48.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.49.0 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3425,7 +3425,12 @@ first the **data**, then **files 1**, **files 2** … with her files, the newest
   time; what a person or a model must judge is left to the evaluation. Ember never sees it. Since 0.45.0 its
   definitions are version 2: a cycle weighs what its calls cost once settled (a call billed at its worst case and
   settled later at what it cost, as on 10-15 and 10-16), and *Work finished* counts the cycles that left no work
-  undone (a call refused or failed that no later call of the same tool and target put right).
+  undone (a call refused or failed that no later call of the same tool and target put right). Since 0.49.0 they
+  are version 3, by generation (see [The next generation](#the-next-generation)): each generation's weeks end at
+  the change, her own records count for the generation that made them (a first generation's open promise or line
+  is no second generation's), and **Generations** puts each generation's first 14 and 28 days and last 28 side by
+  side, with what became of the principles it inherited. The shop's numbers (views, favorites, sales, pin clicks)
+  are every generation's.
 - `report.txt` (the shareable report as the export was made), `memory/` (her strategy, identity and lessons,
   masked), `outside.csv` and `week.csv` to fill in: what only you see (KDP's units and royalties, the ads'
   impressions and clicks, the Anthropic Console's spend) and your week (minutes spent on Ember, instructions given,
@@ -3781,6 +3786,12 @@ aside, ends the life (state ended) and begins the next, which a grant isn't
 needed for: the money carries on. The inheritance passes in the same step. The
 new generation's plans say which generation she is and, in her first days,
 what passed to her and where (`inheritance/` in her workspace).
+
+**How you know she is smarter.** 0.49.0: the evaluation export's scorecard
+compares the generations over the same stretches of their lives (the first 14
+and 28 days, the last 28) and says which inherited principles her own cases
+established, disputed or retired. A change on a Sunday makes her first week a
+whole one.
 
 **Going back.** The dashboard can't undo a generation change. To go back, stop
 the app, restore the `ember-generation…` copy as `/data/ember.db`, move the
