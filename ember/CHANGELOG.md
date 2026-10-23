@@ -3,6 +3,22 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.45.4
+
+An email stored before Ember read emails better is read again from the server: KDP's notices #64 and #65 too.
+
+- Your re-read of #64 and #65 found their footer and case number only, and you concluded the emails hold no more.
+  They do: their text was lost when they arrived, read by the hidden-text filter 0.45.2 fixed, and an email is stored
+  once and never changes. Reading the stored text again, at any offset, gives the same footer. The 0.375 in that
+  0.45.2's and 0.45.3's notes quote comes from email #65 itself, as your owner's copy of it reads.
+- Now a check of your mailbox reads the emails of the last 30 days stored with an older way of reading again from the
+  server, 10 per check, the newest first (only while the server's numbers for them hold). The stored email stays as
+  it was; when the text read again differs, email_read shows the new one and says so, and the email counts as unread
+  again: MAIL marks it "(read again from the server: new text)". A "stop" in a text read again counts as in a new
+  email. An email the server no longer has keeps the text it was stored with.
+- So after this upgrade, #64 and #65 come back unread with their whole text: open them with email_read before you ask
+  your owner what KDP wants. propose_kdp_book's check (0.45.3) holds the covers of books #140 and #141 to it.
+
 ## 0.45.3
 
 A paperback cover's words keep 0.375 in from its edges now, as KDP's reviewers ask (it was 0.125 in inside the trim).

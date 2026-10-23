@@ -22,7 +22,7 @@ from ..agent.store import AgentScope as Scope
 from ..db import Database
 from ..economy.clock import Clock, from_iso, to_iso
 from ..logging_setup import redact
-from .mail import MAX_FETCH, FetchResult, IncomingMail, Mailbox, MailError, one_line
+from .mail import MAX_FETCH, TEXT_VERSION, FetchResult, IncomingMail, Mailbox, MailError, one_line
 from .optout import opt_out
 
 log = logging.getLogger(__name__)
@@ -36,6 +36,10 @@ ERROR_CHARS = 300
 # reads doubles with each failed read in a row after the first, up to BACKOFF_MINUTES; a read that works resets it.
 BACKOFF_MINUTES = 240
 REFUSED_TRIES = 5  # 0.15.0: checks in a row the server may refuse an email before Ember skips it
+# 0.45.4: after a change to how an email's text is read (mail.TEXT_VERSION), the emails stored in these days with an
+# older one are read again from the server, this many per check, the newest first (reread)
+REREAD_DAYS = 30
+REREAD_BATCH = 10
 
 
 def meta_key(mode: str, name: str) -> str:
@@ -48,6 +52,7 @@ class Fetched:
     suppressed: list[str] = field(default_factory=list)
     waiting: int = 0  # new emails left for the next check
     error: str | None = None
+    reread: list[int] = field(default_factory=list)  # 0.45.4: stored emails read again whose text changed
 
 
 def fetch(db: Database, clock: Clock, scope: Scope, mailbox: Mailbox, budget: float = FETCH_BUDGET_SECONDS) -> Fetched:
@@ -100,6 +105,8 @@ def fetch(db: Database, clock: Clock, scope: Scope, mailbox: Mailbox, budget: fl
     db.set_meta(meta_key(scope.mode, "left"), str(result.waiting))  # 0.37.3: what it left for the next read (read_at)
     if result.waiting:
         events.record(db, "info", "email", f"{result.waiting} more new email(s) wait for the next check of the mailbox")
+    elif time.monotonic() < deadline:  # 0.45.4: new mail first; what time is left reads stored emails again
+        reread(db, clock, scope, mailbox, deadline, result)
     return result
 
 
@@ -144,16 +151,24 @@ def _store_one(
     email_id = store_incoming(conn, scope, mail, uidvalidity, now, mailbox.address)
     if email_id is None:
         return None, []
+    return email_id, _asked(conn, scope, mailbox, mail, email_id, now)
+
+
+def _asked(
+    conn: sqlite3.Connection, scope: Scope, mailbox: Mailbox, mail: IncomingMail, email_id: int, now: str
+) -> list[str]:
+    """The addresses stored email ``email_id`` (its text in ``mail``) asks Ember never to write to again, now
+    suppressed (those that weren't before)."""
     own = mail.from_addr.lower() == mailbox.address.lower()  # Ember's own address is never suppressed
     if not mail.from_addr or own:
-        return email_id, []
+        return []
     # 0.15.0: "replied" only to an email Ember sent (live: a provider's own mail was said to reply)
     answered = _answered(conn, scope, mail)
     # A newsletter's "unsubscribe" is about Ember leaving it (0.12.0). 0.21.0: unless it answers Ember's own
     # email: a "stop" sent through a group or a list (with its List-Id) was ignored.
     words = opt_out(mail.subject, mail.body) if answered or not mail.bulk else None
     if words is None:
-        return email_id, []
+        return []
     asked = []
     how = "replied" if answered else "wrote"
     if suppress(conn, scope, mail.from_addr, now, f'{how} "{words}"', email_id):
@@ -166,7 +181,7 @@ def _store_one(
             conn, scope, to, now, reason, email_id
         ):
             asked.append(to)
-    return email_id, asked
+    return asked
 
 
 def _answered(conn: sqlite3.Connection, scope: Scope, mail: IncomingMail) -> list[str]:
@@ -181,6 +196,102 @@ def _answered(conn: sqlite3.Connection, scope: Scope, mail: IncomingMail) -> lis
         (*params, *ids),
     )
     return sorted(str(r[0]) for r in found)
+
+
+def reread(db: Database, clock: Clock, scope: Scope, mailbox: Mailbox, deadline: float, result: Fetched) -> None:
+    """0.45.4: the emails stored in the last REREAD_DAYS with an older TEXT_VERSION, read again from the server, the
+    newest REREAD_BATCH first. A stored email never changes: what was read again is kept beside it (email_rereads),
+    once per version, and a text that changed is the one email_read shows, unread until the agent opens it; a "stop"
+    in it counts as in a new email. Live, KDP's "Attention needed" emails #64 and #65 were stored as their footer and
+    case number, and 0.45.2's better reading couldn't reach them. Emails of a mailbox the server renumbered since aren't
+    read (their UIDs are other emails). Never raises: a read that fails is tried again with the next check."""
+    validity = _int(db.get_meta(meta_key(scope.mode, "uidvalidity")))
+    since = to_iso(clock.now() - timedelta(days=REREAD_DAYS))
+    where, params = scope.where("e")
+    with db.connection() as conn:
+        due = conn.execute(
+            f"SELECT e.id, e.uid, e.message_id, e.body, e.body_cut, e.attachments FROM emails e WHERE {where}"
+            " AND e.direction = 'in' AND COALESCE(e.text_version, 0) < ? AND e.uidvalidity = ? AND e.received_at >= ?"
+            " AND NOT EXISTS (SELECT 1 FROM email_rereads r WHERE r.email_id = e.id AND r.text_version >= ?)"
+            " ORDER BY e.id DESC LIMIT ?",
+            (*params, TEXT_VERSION, validity, since, TEXT_VERSION, REREAD_BATCH),
+        ).fetchall()
+    if not due or not validity:
+        return
+    try:
+        found = mailbox.fetch_again([int(r["uid"]) for r in due], validity, deadline)
+    except Exception as exc:  # noqa: BLE001 - reading mail again must never end the cycle, nor fail the read
+        log.warning("Reading stored emails again failed: %s", redact(str(exc))[:ERROR_CHARS])
+        return
+    now = to_iso(clock.now())
+    asked: list[str] = []
+    with db.transaction() as conn:
+        for row in due:
+            if int(row["uid"]) not in found:
+                continue  # out of time: the next check
+            conn.execute("SAVEPOINT reread")
+            try:
+                changed, stops = _reread_one(conn, scope, mailbox, row, found[int(row["uid"])], now)
+            except Exception:  # noqa: BLE001 - one email Ember can't store again keeps the text it has
+                log.exception("Storing email #%d as read again failed", row["id"])
+                conn.execute("ROLLBACK TO reread")
+                _reread_row(conn, int(row["id"]), now, "gone")
+                changed, stops = False, []
+            conn.execute("RELEASE reread")
+            result.reread += [int(row["id"])] if changed else []
+            asked += stops
+    result.suppressed += asked
+    if result.reread:
+        listed = ", ".join(f"#{n}" for n in sorted(result.reread))
+        events.record(db, "info", "email", f"Ember read stored emails again from the server; new text in {listed}")
+    for _ in asked:
+        events.record(db, "info", "email", "A sender asked not to get emails; Ember won't write to them again")
+
+
+def _reread_one(
+    conn: sqlite3.Connection, scope: Scope, mailbox: Mailbox, row: sqlite3.Row, mail: IncomingMail | None, now: str
+) -> tuple[bool, list[str]]:
+    """One stored email (``row``) as the server handed it over again: whether its text changed, and the addresses it
+    asks Ember never to write to again (newly suppressed). The server's UIDs are never another email's while its
+    UIDVALIDITY holds; one with another Message-ID counts as gone all the same."""
+    if mail is None or (row["message_id"] and mail.message_id != row["message_id"]):
+        _reread_row(conn, int(row["id"]), now, "gone")
+        return False, []
+    newest = (
+        conn.execute(
+            "SELECT body, body_cut, attachments FROM email_rereads WHERE email_id = ? AND status = 'changed'"
+            " ORDER BY text_version DESC LIMIT 1",
+            (row["id"],),
+        ).fetchone()
+        or row
+    )
+    if (mail.body, int(mail.body_cut), mail.attachments_json()) == (
+        newest["body"],
+        int(newest["body_cut"]),
+        newest["attachments"],
+    ):
+        _reread_row(conn, int(row["id"]), now, "same")
+        return False, []
+    _reread_row(conn, int(row["id"]), now, "changed", mail)
+    return True, _asked(conn, scope, mailbox, mail, int(row["id"]), now)
+
+
+def _reread_row(
+    conn: sqlite3.Connection, email_id: int, now: str, status: str, mail: IncomingMail | None = None
+) -> None:
+    conn.execute(
+        "INSERT INTO email_rereads (email_id, text_version, read_at, status, body, body_cut, attachments)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            email_id,
+            TEXT_VERSION,
+            now,
+            status,
+            None if mail is None else mail.body,
+            None if mail is None else int(mail.body_cut),
+            None if mail is None else mail.attachments_json(),
+        ),
+    )
 
 
 def _refused(db: Database, mode: str, fetched: FetchResult) -> int:
@@ -251,7 +362,7 @@ def store_incoming(
     cursor = conn.execute(
         "INSERT OR IGNORE INTO emails (mode, session, life_id, direction, uidvalidity, uid, message_id, in_reply_to,"
         " references_, from_addr, from_name, to_addr, subject, sent_at, received_at, body, body_cut, attachments,"
-        " bulk, authenticated) VALUES (?, ?, ?, 'in', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " bulk, authenticated, text_version) VALUES (?, ?, ?, 'in', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             scope.mode,
             scope.session,
@@ -272,6 +383,7 @@ def store_incoming(
             mail.attachments_json(),
             1 if mail.bulk or mail.machine or own_mail else 0,  # no inquiry (0.15.0: nor a machine's or Ember's own)
             1 if mail.authenticated else 0,  # 0.15.0: the receiving provider verified the sender
+            TEXT_VERSION,  # 0.45.4: how its text was read (reread)
         ),
     )
     return int(cursor.lastrowid) if cursor.rowcount == 1 else None
@@ -423,36 +535,67 @@ def counts(conn: sqlite3.Connection, scope: Scope, since: str) -> tuple[int, int
 
 # --- what the agent reads ---
 
+# 0.45.4: an email read again from the server whose new text the agent hasn't opened (reread)
+_AGAIN = (
+    "EXISTS (SELECT 1 FROM email_rereads x WHERE x.email_id = emails.id AND x.status = 'changed'"
+    " AND x.read_by_agent_at IS NULL)"
+)
+# An incoming email the agent hasn't read: not opened, or (0.45.4) with a text read again it hasn't opened
+_UNREAD = f"(read_by_agent_at IS NULL OR {_AGAIN})"
+
 
 def unread(conn: sqlite3.Connection, scope: Scope, limit: int = 3) -> tuple[int, list[sqlite3.Row]]:
-    """How many incoming emails the agent hasn't read, and the newest of them."""
+    """How many incoming emails the agent hasn't read, and the newest of them (``again``: 0.45.4, one it read before
+    whose text read again from the server it hasn't)."""
     where, params = scope.where()
-    condition = f"{where} AND direction = 'in' AND read_by_agent_at IS NULL"
+    condition = f"{where} AND direction = 'in' AND {_UNREAD}"
     count = conn.execute(f"SELECT COUNT(*) FROM emails WHERE {condition}", params).fetchone()[0]
     rows = conn.execute(
-        f"SELECT id, from_addr, subject FROM emails WHERE {condition} ORDER BY id DESC LIMIT ?", (*params, limit)
+        f"SELECT id, from_addr, subject, read_by_agent_at IS NOT NULL AS again FROM emails WHERE {condition}"
+        " ORDER BY id DESC LIMIT ?",
+        (*params, limit),
     ).fetchall()
     return int(count), rows
 
 
 def inbox(conn: sqlite3.Connection, scope: Scope, unread_only: bool = False, limit: int = 15) -> list[sqlite3.Row]:
+    """The newest incoming emails, each with whether the agent hasn't read it (``unread``)."""
     where, params = scope.where()
-    only = " AND read_by_agent_at IS NULL" if unread_only else ""
+    only = f" AND {_UNREAD}" if unread_only else ""
     return conn.execute(
-        f"SELECT * FROM emails WHERE {where} AND direction = 'in'{only} ORDER BY id DESC LIMIT ?", (*params, limit)
+        f"SELECT *, {_UNREAD} AS unread FROM emails WHERE {where} AND direction = 'in'{only} ORDER BY id DESC LIMIT ?",
+        (*params, limit),
     ).fetchall()
 
 
 def email(conn: sqlite3.Connection, scope: Scope, email_id: int) -> sqlite3.Row | None:
+    """A stored email, with whether the agent hasn't read it (``unread``)."""
     where, params = scope.where()
-    return conn.execute(f"SELECT * FROM emails WHERE id = ? AND {where}", (email_id, *params)).fetchone()
+    return conn.execute(
+        f"SELECT *, {_UNREAD} AS unread FROM emails WHERE id = ? AND {where}", (email_id, *params)
+    ).fetchone()
+
+
+def text_again(conn: sqlite3.Connection, email_id: int) -> sqlite3.Row | None:
+    """0.45.4: the newest text of a stored email read again from the server, if it changed (reread)."""
+    return conn.execute(
+        "SELECT read_at, body, body_cut, attachments FROM email_rereads WHERE email_id = ? AND status = 'changed'"
+        " ORDER BY text_version DESC LIMIT 1",
+        (email_id,),
+    ).fetchone()
 
 
 def mark_read(conn: sqlite3.Connection, email_id: int, now: str, cycle_id: int) -> None:
-    """The agent opened this email (in wake cycle ``cycle_id``): it no longer counts as unread."""
+    """The agent opened this email (in wake cycle ``cycle_id``): it no longer counts as unread (0.45.4: nor its text
+    read again)."""
     conn.execute(
         "UPDATE emails SET read_by_agent_at = ?, seen_cycle_id = ? WHERE id = ? AND read_by_agent_at IS NULL",
         (now, cycle_id, email_id),
+    )
+    conn.execute(
+        "UPDATE email_rereads SET read_by_agent_at = ? WHERE email_id = ? AND status = 'changed'"
+        " AND read_by_agent_at IS NULL",
+        (now, email_id),
     )
 
 
@@ -473,7 +616,7 @@ def unread_reply(
     ids = {*_REFERENCE.findall(thread or ""), *(str(r[0]) for r in sent)}
     for row in conn.execute(
         f"SELECT id, from_addr, in_reply_to, references_ FROM emails WHERE {where} AND direction = 'in'"
-        " AND read_by_agent_at IS NULL AND received_at > ? ORDER BY id",
+        f" AND {_UNREAD} AND received_at > ? ORDER BY id",  # 0.45.4: or with a text read again it hasn't opened
         (*params, since),
     ):
         sender = str(row["from_addr"] or "").lower()

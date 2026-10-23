@@ -50,6 +50,10 @@ MAX_FETCH = 20  # emails per fetch, the oldest new ones first (0.12.0: the newes
 MAX_MESSAGE_BYTES = 1_000_000  # larger emails are read from their headers and START_BYTES (0.39.5: headers only)
 START_BYTES = 262_144  # 0.39.5: of a larger email's body, where its text comes before its attachments
 BODY_CHARS = 8_000  # of an email's text kept (0.39.7: what it quotes goes first, fit_text)
+# 0.45.4: how an email's text is read (parse_message). Raise it with a change that may read a stored email's text
+# differently, as 0.45.2's style sheets did: the recent emails stored with an older one are read again from the server
+# (mailstore.reread). 1: 0.45.2's rule that colours only inside its context.
+TEXT_VERSION = 1
 SUBJECT_CHARS = 300
 NAME_CHARS = 200
 ID_CHARS = 998
@@ -353,6 +357,10 @@ class Mailbox(Protocol):
     def fetch_new(
         self, after_uid: int, limit: int = MAX_FETCH, uidvalidity: int | None = None, deadline: float | None = None
     ) -> FetchResult: ...
+
+    def fetch_again(
+        self, uids: list[int], uidvalidity: int, deadline: float | None = None
+    ) -> dict[int, IncomingMail | None]: ...
 
     def send(self, message: EmailMessage, to: str) -> SendResult: ...
 
@@ -1242,13 +1250,25 @@ class LiveMailbox:
     def fetch_new(
         self, after_uid: int, limit: int = MAX_FETCH, uidvalidity: int | None = None, deadline: float | None = None
     ) -> FetchResult:
+        return self._connected(lambda conn: self._fetch(conn, after_uid, limit, uidvalidity, deadline))
+
+    def fetch_again(
+        self, uids: list[int], uidvalidity: int, deadline: float | None = None
+    ) -> dict[int, IncomingMail | None]:
+        """0.45.4: emails stored before, read again by their UIDs (PEEK: nothing is marked read), as a fetch reads them:
+        None for one the server doesn't hand over (deleted, moved). Nothing when the server renumbered the mailbox
+        since (its UIDs are other emails now), and none past the deadline."""
+        return self._connected(lambda conn: self._again(conn, uids, uidvalidity, deadline))
+
+    def _connected[T](self, work: Callable[[Any], T]) -> T:
+        """``work`` done on a connection to the configured IMAP server, logged out after."""
         host, port = self._server(self.imap)
         try:
             conn = imaplib.IMAP4_SSL(host, port, ssl_context=self.tls(), timeout=TIMEOUT_SECONDS)
         except (OSError, imaplib.IMAP4.error) as exc:
             raise MailError(f"could not connect to {host}:{port}: {_describe(exc)}") from exc
         try:
-            return self._fetch(conn, after_uid, limit, uidvalidity, deadline)
+            return work(conn)
         except MailError:
             raise
         except (OSError, imaplib.IMAP4.error, ValueError) as exc:
@@ -1257,15 +1277,19 @@ class LiveMailbox:
             with contextlib.suppress(Exception):
                 conn.logout()
 
-    def _fetch(
-        self, conn: Any, after_uid: int, limit: int, uidvalidity: int | None, deadline: float | None
-    ) -> FetchResult:
+    def _open(self, conn: Any) -> int | None:
+        """Logs in and opens the INBOX read-only; its UIDVALIDITY."""
         conn.login(self.address, self._password.get_secret_value())
         typ, _ = conn.select("INBOX", readonly=True)
         if typ != "OK":
             raise MailError("the mailbox has no INBOX that can be opened")
         _, data = conn.response("UIDVALIDITY")
-        validity = int(data[0]) if data and data[0] else None
+        return int(data[0]) if data and data[0] else None
+
+    def _fetch(
+        self, conn: Any, after_uid: int, limit: int, uidvalidity: int | None, deadline: float | None
+    ) -> FetchResult:
+        validity = self._open(conn)
         if uidvalidity is not None and validity != uidvalidity:
             after_uid = 0  # the server renumbered the mailbox: every UID starts over
         typ, data = conn.uid("SEARCH", None, f"UID {after_uid + 1}:*")
@@ -1279,30 +1303,47 @@ class LiveMailbox:
         for uid in wanted:
             if deadline is not None and time.monotonic() > deadline:
                 break  # the rest comes with the next fetch
-            typ, data = conn.uid("FETCH", str(uid), "(RFC822.SIZE)")
-            size = _fetched_size(data)
-            whole = typ == "OK" and size is not None and size <= MAX_MESSAGE_BYTES
-            if typ == "OK":  # PEEK: nothing is marked read
-                typ, data = conn.uid("FETCH", str(uid), "(BODY.PEEK[])" if whole else "(BODY.PEEK[HEADER])")
-            raw = _literal(data) if typ == "OK" else None
-            if raw is None:
+            read = self._read(conn, uid)
+            if read is None:
                 # 0.15.0: the server refused it or sent nothing. It was stored empty and passed for good (an opt-out
                 # in it too): now the fetch ends before it, and the next one asks again (mailstore.fetch gives up
                 # after REFUSED_TRIES).
                 refused = uid
                 break
-            mails.append(
-                parse_message(
-                    raw[: MAX_MESSAGE_BYTES + 1],
-                    uid,
-                    headers_only=not whole,
-                    size=size,
-                    authserv_ids=self.authserv_ids,
-                    start=None if whole else self._start(conn, uid),
-                )
-            )
+            mails.append(read)
             last = uid
         return FetchResult(mails, last, validity, len(found) - len(mails), refused)
+
+    def _again(
+        self, conn: Any, uids: list[int], uidvalidity: int, deadline: float | None
+    ) -> dict[int, IncomingMail | None]:
+        if self._open(conn) != uidvalidity:
+            return {}
+        found: dict[int, IncomingMail | None] = {}
+        for uid in uids:
+            if deadline is not None and time.monotonic() > deadline:
+                break  # the rest are read again with a later check
+            found[uid] = self._read(conn, uid)
+        return found
+
+    def _read(self, conn: Any, uid: int) -> IncomingMail | None:
+        """One email by its UID as Ember stores it, or None when the server refuses it or sends nothing."""
+        typ, data = conn.uid("FETCH", str(uid), "(RFC822.SIZE)")
+        size = _fetched_size(data)
+        whole = typ == "OK" and size is not None and size <= MAX_MESSAGE_BYTES
+        if typ == "OK":  # PEEK: nothing is marked read
+            typ, data = conn.uid("FETCH", str(uid), "(BODY.PEEK[])" if whole else "(BODY.PEEK[HEADER])")
+        raw = _literal(data) if typ == "OK" else None
+        if raw is None:
+            return None
+        return parse_message(
+            raw[: MAX_MESSAGE_BYTES + 1],
+            uid,
+            headers_only=not whole,
+            size=size,
+            authserv_ids=self.authserv_ids,
+            start=None if whole else self._start(conn, uid),
+        )
 
     @staticmethod
     def _start(conn: Any, uid: int) -> bytes | None:
@@ -1477,6 +1518,14 @@ class FakeMailbox:
         mails = [parse_message(m.build(self.address).as_bytes(), m.uid) for m in wanted]
         last = max([after_uid, *(m.uid for m in wanted)])
         return FetchResult(mails, last, self.uidvalidity, len(arrived) - len(wanted))
+
+    def fetch_again(
+        self, uids: list[int], uidvalidity: int, deadline: float | None = None
+    ) -> dict[int, IncomingMail | None]:
+        if uidvalidity != self.uidvalidity:
+            return {}
+        arrived = {m.uid: m for m in FAKE_INBOX if m.wake <= self._wake()}
+        return {u: parse_message(arrived[u].build(self.address).as_bytes(), u) if u in arrived else None for u in uids}
 
     def send(self, message: EmailMessage, to: str) -> SendResult:
         check_outgoing(message, to)

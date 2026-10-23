@@ -100,6 +100,8 @@ class FakeIMAP:
             found = [u for u in sorted(self.mails) if u >= first] or sorted(self.mails)[-1:]  # the "n:*" quirk
             return "OK", [" ".join(str(u) for u in found).encode()]
         uid, what = int(args[0]), args[1]
+        if uid not in self.mails:  # 0.45.4: as a server answers for a UID it doesn't have: OK, and nothing
+            return "OK", [None]
         raw = self.mails[uid]
         if what == "(RFC822.SIZE)":
             return "OK", [f"1 (UID {uid} RFC822.SIZE {len(raw)})".encode()]

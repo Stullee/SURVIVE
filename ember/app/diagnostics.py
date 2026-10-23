@@ -177,6 +177,7 @@ TABLES = (
     "owner_digests",
     "inquiry_closures",
     "emails",
+    "email_rereads",
     "email_actions",
     "email_suppressions",
     "events",

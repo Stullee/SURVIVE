@@ -424,7 +424,7 @@ def _email_inbox(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
     for r in rows:
         line = (
             f"#{r['id']} · {_local(ctx, r['received_at'])} · {_quoted(_sender(r))} · {_quoted(_cut(r['subject'], 100))}"
-            f" · {'unread' if r['read_by_agent_at'] is None else 'read'}"
+            f" · {'unread' if r['unread'] else 'read'}"
         )
         if sum(len(x) + 1 for x in [*lines, line]) > INBOX_CHARS:  # the closing data tag must never be cut off
             break
@@ -447,19 +447,21 @@ def _email_read(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
         f"Date: {_local(ctx, row['sent_at'] or row['received_at'])}",
         f"Subject: {row['subject']}",
     ]
-    attachments = json.loads(row["attachments"] or "[]")
+    again = mailstore.text_again(conn, row["id"])  # 0.45.4: its text read again from the server, if it changed
+    kept = row if again is None else again
+    attachments = json.loads(kept["attachments"] or "[]")
     if attachments:
         listed = ", ".join(f"{_cut(str(a.get('name')), 60)} ({int(a.get('size') or 0):,} B)" for a in attachments[:5])
         headers.append(f"Attachments (never opened): {listed}")
     head = "\n".join(headers)
-    body = row["body"]
+    body = kept["body"]
     offset = args.get("offset", 0)
     # As much text as fits beside the headers: the whole result, closing data tag included, stays uncut.
     part = body[offset : offset + min(EMAIL_READ_CHARS, MAX_RESULT_CHARS - len(head) - 500)]
     end = offset + len(part)
     text = f"{head}\n\n{part}"
     more = f"\nMore from offset {end}." if end < len(body) else ""
-    if not more and row["body_cut"]:  # 0.39.7: "only its first 8,000 characters were kept"
+    if not more and kept["body_cut"]:  # 0.39.7: "only its first 8,000 characters were kept"
         more = '\nThe email was longer than 8,000 characters: its quotes were left out first ("> [...]"), then its end.'
     if row["direction"] == "out":
         lead = f"Email #{row['id']}, sent by Ember after your owner approved request #{row['approval_id']}."
@@ -470,8 +472,13 @@ def _email_read(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
             else "Not a verified person's (an unverified sender, a list or a machine): no obligation, and it doesn't"
             " count as them having written."
         )
+        if again is not None:
+            lead += (
+                f" Ember read it again from the server {_local(ctx, again['read_at'])}, as it reads emails better now:"
+                f" this is its text now (it was stored with {len(row['body']):,} characters)."
+            )
         waited: list[int] = []
-        if row["read_by_agent_at"] is None:
+        if row["unread"]:
             # 0.40.3 (analysis-0.40.1 codebase, M1): the approved emails that waited for this one to be read
             waited = [request for request, _, held in mailstore.held(conn, ctx.scope, box.address) if held == row["id"]]
             mailstore.mark_read(conn, row["id"], ctx.now(), ctx.cycle_id)

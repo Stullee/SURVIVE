@@ -7,8 +7,9 @@ database itself can't be shared as it is (other people's emails, the web text Em
 unmasked), so the export is shareable like the report:
 
 * ``ember.db``: the whole database, copied with SQLite's online backup (a consistent snapshot while Ember runs). In the
-  copy other people's text is left out with its length: the emails' subjects, texts and attachments, an opt-out's
-  reason, an email Ember proposed, the research digests, and the owner's library with what its study drew from it.
+  copy other people's text is left out with its length: the emails' subjects, texts (0.45.4: read again too) and
+  attachments, an opt-out's reason, an email Ember proposed, the research digests, and the owner's library with what
+  its study drew from it.
   Every other text is masked as the shareable report masks it (diagnostics.shareable_masker: addresses, codes, link
   tokens, phone numbers, IBANs, streets, the words the owner removed, their name and user ID, the personal options),
   and what each plan saw (plan_contexts) becomes text, shareable as the report's PLANNER CONTEXT. The redaction's salt
@@ -77,6 +78,7 @@ NAME = re.compile(r"ember-evaluation-(\d{8}T\d{6}Z)(?:-[0-9A-Za-z.+_]{1,40})?(?:
 # The columns whose text is other people's or the owner's library's: only their length goes in.
 LEFT_OUT = {
     "emails": ("subject", "body", "attachments"),
+    "email_rereads": ("body", "attachments"),  # 0.45.4: an email's text read again from the server
     "library_parts": ("text",),
     "library_documents": ("summary", "note"),
     "learnings": ("topic", "text"),

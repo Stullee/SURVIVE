@@ -2137,7 +2137,11 @@ included: encrypt your backups.
   like its background; since 0.45.2 a style sheet's colour counts only inside
   the elements its rule names, so Amazon KDP's notices are no longer taken for
   white on white), and attachments are listed by name and size but never
-  opened. An email over 1 MB keeps the text in its first 256 KB, where an
+  opened. Since 0.45.4 an email stored before a change to how Ember reads an
+  email's text is read again from the server, if it arrived in the last 30
+  days and the server still has it under its number (10 per check, the newest
+  first): the stored email never changes, its new text is kept beside it, and
+  the agent reads that one, as unread again. A "stop" in it counts. An email over 1 MB keeps the text in its first 256 KB, where an
   email's text comes before its attachments, and says so; its attachments
   aren't fetched (before 0.39.5 it kept its headers only, so a "stop" sent
   with a photo was never read). One whose text comes after a photo still keeps
@@ -3166,7 +3170,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.45.3 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.45.4 (by /u/your name)`.
 
 ## Amazon KDP
 
