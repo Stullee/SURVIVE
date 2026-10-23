@@ -87,9 +87,12 @@ SPINE_TEXT_MARGIN = Decimal("0.0625")  # the space between spine text and the sp
 BARCODE = (Decimal("2"), Decimal("1.2"))  # the space KDP's barcode takes at the back cover's bottom right, in inches
 BARCODE_GAP = Decimal("0.25")  # from the trim's bottom and the spine
 SIZE_TOLERANCE = Decimal("0.01")  # inches a PDF's page may differ from the size KDP expects
-# 0.45.0 (evaluation 2026-10-22, C6): what a cover's words and pictures keep inside its trim (KDP's cover guide), the
-# coarseness its front is drawn at to find them and how far from the front's background colour counts as printed
-SAFE_ZONE = Decimal("0.125")
+# 0.45.0 (evaluation 2026-10-22, C6): what a cover's words and pictures keep inside its trim, the coarseness its front
+# and back are drawn at to find them and how far from a panel's background colour counts as printed. 0.45.2: 0.25 in
+# (0.375 in from the cover's edges), and as much from the spine's folds: KDP's reviewers asked that of two live covers
+# (Ember's emails #64 and #65) that the cover guide's 0.125 in, Ember's until then, had passed
+SAFE_ZONE = Decimal("0.25")
+PANELS = ("back", "front")  # a cover's, left to right (the spine between them)
 FRONT_DPI = 100
 FRONT_CONTRAST = 48
 INK_DPI = 36  # pages drawn this coarsely to find what is printed in their margins (0.25 in is 9 pixels)
@@ -547,27 +550,39 @@ def check_cover(size: tuple[float, float], pages: int, trim: str, paper: str) ->
     ]
 
 
-def check_front(box: tuple[float, float, float, float] | None, trim: str, pages: int, paper: str) -> list[str]:
-    """0.45.0 (evaluation 2026-10-22, C6): a paperback cover's front, where ``box`` is what it prints on its background
-    (in inches from the cover's top left corner; None: nothing, or art to its edges): it keeps SAFE_ZONE inside the
-    trim at the top, the bottom and the outside edge, or KDP's cut may take it. Live, the Haushaltsbuch's title printed
-    0.048 in inside the trim, and propose_kdp_book said KDP would take it."""
+def check_panel(
+    panel: str, box: tuple[float, float, float, float] | None, trim: str, pages: int, paper: str
+) -> list[str]:
+    """0.45.0 (evaluation 2026-10-22, C6): a paperback cover's front or back (``panel``), where ``box`` is what it
+    prints on its background (in inches from the cover's top left corner; None: nothing, or art to its edges): it
+    keeps SAFE_ZONE inside the trim at the top, the bottom and the outside edge, or KDP's cut may take it. Live, the
+    Haushaltsbuch's title printed 0.048 in inside the trim, and propose_kdp_book said KDP would take it. 0.45.2: the
+    back too, and SAFE_ZONE from the spine's fold, which may shift (a word beside it can wrap onto the spine)."""
     if box is None:
         return []
     width, height = (float(v) for v in cover_size(trim, pages, paper))
     bleed, least = float(BLEED), float(SAFE_ZONE) - float(SIZE_TOLERANCE)
-    _, top, right, bottom = box
-    rooms = (("top", top - bleed), ("bottom", height - bleed - bottom), ("outside edge", width - bleed - right))
+    left, top, right, bottom = box
+    if panel == "front":
+        fold = width - bleed - float(trim_size(trim)[0])
+        sides = (("outside edge", width - bleed - right), ("fold", left - fold))
+    else:
+        fold = bleed + float(trim_size(trim)[0])
+        sides = (("outside edge", left - bleed), ("fold", fold - right))
+    rooms = (("top", top - bleed), ("bottom", height - bleed - bottom), *sides)
     close = [
-        f"{inches(abs(room))} {'inside' if room >= 0 else 'beyond'} the trim at the {side}"
+        f"{inches(abs(room))} {'from' if room >= 0 else 'across'} the spine's fold"
+        if side == "fold"
+        else f"{inches(abs(room))} {'inside' if room >= 0 else 'beyond'} the trim at the {side}"
         for side, room in rooms
         if room < least
     ]
     if not close:
         return []
     return [
-        f"the cover's front prints words or pictures {', '.join(close)}: KDP asks for {inches(SAFE_ZONE)} inside the "
-        "trim, or its cut may take them"
+        f"the cover's {panel} prints words or pictures {', '.join(close)}: KDP asks for {inches(SAFE_ZONE)} inside the "
+        f"trim ({inches(BLEED + SAFE_ZONE)} from the cover's edges) and Ember's code for {inches(SAFE_ZONE)} from the "
+        "spine's fold, or the cut and the fold may take them"
     ]
 
 

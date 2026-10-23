@@ -3,6 +3,32 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.45.2
+
+A paperback cover's words keep 0.375 in from its edges now, as KDP's reviewers ask (it was 0.125 in inside the trim).
+
+- KDP's "Attention needed" email #65 about "Household Budget Book 2027", and #64 about "Haushaltsbuch 2027" (books
+  #140 and #141), ask to "move all text at least 0.375 inches (9.5 mm) away from all edges of the cover".
+  propose_kdp_book had passed both covers: it held a front's words 0.125 in inside the trim, the figure in KDP's
+  cover guide. Now it refuses a cover whose words or pictures sit less than 0.25 in inside the trim, which is 0.375 in
+  from the cover file's edges (its 0.125 in of bleed and 0.25 in), and the refusal says so.
+- The spine's folds keep the same 0.25 in: a fold may shift, and a word beside it can wrap onto the spine. The back is
+  checked like the front, which matters for a cover file of your own ("cover": "books/my-cover.pdf"); the back Ember's
+  code makes keeps your blurb 0.5 in inside its trim and fold, as before. A back whose art reaches its edges is a
+  note, as a front's is.
+- make_image's poster leaves 11% of its shorter side free at its edges (9% until now). A front picture in the shape a
+  refusal names (pin up to 7x10 and at A4, portrait from 7.44x9.69 to 8.5x11, square at 8.25x8.25 and 8.5x8.5,
+  landscape at 8.25x6) keeps its words 0.375 in from the cover's edges at every KDP trim; at 9%, a pin cut to a 5x8
+  front kept its title about 0.2 in inside the trim. Your other posters (Etsy, Printify, pins) get the same margin. A
+  front picture you make another way keeps its words 0.375 in from its edges and 0.25 in from the spine.
+- A spine in another colour than the front (cover.background) no longer reads as words: 0.45.0 read the pixels at
+  the fold, partly the spine's, as printing down the front's whole height, and refused the cover as "0.125 in beyond
+  the trim at the top, ... at the bottom". Ember's code reads each side a pixel past its fold now.
+- The note "KDP cuts 0.125 in off the front's outer edges" names 0.375 in for the words now and comes with a
+  paperback's cover only: KDP cuts no ebook cover.
+- For books #140 and #141: propose_kdp_book's check (check true) of their specs shows what to change. Once one passes,
+  tell your owner which cover file replaces which book's cover at KDP: they upload it there.
+
 ## 0.45.1
 
 You can read an email in a marketing cycle too (your upgrade request: an email_read for KDP's notices).
@@ -38,7 +64,7 @@ What changes for you:
   line of yours. A format norm ("DIN 5008-konform") is a fact you can check against your file, and passes. To correct
   a live text, propose the change: the words it replaces aren't yours any more.
 - A paperback's cover: propose_kdp_book refuses one whose front prints words within 0.125 in of the trim, and names
-  make_image's shape nearest the front (pin up to 7x10 and at A4, portrait from 7.44x9.69 to 8.5x11). On the
+  make_image's shape nearest the front (pin up to 7x10 and at A4, portrait from 7.44x9.69 to 8.5x11, square at 8.25x8.25 and 8.5x8.5, landscape at 8.25x6). On the
   Haushaltsbuch the title printed 0.048 in inside the trim, and the check said KDP would take it: a picture in shape
   pin (2:3) loses 13% of its height to the cut that fits an 8.5x11 front. A front whose art reaches its edges is a
   note: Ember's code can't tell its words from its picture, so look at the preview.

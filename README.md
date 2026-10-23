@@ -637,7 +637,8 @@ maker: "Made by Ember, an AI agent, and checked by the seller" (it said
 when it says a person made Ember's work, promises legal certainty
 ("rechtssicher", "GoBD-konform") or says "no refunds": 13 of the week's 39 did.
 A KDP cover whose front prints words within 0.125 in of the trim is refused (the
-Haushaltsbuch's title sat 0.048 in inside it). Once a cycle of the day took a
+Haushaltsbuch's title sat 0.048 in inside it; 0.45.2 raised this to 0.375 in
+from the cover's edges). Once a cycle of the day took a
 triage, the other waiting ideas wait for the next day's, which decides them
 together; no brainstorm comes while your rulebook or her strategy says "nothing
 new". The daily review's money adds up (its parts and its total from one basis),
@@ -650,6 +651,17 @@ the mail tools saw only their subjects. A marketing cycle can now open an email
 by its number (and mark an opt-out it finds), so it can tell you what Amazon,
 Etsy or Printify asks; answering an email stays an ordinary cycle's, and a
 venture cycle still reads no mail.
+
+0.45.2 holds a KDP paperback's cover to what KDP's reviewers asked of
+"Household Budget Book 2027" and "Haushaltsbuch 2027": all text at least
+0.375 in (9.5 mm) from the cover's edges, which is 0.25 in inside the trim.
+0.45.0's check had passed both covers at 0.125 in. The spine's folds keep
+0.25 in too, and the back is checked like the front (it matters for a cover
+file of Ember's own; the back Ember's code makes keeps 0.5 in). Ember's posters
+keep 11% of their shorter side free at the edges (9% before), so a front made
+with `make_image` keeps its words far enough in at every trim; at 9%, a 5x8
+front lost them to the cut. A spine in another colour than the front no longer
+reads as words at the fold, which had refused such a cover.
 
 ## Install in Home Assistant
 

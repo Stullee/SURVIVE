@@ -549,7 +549,7 @@ def kdp_cover(
     made.report.append(
         f"Look at {base}-preview.png: it marks the trim, the spine's folds and the space KDP prints its barcode in."
     )
-    made.report += _fitting(wrap.scale, wrap.cut, front, front_shape(trim))
+    made.report += _fitting(wrap.scale, wrap.cut, front, trim)
     if not spine_text and pages > kdp.SPINE_TEXT_PAGES:
         made.report.append("The spine has no text: give cover.spine (title and author) for one.")
     return made
@@ -593,18 +593,24 @@ def front_shape(trim: str) -> str:
     return min(images.SHAPES, key=lambda shape: abs(images.SHAPES[shape][0] / images.SHAPES[shape][1] - ratio))
 
 
-def _fitting(scale: float, cut: float, front: str, shape: str = "") -> list[str]:
-    """What the agent should know about how its front picture was fitted (``shape``: the one nearest the front's)."""
+def _fitting(scale: float, cut: float, front: str, trim: str = "") -> list[str]:
+    """What the agent should know about how its front picture was fitted (``trim``: a paperback's)."""
     notes = []
     if cut > CUT_NOTE:
-        nearest = f" (make_image's shape {shape} is nearest them)" if shape else ""
+        nearest = f" (make_image's shape {front_shape(trim)} is nearest them)" if trim else ""
         notes.append(f"{cut:.0%} of {front} was cut off to fit the cover's proportions{nearest}.")
     if scale > SOFT_COVER:
         notes.append(
             f"{front} is drawn {scale:.1f} times larger than it is: it may print soft (make_image's poster layout "
             "makes a larger one)."
         )
-    notes.append("KDP cuts 0.125 in off the front's outer edges: keep its words 0.25 in (4% of its width) from them.")
+    if trim:  # 0.45.2: a paperback's (KDP cuts no ebook cover), at KDP's reviewers' 0.375 in (it said 0.25 in)
+        edge = kdp.BLEED + kdp.SAFE_ZONE
+        share = edge / (kdp.trim_size(trim)[0] + kdp.BLEED)
+        notes.append(
+            f"KDP cuts {kdp.inches(kdp.BLEED)} off the front's outer edges: keep its words {kdp.inches(edge)} "
+            f"({share:.0%} of its width) from them and {kdp.inches(kdp.SAFE_ZONE)} from the spine."
+        )
     return notes
 
 

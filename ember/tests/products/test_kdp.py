@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -16,7 +17,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from app import web
 from app.agent import never, news, obligations, prompts, tools
@@ -358,7 +359,8 @@ def test_a_package_kdp_would_refuse_never_reaches_the_owner(data_dir: Path) -> N
 
 def test_a_cover_s_front_keeps_its_words_inside_kdp_s_safe_zone(data_dir: Path) -> None:
     """0.45.0 (evaluation 2026-10-22, C6): live, a front picture in shape pin (2:3) on an 8.5x11 book lost 13% to the
-    cut that fits it, its title printed 0.048 in inside the trim, and the check said KDP would take it."""
+    cut that fits it, its title printed 0.048 in inside the trim, and the check said KDP would take it. 0.45.2: the
+    safe zone is 0.25 in inside the trim (0.375 in from the cover's edges), as KDP's reviewers asked."""
     _, ctx = publishing(data_dir)
     jail = ctx.workspace
     letter = journal(jail, "books/letter", days=120, page="8.5x11")
@@ -366,17 +368,22 @@ def test_a_cover_s_front_keeps_its_words_inside_kdp_s_safe_zone(data_dir: Path) 
     make.image(jail, "books/front.png", "", *words, layout="poster", shape="pin")
     refused = call(ctx, "propose_kdp_book", {"spec": spec(jail, letter), "check": True})
     assert not refused.ok
-    assert refused.text.startswith("Error: books/journal-cover.pdf: the cover's front prints words or pictures 0.0")
-    assert "in inside the trim at the top, " in refused.text and "in beyond the trim at the bottom" in refused.text
-    assert "KDP asks for 0.125 in inside the trim, or its cut may take them" in refused.text
+    assert refused.text.startswith("Error: books/journal-cover.pdf: the cover's front prints words or pictures 0.")
+    assert "in inside the trim at the top, " in refused.text and "in inside the trim at the bottom" in refused.text
+    assert (
+        "KDP asks for 0.25 in inside the trim (0.375 in from the cover's edges) and Ember's code for 0.25 in from the "
+        "spine's fold, or the cut and the fold may take them" in refused.text
+    )
     assert "make books/front.png again in make_image's shape portrait (the nearest to a front at 8.5x11" in refused.text
+    assert "with its words 0.375 in from its edges, then propose the book again" in refused.text
     # a cover file of its own is held to the same rule
     jail.write_bytes("books/own.pdf", jail.read_bytes("books/journal-cover.pdf"))
     own = call(ctx, "propose_kdp_book", {"spec": spec(jail, letter, cover="books/own.pdf"), "check": True})
-    assert not own.ok and own.text.endswith("move its words 0.125 in inside the trim (0.25 in from the cover's edges).")
+    assert not own.ok and own.text.endswith("or the cut and the fold may take them: move them that far in.")
     make.image(jail, "books/front.png", "", *words, layout="poster", shape="portrait")
     checked = call(ctx, "propose_kdp_book", {"spec": spec(jail, letter), "check": True})
     assert checked.ok and "KDP would take this paperback as it is" in checked.text, checked.text
+    assert "keep its words 0.375 in (4% of its width) from them and 0.25 in from the spine." in checked.text
     # one whose art reaches its edges is a note: Ember's code can't tell its words from its picture
     art = Image.linear_gradient("L").resize((2000, 2500)).convert("RGB")
     out = io.BytesIO()
@@ -384,15 +391,99 @@ def test_a_cover_s_front_keeps_its_words_inside_kdp_s_safe_zone(data_dir: Path) 
     jail.write_bytes("books/art.png", out.getvalue())
     noted = call(ctx, "propose_kdp_book", {"spec": spec(jail, letter, cover={"front": "books/art.png"}), "check": True})
     assert noted.ok and "Note: the front's picture reaches its edges, so Ember's code can't tell" in noted.text
-    # the numbers: a 6x9 cover of 120 pages on white is 12.52 x 9.25 in, its trim 0.125 in inside
-    assert kdp.check_front(None, "6x9", 120, "white") == []
-    assert kdp.check_front((7.0, 0.25, 12.0, 9.0), "6x9", 120, "white") == []
-    assert kdp.check_front((7.0, 0.173, 12.4, 9.0), "6x9", 120, "white") == [
-        "the cover's front prints words or pictures 0.048 in inside the trim at the top, 0.005 in beyond the trim at "
-        "the outside edge: KDP asks for 0.125 in inside the trim, or its cut may take them"
+    assert "its words keep 0.375 in from the cover's edges and 0.25 in from the spine's fold." in noted.text
+    assert "the back's picture" not in noted.text  # the back Ember's code made is one colour
+    # the numbers: a 6x9 cover of 120 pages on white is 12.52 x 9.25 in, its trim 0.125 in inside, the back's fold
+    # 6.125 in from its left edge and the front's 6.395 in
+    assert kdp.check_panel("front", None, "6x9", 120, "white") == []
+    assert kdp.check_panel("front", (6.65, 0.375, 12.145, 8.875), "6x9", 120, "white") == []
+    assert kdp.check_panel("front", (7.0, 0.173, 12.4, 9.0), "6x9", 120, "white") == [
+        "the cover's front prints words or pictures 0.048 in inside the trim at the top, 0.125 in inside the trim at "
+        "the bottom, 0.005 in beyond the trim at the outside edge: KDP asks for 0.25 in inside the trim (0.375 in from "
+        "the cover's edges) and Ember's code for 0.25 in from the spine's fold, or the cut and the fold may take them"
     ]
+    assert kdp.check_panel("front", (6.495, 1.0, 11.0, 8.0), "6x9", 120, "white")[0].startswith(
+        "the cover's front prints words or pictures 0.1 in from the spine's fold: "
+    )
+    assert kdp.check_panel("back", (0.225, 1.0, 6.025, 8.0), "6x9", 120, "white")[0].startswith(
+        "the cover's back prints words or pictures 0.1 in inside the trim at the outside edge, 0.1 in from the "
+        "spine's fold: "
+    )
+    assert kdp.check_panel("back", (0.375, 0.375, 5.875, 8.875), "6x9", 120, "white") == []
     assert make.front_shape("6x9") == "pin" and make.front_shape("8.5x11") == "portrait"
     assert make.front_shape("8.5x8.5") == "square" and make.front_shape("8.25x6") == "landscape"
+
+
+def test_words_0_2_in_inside_the_trim_are_refused_as_kdp_s_reviewers_refused_them(data_dir: Path) -> None:
+    """0.45.2: KDP's reviewers asked two live covers (Ember's emails #64 and #65, books #140 and #141) to move all
+    text 0.375 in from the cover's edges, 0.25 in inside the trim; 0.45.0's 0.125 in had passed them. Words 0.2 in
+    inside the trim are refused now, on the front and on the back of a cover file of the agent's own, and so are words
+    0.1 in from the spine's fold."""
+    _, ctx = publishing(data_dir)
+    jail = ctx.workspace
+    interior = paperback(jail)  # 6x9, 120 pages on white: the cover is 12.52 x 9.25 in, the front 6.125 in wide
+
+    def block(picture: Image.Image, per_inch: int, box: tuple[float, float, float, float]) -> None:
+        """Words: a black box at ``box`` (left, top, right, bottom, in inches)."""
+        corners = [round(value * per_inch) for value in box]
+        ImageDraw.Draw(picture).rectangle([*corners[:2], corners[2] - 1, corners[3] - 1], fill=(0, 0, 0))
+
+    # a front picture in the front's proportions with its bleed (nothing cut off), its words 0.2 in inside the trim
+    picture = Image.new("RGB", (1225, 1850), (250, 246, 238))
+    block(picture, 200, (1.0, 0.125 + 0.2, 5.0, 3.0))
+    out = io.BytesIO()
+    picture.save(out, "PNG")
+    jail.write_bytes("books/close.png", out.getvalue())
+    close = call(
+        ctx, "propose_kdp_book", {"spec": spec(jail, interior, cover={"front": "books/close.png"}), "check": True}
+    )
+    assert not close.ok
+    found = re.search(
+        r"the cover's front prints words or pictures (0\.\d+) in inside the trim at the top: ", close.text
+    )
+    assert found and abs(float(found[1]) - 0.2) <= 0.015, close.text
+    assert "with its words 0.375 in from its edges, then propose the book again" in close.text
+    # 0.4 in inside the trim passes
+    picture = Image.new("RGB", (1225, 1850), (250, 246, 238))
+    block(picture, 200, (1.0, 0.125 + 0.4, 5.0, 3.0))
+    out = io.BytesIO()
+    picture.save(out, "PNG")
+    jail.write_bytes("books/far.png", out.getvalue())
+    far = call(ctx, "propose_kdp_book", {"spec": spec(jail, interior, cover={"front": "books/far.png"}), "check": True})
+    assert far.ok, far.text
+    # a cover file of its own, its back's words 0.2 in inside the trim at the outside edge and its front's 0.1 in from
+    # the spine's fold (the back's fold is 6.125 in from the cover's left edge, the front's 6.395 in)
+    wrap = Image.new("RGB", (2504, 1850), (255, 255, 255))
+    block(wrap, 200, (0.125 + 0.2, 1.0, 5.0, 8.0))
+    block(wrap, 200, (6.5, 1.0, 11.0, 4.0))
+    jail.write_bytes("books/own.pdf", pdf.picture_page(images.jpeg(wrap), 12.52 * 72, 9.25 * 72, "My Journal"))
+    own = call(ctx, "propose_kdp_book", {"spec": spec(jail, interior, cover="books/own.pdf"), "check": True})
+    assert not own.ok
+    back = re.search(
+        r"the cover's back prints words or pictures (0\.\d+) in inside the trim at the outside edge: ", own.text
+    )
+    front = re.search(r"; the cover's front prints words or pictures (0\.\d+) in from the spine's fold: ", own.text)
+    assert back and abs(float(back[1]) - 0.2) <= 0.015 and front and abs(float(front[1]) - 0.105) <= 0.015, own.text
+    assert own.text.count("or the cut and the fold may take them: move them that far in") == 2
+    guide = " ".join(tools.guide_text("kdp").split())
+    assert "Keep words 0.375 in from a cover's edges and 0.25 in from the spine (KDP's reviewers)." in guide
+
+
+def test_a_spine_in_another_colour_than_the_front_is_not_read_as_words(data_dir: Path) -> None:
+    """0.45.2: the pixels at a fold are partly the spine's: with cover.background unlike the front's colour, 0.45.0
+    read them as words down the front's whole height ("0.125 in beyond the trim at the top, ... at the bottom") and
+    refused the cover. Each panel is read from a pixel past its fold now."""
+    _, ctx = publishing(data_dir)
+    jail = ctx.workspace
+    interior = paperback(jail)
+    for colour in ("#FF0000", "#FFFFFF", "#000000"):
+        cover = {"front": "books/front.png", "back": BACK, "background": colour}
+        checked = call(ctx, "propose_kdp_book", {"spec": spec(jail, interior, cover=cover), "check": True})
+        assert checked.ok and "KDP would take this paperback as it is" in checked.text, (colour, checked.text)
+    data = jail.read_bytes("books/journal-cover.pdf")
+    back, front = images.cover_ink(data, (6.125, 6.125 + 0.27024), kdp.FRONT_DPI, kdp.FRONT_CONTRAST)
+    assert back[0] and front[0] and back[1] is not None and front[1] is not None
+    assert front[1][0] > 6.5 and back[1][2] < 5.7  # the words, not the folds
 
 
 def test_an_ebook_is_proposed_and_kdp_s_weekly_limit_holds(data_dir: Path) -> None:
