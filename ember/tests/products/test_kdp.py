@@ -359,7 +359,7 @@ def test_a_package_kdp_would_refuse_never_reaches_the_owner(data_dir: Path) -> N
 
 def test_a_cover_s_front_keeps_its_words_inside_kdp_s_safe_zone(data_dir: Path) -> None:
     """0.45.0 (evaluation 2026-10-22, C6): live, a front picture in shape pin (2:3) on an 8.5x11 book lost 13% to the
-    cut that fits it, its title printed 0.048 in inside the trim, and the check said KDP would take it. 0.45.2: the
+    cut that fits it, its title printed 0.048 in inside the trim, and the check said KDP would take it. 0.45.3: the
     safe zone is 0.25 in inside the trim (0.375 in from the cover's edges), as KDP's reviewers asked."""
     _, ctx = publishing(data_dir)
     jail = ctx.workspace
@@ -415,7 +415,7 @@ def test_a_cover_s_front_keeps_its_words_inside_kdp_s_safe_zone(data_dir: Path) 
 
 
 def test_words_0_2_in_inside_the_trim_are_refused_as_kdp_s_reviewers_refused_them(data_dir: Path) -> None:
-    """0.45.2: KDP's reviewers asked two live covers (Ember's emails #64 and #65, books #140 and #141) to move all
+    """0.45.3: KDP's reviewers asked two live covers (Ember's emails #64 and #65, books #140 and #141) to move all
     text 0.375 in from the cover's edges, 0.25 in inside the trim; 0.45.0's 0.125 in had passed them. Words 0.2 in
     inside the trim are refused now, on the front and on the back of a cover file of the agent's own, and so are words
     0.1 in from the spine's fold."""
@@ -470,7 +470,7 @@ def test_words_0_2_in_inside_the_trim_are_refused_as_kdp_s_reviewers_refused_the
 
 
 def test_a_spine_in_another_colour_than_the_front_is_not_read_as_words(data_dir: Path) -> None:
-    """0.45.2: the pixels at a fold are partly the spine's: with cover.background unlike the front's colour, 0.45.0
+    """0.45.3: the pixels at a fold are partly the spine's: with cover.background unlike the front's colour, 0.45.0
     read them as words down the front's whole height ("0.125 in beyond the trim at the top, ... at the bottom") and
     refused the cover. Each panel is read from a pixel past its fold now."""
     _, ctx = publishing(data_dir)

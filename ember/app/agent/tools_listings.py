@@ -753,7 +753,7 @@ def _safe_zone(spec: dict[str, Any], path: str, data: bytes, trim: str, pages: i
     """0.45.0 (evaluation 2026-10-22, C6): a paperback cover's front keeps its words kdp.SAFE_ZONE inside the trim, or
     the book is refused with what to change; a front whose art reaches its edges is a note (Ember's code can't tell its
     words from its picture). Live, the Haushaltsbuch's title printed 0.048 in inside the trim (a pin's 2:3 front
-    picture on an 8.5x11 front, 13% of it cut off) and the tool said KDP would take it. 0.45.2: its back too (in a
+    picture on an 8.5x11 front, 13% of it cut off) and the tool said KDP would take it. 0.45.3: its back too (in a
     cover file of the agent's own: Ember's code keeps a back's words make.BACK_MARGIN from its trim and fold), both
     also from the spine's fold, at a kdp.SAFE_ZONE of 0.25 in: KDP's reviewers asked for 0.375 in from the edges of two
     live covers 0.125 in had passed."""

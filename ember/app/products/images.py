@@ -41,7 +41,7 @@ SHAPE_NAMES = tuple(SHAPES)
 MAX_PIXELS = 40_000_000  # 0.15.0: 12 MP until then
 LAYOUTS = ("photo", "text", "poster", "table")  # 0.38.0: table
 POSTER_SIDE = 6_000  # a poster's longer side: 150 dpi or more on every poster Printify prints (A1, 24 x 36 in)
-# 0.45.2: a poster's margin, a share of its shorter side (9% until then). A KDP front keeps its words 0.375 in from the
+# 0.45.3: a poster's margin, a share of its shorter side (9% until then). A KDP front keeps its words 0.375 in from the
 # cover's edges; a pin cut to a 5x8 front kept them 0.18 to 0.23 in inside the trim at 9%, 0.29 in at 11%
 POSTER_MARGIN = 0.11
 PRINT_DPI = 300  # 0.17.0: what a print file made by ``fitted`` says it is meant for (Printify's print areas)
@@ -166,7 +166,7 @@ def cover_ink(pdf: bytes, folds: tuple[float, float], dpi: int, contrast: int) -
     inches) and its front (right of it) each have edges of one colour, and what each prints on that background, in
     inches from the cover's top left corner (left, top, right, bottom; None: nothing): where a channel differs by more
     than ``contrast`` from the edge's colour, the cover's first page drawn at ``dpi``. A panel whose art reaches its
-    edges is (False, None): Ember's code can't tell its words from its picture. 0.45.2: the back too, and each panel
+    edges is (False, None): Ember's code can't tell its words from its picture. 0.45.3: the back too, and each panel
     from a pixel past its fold: the pixels at a fold are partly the spine's, and a spine in another colour than the
     front (cover.background) read as words down the front's whole height."""
     document = _opened(pdf)

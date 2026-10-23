@@ -2134,7 +2134,9 @@ included: encrypt your backups.
   place shown as "> [...]", and only then its end (until then it kept its
   first 8,000 characters, so a "stop" written below a long thread was lost).
   Text hidden in HTML emails is dropped (also by a style sheet or a colour
-  like its background), and attachments are listed by name and size but never
+  like its background; since 0.45.2 a style sheet's colour counts only inside
+  the elements its rule names, so Amazon KDP's notices are no longer taken for
+  white on white), and attachments are listed by name and size but never
   opened. An email over 1 MB keeps the text in its first 256 KB, where an
   email's text comes before its attachments, and says so; its attachments
   aren't fetched (before 0.39.5 it kept its headers only, so a "stop" sent
@@ -3164,7 +3166,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.45.2 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.45.3 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3225,7 +3227,7 @@ own account. Ember never logs in to Amazon or reads its pages.
   cover guide. On the Haushaltsbuch the title had printed 0.048 in inside it,
   from a front picture in shape pin, 2:3, whose centre was cut to the 8.5x11
   front (13% of it); the refusal names the shape nearest the front, portrait
-  there. Since 0.45.2 it is 0.25 in, as KDP's reviewers asked of "Household
+  there. Since 0.45.3 it is 0.25 in, as KDP's reviewers asked of "Household
   Budget Book 2027" and "Haushaltsbuch 2027" ("move all text at least 0.375
   inches (9.5 mm) away from all edges of the cover"), live covers the 0.125 in
   had passed. The back is checked too, which matters for a cover file of the
@@ -3234,7 +3236,7 @@ own account. Ember never logs in to Amazon or reads its pages.
   shift, and a word beside it can wrap onto the spine. A front or back whose art
   reaches its edges is a note, as Ember's code can't tell its words from its
   picture. Ember's posters (`make_image`, layout poster) keep 11% of their
-  shorter side free at their edges since 0.45.2 (9% before), so that a front of
+  shorter side free at their edges since 0.45.3 (9% before), so that a front of
   Ember's keeps its words 0.375 in from the edges at every trim in the shape the
   refusal names.
   KDP's previewer checks the files again when you upload them.

@@ -105,6 +105,12 @@ _ZERO_BOX = re.compile(r"(?:^|;)(?:max-)?(?:height|width):(?:0(?:\.0*)?[a-z%]*|1
 _CSS_CHARS = 100_000  # of each of an email's <style> elements (without comments), read for the rules that hide text
 _KEY_RULES = 50  # rules kept per class, id or tag they select (a real email has a few)
 _SELECTOR = re.compile(r"^([a-z][a-z0-9]*)?((?:[.#][a-z0-9_-]+)*)$")
+_COMBINATOR = re.compile(r"\s*([>+~])\s*|\s+")  # 0.45.2: between the parts of a selector (None: a space)
+_IMPLIED = frozenset({"html", "body", "tbody", "tr"})  # 0.45.2: a browser adds them where an email leaves them out
+_Compound = tuple[str | None, frozenset[str], str | None]  # one part of a selector: (tag, classes, id)
+# A style sheet's rule: (tag, classes, id) of what it selects, (0.45.2) the parts it must be inside, the nearest first,
+# and its declarations
+_Rule = tuple[str | None, frozenset[str], str | None, tuple[_Compound, ...], str]
 _SHEET_STYLE = re.compile(r"(?:^|;)(?:color|background(?:-color)?):")  # what a rule may set besides hiding
 _COLOURS = {
     "white": "#ffffff", "black": "#000000", "snow": "#fffafa", "ghostwhite": "#f8f8ff", "whitesmoke": "#f5f5f5",
@@ -805,24 +811,26 @@ class _HtmlText(HTMLParser):
     """HTML as a reader sees it: text only, without scripts, styles and anything hidden; links keep their host.
 
     0.15.0: hidden also by the rules of the email's <style> elements (the simple ones, outside @media), and by a text
-    colour the same as its background (white on white), from a style or from a rule. This is best-effort: rules
-    with other selectors (attributes, pseudo-classes, @media), colours in units or names Ember doesn't know, and text
-    hidden by layout (behind another element, outside a box) still show."""
+    colour the same as its background (white on white), from a style or from a rule. 0.45.2: a rule that sets a colour
+    or background applies only inside the elements its selector names before its last part. This is best-effort:
+    rules with other selectors (attributes, pseudo-classes, @media), colours in units or names Ember doesn't know, and
+    text hidden by layout (behind another element, outside a box) still show."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
         self.size = 0  # characters of text (0.39.7: outside quotes)
         self.quoted = 0  # 0.39.7: of text inside quotes (_QUOTED_CHARS)
-        # (tag, hides its content, a link's host, its background: None when it has none, "" when it isn't known)
-        self.stack: list[tuple[str, bool, str | None, str | None]] = []
+        # (tag, hides its content, a link's host, its background: None when it has none, "" when it isn't known, and
+        # 0.45.2: its classes and id, which a rule's context names)
+        self.stack: list[tuple[str, bool, str | None, str | None, frozenset[str], str]] = []
         self.hidden = 0  # open elements that hide their content
         self.overflow = False
         self.css = ""  # the style sheet being read, without its comments (at most _CSS_CHARS of it)
         self.css_comment = False  # 0.39.5: inside one of its comments
         self.css_held = ""  # 0.39.5: a "/" or "*" ending a piece of it, which may start or end a comment with the next
-        # Rules by a class (".x"), id ("#x") or tag they select: (tag, classes, id, declarations)
-        self.rules: dict[str, list[tuple[str | None, frozenset[str], str | None, str]]] = {}
+        # Rules by a class (".x"), id ("#x") or tag they select
+        self.rules: dict[str, list[_Rule]] = {}
         self.hiding: set[str] = set()  # classes, ids and tags with more hiding rules than are kept: they hide
         self.page: str = _WHITE
         self.work = 0  # 0.23.0: characters of style read (_STYLE_WORK)
@@ -839,21 +847,22 @@ class _HtmlText(HTMLParser):
             return
         host = _link_host(attrs) if tag == "a" else None
         if self.hidden:  # inside a hidden element: hidden whatever it says
-            self.stack.append((tag, False, host, None))
+            self.stack.append((tag, False, host, None, frozenset(), ""))
             self.quotes += tag == "blockquote"
             return
         values = {name.lower(): (value or "") for name, value in attrs}
+        classes, ident = frozenset(values.get("class", "").lower().split()), values.get("id", "").strip().lower()
         own = _squeeze(values.get("style", ""))
         # 0.21.0: no real email's style is this long (without the data of its pictures): it hides its element rather
         # than make reading slow, and reading stops after _STYLE_WORK characters of style
-        style = "display:none;" if _measured(own) > _STYLE_CHARS else self._sheet(tag, values) + own
+        style = "display:none;" if _measured(own) > _STYLE_CHARS else self._sheet(tag, classes, ident) + own
         self.work += len(style)
         if self.work > _STYLE_WORK:
             self.heavy = True
             return
         background = _background(style, values) if style or "bgcolor" in values or "background" in values else None
         hides = tag in _SKIP or self._hides(tag, values, style, background)
-        self.stack.append((tag, hides, host, background))
+        self.stack.append((tag, hides, host, background, classes, ident))
         self.hidden += hides
         self.quotes += tag == "blockquote"
 
@@ -867,22 +876,25 @@ class _HtmlText(HTMLParser):
         if colour == "transparent":
             return True
         if background is None:  # the nearest one behind it
-            background = next((b for *_, b in reversed(self.stack) if b is not None), self.page)
+            background = next((e[3] for e in reversed(self.stack) if e[3] is not None), self.page)
         return _alike(colour, background)
 
-    def _sheet(self, tag: str, values: dict[str, str]) -> str:
+    def _sheet(self, tag: str, classes: frozenset[str], ident: str) -> str:
         """The declarations of the style sheet's rules that select this element, each ending in ";" (its own style
         comes after them, so it wins)."""
         if not self.rules and not self.hiding:
             return ""
-        classes, ident = frozenset(values.get("class", "").lower().split()), values.get("id", "").strip().lower()
         keys = [tag, *(f".{c}" for c in classes), *([f"#{ident}"] if ident else [])]
         if not self.hiding.isdisjoint(keys):
             return "display:none;"
         found, size = [], 0
         for key in keys:
-            for t, c, i, style in self.rules.get(key, ()):
+            for t, c, i, context, style in self.rules.get(key, ()):
                 if t in (None, tag) and c <= classes and i in (None, ident):
+                    if self.work > _STYLE_WORK:  # 0.45.2: looking for a context is reading style too (_within)
+                        return "display:none;"
+                    if context and not self._within(context):
+                        continue
                     size += _measured(style) + 1
                     self.work += len(style) + 1  # 0.23.0: matching rules is reading style too
                     if size > _STYLE_CHARS:  # 0.21.0: as a style that long (see handle_starttag)
@@ -890,16 +902,31 @@ class _HtmlText(HTMLParser):
                     found.append(f"{style};")
         return "".join(found)
 
+    def _within(self, context: tuple[_Compound, ...]) -> bool:
+        """0.45.2: whether the open elements hold a rule's context, each part further out than the one before (">" is
+        taken as any element outside, which selects more, never less)."""
+        at = len(self.stack)
+        for tag, classes, ident in context:
+            while True:
+                at -= 1
+                if at < 0:
+                    return False
+                self.work += 1
+                t, *_, c, i = self.stack[at]
+                if tag in (None, t) and classes <= c and ident in (None, i):
+                    break
+        return True
+
     def _read_sheet(self) -> None:
         """0.15.0: keeps the rules of a style sheet. Each is kept under one class, id or tag it selects, at most
         _KEY_RULES of them, so a style sheet can't make reading slow. More hiding rules than that hide all they
         select (rather than let an email hide text past them)."""
         rules, page, unknown = _css_rules(self.css)
-        for tag, classes, ident, style in rules:
+        for tag, classes, ident, context, style in rules:
             key = f"#{ident}" if ident else f".{min(classes)}" if classes else tag or ""
             kept = self.rules.setdefault(key, [])
             if len(kept) < _KEY_RULES:
-                kept.append((tag, classes, ident, style))
+                kept.append((tag, classes, ident, context, style))
             elif _hides_style(style):
                 self.hiding.add(key)
         if page is not None or unknown:
@@ -944,7 +971,7 @@ class _HtmlText(HTMLParser):
         bottom = max(0, len(self.stack) - _END_TAG_SEARCH)
         for index in range(len(self.stack) - 1, bottom - 1, -1):
             if self.stack[index][0] == tag:
-                for open_tag, hides, host, _ in reversed(self.stack[index:]):
+                for open_tag, hides, host, *_ in reversed(self.stack[index:]):
                     if hides:
                         self.hidden -= 1
                     elif open_tag == "a" and host:
@@ -1011,14 +1038,12 @@ def _faint(number: str, percent: str) -> bool:
     return value / (100 if percent else 1) < FAINT
 
 
-def _css_rules(css: str) -> tuple[list[tuple[str | None, frozenset[str], str | None, str]], str | None, bool]:
+def _css_rules(css: str) -> tuple[list[_Rule], str | None, bool]:
     """0.15.0: the rules of a style sheet (without comments) that hide what they select or set its colour or
-    background, as (tag, classes, id, declarations); the page's background a rule for body or html sets (None
-    without one); and whether a rule Ember can't read sets a background (so the page's isn't known). Only rules outside
-    an at-rule count (an @media block's apply on some screens only), and only simple selectors: the last part of each
-    (".b" of ".a .b", but not the "td" of ".a td", which would hide every cell), without pseudo-classes or
-    attributes."""
-    found: list[tuple[str | None, frozenset[str], str | None, str]] = []
+    background (_Rule); the page's background a rule for body or html sets (None without one); and whether a rule Ember
+    can't read sets a background (so the page's isn't known). Only rules outside an at-rule count (an @media block's
+    apply on some screens only), and only simple selectors (_selector), without pseudo-classes or attributes."""
+    found: list[_Rule] = []
     page: str | None = None
     unknown = False
     depth, head, start, body = 0, "", 0, 0
@@ -1040,10 +1065,13 @@ def _css_rules(css: str) -> tuple[list[tuple[str | None, frozenset[str], str | N
                     else backdrop is not None and len(read) < len(selectors)
                 ):
                     unknown = True
-                if read and (_hides_style(style) or _SHEET_STYLE.search(style)):
-                    found += [(*s, style.strip(";")) for s in read]
+                hides = _hides_style(style)
+                if read and (hides or _SHEET_STYLE.search(style)):
+                    # 0.45.2: a rule that hides does so wherever its last part is, as before: Ember's tree of an
+                    # email's elements isn't a browser's (an end tag a browser ignores closes an element here)
+                    found += [(t, c, i, () if hides else context, style.strip(";")) for t, c, i, context in read]
                 if backdrop is not None and any(
-                    s[1:] == (frozenset(), None) and s[0] in ("body", "html") for s in read
+                    s[1:] == (frozenset(), None, ()) and s[0] in ("body", "html") for s in read
                 ):
                     page = backdrop
                 start = index + 1
@@ -1052,12 +1080,32 @@ def _css_rules(css: str) -> tuple[list[tuple[str | None, frozenset[str], str | N
     return found, page, unknown
 
 
-def _selector(text: str) -> tuple[str | None, frozenset[str], str | None] | None:
+def _selector(text: str) -> tuple[str | None, frozenset[str], str | None, tuple[_Compound, ...]] | None:
+    """A rule's selector as the (tag, classes, id) of its last part and (0.45.2) its context: the parts before it that
+    must be outside it, the nearest first. Before, only its last part counted: "#templateFooter .endrTextContent
+    {color:#fbfbfb}", for the text on Amazon KDP's dark footer, made every .endrTextContent white on white, and all of
+    KDP's "Attention needed" notice but its footer was dropped as hidden. A part before "+" or "~" is a sibling, a part
+    Ember can't read and a tag a browser adds (_IMPLIED) match any element: they aren't checked (the rule selects more,
+    never less). A tag alone after a context (the "td" of ".a td") isn't read, as before."""
     if any(c in text for c in ":[*"):
         return None
-    parts = re.split(r"[\s>+~]+", text.strip())
-    match = _SELECTOR.match(parts[-1])
-    if match is None or not match[0] or (len(parts) > 1 and not match[2]):
+    parts = _COMBINATOR.split(text.strip())
+    last = _compound(parts[-1])
+    if last is None or (len(parts) > 1 and last[1:] == (frozenset(), None)):
+        return None
+    context: list[_Compound] = []
+    for part, combinator in zip(parts[-3::-2], parts[-2::-2], strict=True):
+        compound = None if combinator in ("+", "~") else _compound(part)
+        if compound is None or (compound[0] in _IMPLIED and compound[1:] == (frozenset(), None)):
+            continue
+        context.append(compound)
+    return (*last, tuple(context))
+
+
+def _compound(text: str) -> _Compound | None:
+    """One part of a selector (a tag, classes and an id, each optional), or None if it isn't one."""
+    match = _SELECTOR.match(text)
+    if match is None or not match[0]:
         return None
     ids = re.findall(r"#([a-z0-9_-]+)", match[2])
     classes = frozenset(re.findall(r"\.([a-z0-9_-]+)", match[2]))

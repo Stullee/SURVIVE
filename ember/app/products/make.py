@@ -604,7 +604,7 @@ def _fitting(scale: float, cut: float, front: str, trim: str = "") -> list[str]:
             f"{front} is drawn {scale:.1f} times larger than it is: it may print soft (make_image's poster layout "
             "makes a larger one)."
         )
-    if trim:  # 0.45.2: a paperback's (KDP cuts no ebook cover), at KDP's reviewers' 0.375 in (it said 0.25 in)
+    if trim:  # 0.45.3: a paperback's (KDP cuts no ebook cover), at KDP's reviewers' 0.375 in (it said 0.25 in)
         edge = kdp.BLEED + kdp.SAFE_ZONE
         share = edge / (kdp.trim_size(trim)[0] + kdp.BLEED)
         notes.append(

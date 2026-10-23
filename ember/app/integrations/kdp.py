@@ -88,7 +88,7 @@ BARCODE = (Decimal("2"), Decimal("1.2"))  # the space KDP's barcode takes at the
 BARCODE_GAP = Decimal("0.25")  # from the trim's bottom and the spine
 SIZE_TOLERANCE = Decimal("0.01")  # inches a PDF's page may differ from the size KDP expects
 # 0.45.0 (evaluation 2026-10-22, C6): what a cover's words and pictures keep inside its trim, the coarseness its front
-# and back are drawn at to find them and how far from a panel's background colour counts as printed. 0.45.2: 0.25 in
+# and back are drawn at to find them and how far from a panel's background colour counts as printed. 0.45.3: 0.25 in
 # (0.375 in from the cover's edges), and as much from the spine's folds: KDP's reviewers asked that of two live covers
 # (Ember's emails #64 and #65) that the cover guide's 0.125 in, Ember's until then, had passed
 SAFE_ZONE = Decimal("0.25")
@@ -556,7 +556,7 @@ def check_panel(
     """0.45.0 (evaluation 2026-10-22, C6): a paperback cover's front or back (``panel``), where ``box`` is what it
     prints on its background (in inches from the cover's top left corner; None: nothing, or art to its edges): it
     keeps SAFE_ZONE inside the trim at the top, the bottom and the outside edge, or KDP's cut may take it. Live, the
-    Haushaltsbuch's title printed 0.048 in inside the trim, and propose_kdp_book said KDP would take it. 0.45.2: the
+    Haushaltsbuch's title printed 0.048 in inside the trim, and propose_kdp_book said KDP would take it. 0.45.3: the
     back too, and SAFE_ZONE from the spine's fold, which may shift (a word beside it can wrap onto the spine)."""
     if box is None:
         return []

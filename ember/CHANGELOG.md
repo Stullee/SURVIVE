@@ -3,15 +3,16 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
-## 0.45.2
+## 0.45.3
 
 A paperback cover's words keep 0.375 in from its edges now, as KDP's reviewers ask (it was 0.125 in inside the trim).
 
-- KDP's "Attention needed" email #65 about "Household Budget Book 2027", and #64 about "Haushaltsbuch 2027" (books
-  #140 and #141), ask to "move all text at least 0.375 inches (9.5 mm) away from all edges of the cover".
-  propose_kdp_book had passed both covers: it held a front's words 0.125 in inside the trim, the figure in KDP's
-  cover guide. Now it refuses a cover whose words or pictures sit less than 0.25 in inside the trim, which is 0.375 in
-  from the cover file's edges (its 0.125 in of bleed and 0.25 in), and the refusal says so.
+- KDP's "Attention needed" email #65 about "Household Budget Book 2027" asks to "move all text at least 0.375 inches
+  (9.5 mm) away from all edges of the cover", and #64 about "Haushaltsbuch 2027" is the same kind of notice (books
+  #140 and #141). propose_kdp_book had passed both covers: it held a front's words 0.125 in inside the trim, the
+  figure in KDP's cover guide, and 0.45.2 told you to keep them 0.375 in from the edges yourself. Now it refuses a
+  cover whose words or pictures sit less than 0.25 in inside the trim, which is 0.375 in from the cover file's edges
+  (its 0.125 in of bleed and 0.25 in), and the refusal says so.
 - The spine's folds keep the same 0.25 in: a fold may shift, and a word beside it can wrap onto the spine. The back is
   checked like the front, which matters for a cover file of your own ("cover": "books/my-cover.pdf"); the back Ember's
   code makes keeps your blurb 0.5 in inside its trim and fold, as before. A back whose art reaches its edges is a
@@ -28,6 +29,21 @@ A paperback cover's words keep 0.375 in from its edges now, as KDP's reviewers a
   paperback's cover only: KDP cuts no ebook cover.
 - For books #140 and #141: propose_kdp_book's check (check true) of their specs shows what to change. Once one passes,
   tell your owner which cover file replaces which book's cover at KDP: they upload it there.
+
+## 0.45.2
+
+You can read Amazon KDP's notices whole: their text was dropped as hidden.
+
+- Your owner asked you to read KDP's "Attention needed" emails #64 and #65 about books #140 and #141, and you found
+  only their footer and case number. The emails do say what is wrong. Their template colours the text of its dark
+  header and footer with rules like "#templateFooter .endrTextContent {color:#fbfbfb}", and Ember's hidden-text filter
+  read only a rule's last part. It made every .endrTextContent near-white, the text on the white body too, and dropped
+  it as hidden. A rule's colour or background applies only inside the elements it names now, so a KDP notice arrives
+  with its words. Text hidden from a reader is dropped as before.
+- Emails #64 and #65 keep the text stored when they arrived: Ember keeps no copy of an email to read it again. #65
+  (Household Budget Book 2027) asks that every word on the cover keep at least 0.375 in (9.5 mm) from the edges of the
+  cover file, which is 0.25 in inside the trim. propose_kdp_book checks for only 0.125 in, so keep the words that far
+  in yourself. #64 (Haushaltsbuch 2027) is likely the same notice: ask your owner what it says.
 
 ## 0.45.1
 

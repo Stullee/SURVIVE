@@ -637,7 +637,7 @@ maker: "Made by Ember, an AI agent, and checked by the seller" (it said
 when it says a person made Ember's work, promises legal certainty
 ("rechtssicher", "GoBD-konform") or says "no refunds": 13 of the week's 39 did.
 A KDP cover whose front prints words within 0.125 in of the trim is refused (the
-Haushaltsbuch's title sat 0.048 in inside it; 0.45.2 raised this to 0.375 in
+Haushaltsbuch's title sat 0.048 in inside it; 0.45.3 raised this to 0.375 in
 from the cover's edges). Once a cycle of the day took a
 triage, the other waiting ideas wait for the next day's, which decides them
 together; no brainstorm comes while your rulebook or her strategy says "nothing
@@ -652,7 +652,15 @@ by its number (and mark an opt-out it finds), so it can tell you what Amazon,
 Etsy or Printify asks; answering an email stays an ordinary cycle's, and a
 venture cycle still reads no mail.
 
-0.45.2 holds a KDP paperback's cover to what KDP's reviewers asked of
+0.45.2 lets Ember read those KDP notices. Their template colours the text of
+its dark header and footer with style rules that name those parts, and Ember's
+hidden-text filter read only a rule's last part: it took the whole notice for
+white on white and kept just the footer and case number. A rule's colour or
+background now applies only inside the elements it names; a rule that hides
+text still hides it everywhere. Emails stored before 0.45.2 keep the text they
+were stored with.
+
+0.45.3 holds a KDP paperback's cover to what KDP's reviewers asked of
 "Household Budget Book 2027" and "Haushaltsbuch 2027": all text at least
 0.375 in (9.5 mm) from the cover's edges, which is 0.25 in inside the trim.
 0.45.0's check had passed both covers at 0.125 in. The spine's folds keep
