@@ -109,7 +109,7 @@ def _sold(
     """The venture's first sale from ``since`` to the end of the day ``until``: its evidence, or ""."""
     ours = {int(r["listing_id"]) for r in metrics.listings(conn, scope, None, venture_id)}
     if ours:
-        where, params = scope.where()
+        where, params = scope.world_where()
         for order in conn.execute(
             f"SELECT receipt_id, items, ordered_at FROM etsy_orders WHERE {where} AND {etsy.COUNTED_ORDERS}"
             " AND ordered_at >= ? ORDER BY ordered_at",

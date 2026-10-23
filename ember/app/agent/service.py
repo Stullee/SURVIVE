@@ -25,7 +25,7 @@ from ..db import Database
 from ..economy import burn
 from ..economy.clock import from_iso, to_iso
 from ..economy.costs import micros_to_usd
-from ..economy.life import KILLED_KEY
+from ..economy.life import KILLED_KEY, LIVE_SESSION_KEY
 from ..economy.metering import (
     EVENT_RESERVE_HOUR,
     MORNING_HOUR,
@@ -243,7 +243,8 @@ class Agent:
 
     def scope(self) -> AgentScope:
         status = self.economy.life.evaluate()
-        return AgentScope(self.mode, self.economy.life.session(), status.life_id or 0)
+        life = self.economy.life
+        return AgentScope(self.mode, life.session(), status.life_id or 0, life.world())
 
     def roots(self) -> tuple[Jail, Jail]:
         base = paths.data_dir() / "dry_run" if self.mode == "dry_run" else paths.data_dir()
@@ -373,7 +374,8 @@ class Agent:
         (tools.prune_versions), in every mode and session: the live workspace's and the dry-run session's files are
         looked up, whichever mode runs now; a past dry-run session's folder is gone. The scheduler calls it daily."""
         base = paths.data_dir()
-        folders = {("live", 0): base / "workspace"}
+        live = self.db.get_meta(LIVE_SESSION_KEY) or "0"  # 0.46.0: the live mind's session, her generation's
+        folders = {("live", int(live) if live.isdigit() else 0): base / "workspace"}
         session = self.db.get_meta(DRY_RUN_FOLDER_KEY) or ""
         if session.isdigit():
             folders[("dry_run", int(session))] = base / "dry_run" / "workspace"

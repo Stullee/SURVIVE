@@ -76,7 +76,7 @@ CHANGED = "{path} changed after you approved it (its SHA-256 differs); ask for a
 
 def created_today(conn: sqlite3.Connection, clock: Clock, scope: AgentScope) -> int:
     start, end = clock.day_bounds(clock.today())
-    where, params = scope.where()
+    where, params = scope.world_where()
     return int(
         conn.execute(
             f"SELECT COUNT(*) FROM etsy_listings WHERE {where} AND status IN {COUNTED} AND started_at >= ?"
@@ -141,7 +141,7 @@ def approved_edit(row: sqlite3.Row) -> Edit:
 def current_listing(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> Listing | None:
     """One of Ember's live listings as Ember listed it or last changed it (changes the owner made at Etsy aren't
     known); None when Ember didn't list it (live) in this mode and session."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     row = conn.execute(
         f"SELECT approval_id FROM etsy_listings WHERE {where} AND listing_id = ? AND status = 'active'",
         (*params, listing_id),
@@ -162,7 +162,7 @@ def current_listing(conn: sqlite3.Connection, scope: AgentScope, listing_id: int
 def listing_row(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> sqlite3.Row | None:
     """Ember's record of one of the listings it made live (its state at Etsy as the last sync read it: 0.12.0), or
     None."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     return conn.execute(
         f"SELECT * FROM etsy_listings WHERE {where} AND listing_id = ? AND status = 'active'", (*params, listing_id)
     ).fetchone()
@@ -194,7 +194,7 @@ def state_text(row: sqlite3.Row) -> str:
 
 def idle_listings(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
     """0.12.0: Ember's listings that Etsy says aren't live (expired, sold out, deactivated), newest first."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     return conn.execute(
         f"SELECT * FROM etsy_listings WHERE {where} AND status = 'active' AND listing_id IS NOT NULL"
         f" AND COALESCE(state, '{etsy.LIVE_STATE}') <> '{etsy.LIVE_STATE}' ORDER BY id DESC",
@@ -205,7 +205,7 @@ def idle_listings(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.R
 def live_listings(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) -> list[tuple[int, Listing]]:
     """Ember's live listings (newest first), each as Ember listed it or last changed it; live as Etsy last said
     (0.12.0: an expired listing counted as live)."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     rows = conn.execute(
         f"SELECT listing_id FROM etsy_listings WHERE {where} AND status = 'active' AND listing_id IS NOT NULL"
         f" AND COALESCE(state, '{etsy.LIVE_STATE}') = '{etsy.LIVE_STATE}' ORDER BY id DESC LIMIT ?",
@@ -450,7 +450,7 @@ class Publisher:
             conn.execute(
                 "INSERT INTO etsy_listings (mode, session, approval_id, started_at, status, title)"
                 " VALUES (?, ?, ?, ?, 'running', ?)",
-                (scope.mode, scope.session, approval_id, stamp, title[:140]),
+                (scope.mode, scope.world_session, approval_id, stamp, title[:140]),
             )
         connectors.begin(conn, approval_id, stamp)  # 0.13.0: its listing's number comes when it is finished
 
@@ -589,14 +589,14 @@ class Publisher:
         with self.db.transaction() as conn:
             conn.execute(
                 "INSERT INTO etsy_photo_ids (mode, session, listing_id, ids, recorded_at) VALUES (?, ?, ?, ?, ?)",
-                (scope.mode, scope.session, listing_id, json.dumps(ids), to_iso(self.clock.now())),
+                (scope.mode, scope.world_session, listing_id, json.dumps(ids), to_iso(self.clock.now())),
             )
 
     @staticmethod
     def _photos_seen(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> list[int] | None:
         row = conn.execute(
             "SELECT ids FROM etsy_photo_ids WHERE mode = ? AND session = ? AND listing_id = ? ORDER BY id DESC LIMIT 1",
-            (scope.mode, scope.session, listing_id),
+            (scope.mode, scope.world_session, listing_id),
         ).fetchone()
         return None if row is None else [int(i) for i in json.loads(row["ids"])]
 
@@ -744,7 +744,7 @@ class Publisher:
             conn.execute(
                 "INSERT INTO etsy_edits (mode, session, approval_id, listing_id, started_at, status)"
                 " VALUES (?, ?, ?, ?, ?, 'running')",
-                (scope.mode, scope.session, approval_id, listing_id, stamp),
+                (scope.mode, scope.world_session, approval_id, listing_id, stamp),
             )
         # 0.13.0: the shared journal, with the listing as it was (what changing it back restores)
         connectors.begin(conn, approval_id, stamp, str(listing_id), before.to_action() if before else None)
@@ -789,7 +789,7 @@ class Publisher:
             )
             connectors.finish(conn, approval_id, status, now, after.to_action() if after else None, note)
             if title is not None and scope is not None:
-                where, params = scope.where()
+                where, params = scope.world_where()
                 conn.execute(
                     f"UPDATE etsy_listings SET title = ? WHERE {where} AND listing_id = ?",
                     (title[:140], *params, row["listing_id"]),
@@ -797,7 +797,7 @@ class Publisher:
             if (
                 state is not None and scope is not None
             ):  # 0.12.0: as it is now; a renewal's end comes with the next sync
-                where, params = scope.where()
+                where, params = scope.world_where()
                 before = conn.execute(
                     f"SELECT state, ends_at FROM etsy_listings WHERE {where} AND listing_id = ? AND status = 'active'",
                     (*params, row["listing_id"]),
@@ -808,14 +808,14 @@ class Publisher:
                 if state == etsy.LIVE_STATE and ended:  # 0.15.0: Etsy's listing fee for renewing it
                     why = f"Ember renewed it (request #{approval_id})"
                     event = f"renewal-request-{approval_id}"
-                    listing_fee_due(conn, scope.mode, scope.session, row["listing_id"], event, now, why)
+                    listing_fee_due(conn, scope.mode, scope.world_session, row["listing_id"], event, now, why)
                 conn.execute(
                     "UPDATE etsy_listings SET state = ?, ends_at = CASE WHEN ? = 'active' THEN NULL ELSE ends_at END"
                     f" WHERE {where} AND listing_id = ?",
                     (state, state, *params, row["listing_id"]),
                 )
             if renewal is not None and scope is not None:  # 0.13.0: the owner's Undo of an automatic renewal
-                where, params = scope.where()
+                where, params = scope.world_where()
                 conn.execute(
                     f"UPDATE etsy_listings SET auto_renew = ? WHERE {where} AND listing_id = ?",
                     (int(renewal), *params, row["listing_id"]),
@@ -845,7 +845,7 @@ class Publisher:
             now = self.clock.now()
             if not force and not self.due():
                 return None
-            where, params = scope.where()
+            where, params = scope.world_where()
             with self.db.connection() as conn:
                 ids = [
                     int(r[0])
@@ -952,7 +952,7 @@ class Publisher:
     ) -> list[str]:
         """What a sync read, in one transaction. Returns the orders that couldn't be stored (0.15.0: one such order
         stopped every sync for 30 days; now it is skipped, and the dashboard says so)."""
-        where, params = scope.where()
+        where, params = scope.world_where()
         rate = self.settings.etsy_usd_per_eur or econ.DEFAULT_USD_PER_EUR
         skipped: list[str] = []
         adopted: list[str] = []
@@ -1010,7 +1010,7 @@ class Publisher:
                             " fees_cents = COALESCE(excluded.fees_cents, etsy_orders.fees_cents)",
                             (
                                 scope.mode,
-                                scope.session,
+                                scope.world_session,
                                 order.receipt_id,
                                 order.ordered_at,
                                 order.currency,
@@ -1057,7 +1057,7 @@ class Publisher:
     def _renew_sellers(self, shop: Shop, scope: AgentScope) -> None:
         """0.12.0: Etsy's automatic renewal for each live listing that sold and doesn't renew itself, tried once per
         listing: after that, the owner's own choice at Etsy stands (and a refusal isn't repeated every hour)."""
-        where, params = scope.where()
+        where, params = scope.world_where()
         with self.db.connection() as conn:
             sold = sold_counts(conn, scope)
             rows = conn.execute(
@@ -1241,7 +1241,7 @@ def _ending(row: sqlite3.Row) -> str:
 
 def sold_counts(conn: sqlite3.Connection, scope: AgentScope, since: str | None = None) -> dict[int, int]:
     """How many of each listing sold (in orders that count: not cancelled or refunded), since ``since`` if given."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     period = " AND ordered_at >= ?" if since else ""
     sold: dict[int, int] = {}
     for order in conn.execute(
@@ -1269,7 +1269,7 @@ def listing_numbers(conn: sqlite3.Connection, scope: AgentScope) -> tuple[dict[i
     """0.19.2: each of Ember's listings' numbers as Etsy's last sync read them (numbers_text), and when the newest was
     read. Live, the work steps never saw them (only the plan's ETSY SHOP did): the agent asked its owner for its
     listings' views, and promised five times to report them once the owner sent them."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     rows = conn.execute(
         f"SELECT listing_id, views, favorites, synced_at FROM etsy_listings WHERE {where} AND listing_id IS NOT NULL",
         params,
@@ -1322,7 +1322,7 @@ def live_line(
 def few_photos(conn: sqlite3.Connection, scope: AgentScope) -> list[tuple[int, int]]:
     """0.12.0: the live listings with fewer than qa.MIN_PHOTOS photos in Ember's records, as (listing, photos): a defect
     the obligations list until it is fixed."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     rows = conn.execute(
         f"SELECT * FROM etsy_listings WHERE {where} AND listing_id IS NOT NULL AND status = 'active' ORDER BY id",
         params,
@@ -1354,7 +1354,7 @@ def observe(conn: sqlite3.Connection, scope: AgentScope, day: str, now: str, lis
     """The day's observations (0.12.0), written by the first sync of the owner's day: the shop's counts from Ember's
     own records and, while the owner allows the history, each live listing's views and favorites. A day's first value
     stays. Returns how many were new."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     rows = conn.execute(f"SELECT * FROM etsy_listings WHERE {where}", params).fetchall()
     sold = sold_counts(conn, scope)
     live = live_rows(rows, sold)
@@ -1371,14 +1371,14 @@ def observe(conn: sqlite3.Connection, scope: AgentScope, day: str, now: str, lis
         added += conn.execute(
             "INSERT INTO observations (mode, session, day, observed_at, subject, subject_id, metric, value)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
-            (scope.mode, scope.session, day, now, subject, subject_id, metric, int(value)),
+            (scope.mode, scope.world_session, day, now, subject, subject_id, metric, int(value)),
         ).rowcount
     return added
 
 
 def week_ago(conn: sqlite3.Connection, scope: AgentScope, today: date, metric: str = "views") -> dict[int, int]:
     """Each listing's ``metric`` at the start of the last 7 days: the first value observed since then."""
-    where, params = scope.where()
+    where, params = scope.world_where()  # 0.46.0: a listing's days are the world's
     first: dict[int, int] = {}
     for r in conn.execute(
         f"SELECT subject_id, value FROM observations WHERE {where} AND subject = 'listing' AND metric = ?"
@@ -1405,13 +1405,13 @@ def shop_text(
     """The ETSY SHOP section of the plan: every live listing and how it does (0.12.0: all of them, top sellers first),
     this week's orders, what to fix, and the newest listings and requests one by one. ``auto_revenue``: Ember's code
     records the orders' revenue (0.12.0, the owner's option), else the owner does."""
-    where, params = scope.where()
-    rows = conn.execute(f"SELECT * FROM etsy_listings WHERE {where} ORDER BY id DESC", params).fetchall()
+    world, shop = scope.world_where()  # 0.46.0: the shop is the world's; the requests for it are her mind's
+    rows = conn.execute(f"SELECT * FROM etsy_listings WHERE {world} ORDER BY id DESC", shop).fetchall()
     week = to_iso(clock.now() - timedelta(days=7))
     orders = conn.execute(
-        f"SELECT total_cents, currency, items, fees_cents FROM etsy_orders WHERE {where} AND {etsy.COUNTED_ORDERS}"
+        f"SELECT total_cents, currency, items, fees_cents FROM etsy_orders WHERE {world} AND {etsy.COUNTED_ORDERS}"
         " AND ordered_at >= ?",
-        (*params, week),
+        (*shop, week),
     ).fetchall()
     sold = sold_counts(conn, scope)
     lines = [f"Shop: {shop_name}." + ("" if rows else " No listings yet.")]
@@ -1473,6 +1473,7 @@ def shop_text(
     lines.append(f"Listings Ember can still create today: {left} of {daily_limit}.")
     if any(r["listing_id"] and r["status"] == "active" for r in rows):
         lines.append("Change a live listing (free at Etsy): etsy_listing shows it, propose_etsy_edit asks your owner.")
+    where, params = scope.where()
     waiting = conn.execute(
         f"SELECT id, status, json_extract(action, '$.listing_id') AS listing_id FROM approvals WHERE {where}"
         f" AND executor = 'etsy_edit' AND status IN ('pending', {_APPROVED_SQL}) ORDER BY id",
@@ -1490,7 +1491,7 @@ def shop_text(
 
 
 def listings_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) -> list[dict[str, Any]]:
-    where, params = scope.where()
+    where, params = scope.world_where()
     rows = conn.execute(
         f"SELECT * FROM etsy_listings WHERE {where} ORDER BY id DESC LIMIT ?", (*params, limit)
     ).fetchall()
@@ -1522,7 +1523,7 @@ def orders_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) ->
     """The newest ``limit`` orders, and every older one that still needs the owner (0.12.0: the list stopped at 20,
     so older orders lost their Record as revenue button): not recorded yet, or recorded and refunded since (0.15.0: in
     part too) until its entry is corrected."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     rows = conn.execute(
         f"SELECT * FROM etsy_orders WHERE {where} ORDER BY ordered_at DESC, id DESC LIMIT ?", (*params, MAX_ORDERS_READ)
     ).fetchall()
@@ -1606,7 +1607,7 @@ def order_project(conn: sqlite3.Connection, scope: AgentScope, items: list[Any])
             "SELECT p.id AS project_id, p.venture_id FROM etsy_listings l JOIN approvals a ON a.id = l.approval_id"
             f" LEFT JOIN cycles y ON y.id = a.cycle_id JOIN projects p ON p.id = {ventures.line_sql('l')}"
             " WHERE l.listing_id = ? AND l.mode = ? AND l.session = ? ORDER BY l.id DESC LIMIT 1",
-            (listing_id, scope.mode, scope.session),
+            (listing_id, scope.mode, scope.world_session),
         ).fetchone()
         if row is None:  # 0.13.0 (Phase E4): a listing Printify made of one of Ember's products
             row = conn.execute(
@@ -1614,7 +1615,7 @@ def order_project(conn: sqlite3.Connection, scope: AgentScope, items: list[Any])
                 " ON a.id = x.approval_id LEFT JOIN cycles y ON y.id = a.cycle_id JOIN projects p"
                 f" ON p.id = {ventures.line_sql('x')} WHERE x.listing_id = ? AND x.mode = ?"
                 " AND x.session = ? ORDER BY x.id DESC LIMIT 1",
-                (listing_id, scope.mode, scope.session),
+                (listing_id, scope.mode, scope.world_session),
             ).fetchone()
         if row is not None:
             return row["project_id"], row["venture_id"]
@@ -1674,7 +1675,7 @@ def _adopt(
     there): the agent can change, renew and pin it. Etsy's fee for publishing it is noted (the ledger's key books it
     once; an unclear one's was never booked), and the journal gets the entry whose Undo deactivates it. Returns the
     news, for the events once the sync is stored."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     rows = conn.execute(
         f"SELECT approval_id, status FROM etsy_listings WHERE {where} AND listing_id = ?"
         " AND status IN ('draft', 'unclear')",
@@ -1684,7 +1685,7 @@ def _adopt(
     news = []
     for row in rows:
         why = "the owner published it" if row["status"] == "draft" else "it went live"
-        listing_fee_due(conn, scope.mode, scope.session, item.listing_id, "listed", now, why)
+        listing_fee_due(conn, scope.mode, scope.world_session, item.listing_id, "listed", now, why)
         result = f"Live at Etsy after all (the sync found it): {url}"
         conn.execute(
             "UPDATE etsy_listings SET status = 'active', error = NULL, result = ? WHERE approval_id = ?",
@@ -1706,7 +1707,7 @@ def _renewed(conn: sqlite3.Connection, scope: AgentScope, table: str, item: etsy
     moving on from one that had passed: a listing fee for each four months (a renewal Ember made is noted with it). A
     listing Printify made is first seen live here: the fee for publishing it (Ember's own are noted in ``_after``, and
     0.23.0: a draft or unclear one Etsy reports live, in ``_adopt``)."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     row = conn.execute(
         f"SELECT ends_at, synced_at, state, status FROM {table} WHERE {where} AND listing_id = ? AND status = 'active'",
         (*params, item.listing_id),
@@ -1714,14 +1715,14 @@ def _renewed(conn: sqlite3.Connection, scope: AgentScope, table: str, item: etsy
     if row is None:
         return
     if table == "printify_products" and row["synced_at"] is None and item.state == etsy.LIVE_STATE:
-        listing_fee_due(conn, scope.mode, scope.session, item.listing_id, "listed", now, "Printify published it")
+        listing_fee_due(conn, scope.mode, scope.world_session, item.listing_id, "listed", now, "Printify published it")
         return
     if not row["ends_at"] or not item.ends_at or not row["ends_at"] <= now < item.ends_at:
         return
     days = (from_iso(item.ends_at) - from_iso(row["ends_at"])).days
     fees = max(1, round(days / etsy.LISTING_DAYS)) if item.auto_renew else 1
     why = f"Etsy renewed it until {item.ends_at[:10]}"
-    listing_fee_due(conn, scope.mode, scope.session, item.listing_id, f"renewal-{item.ends_at}", now, why, fees)
+    listing_fee_due(conn, scope.mode, scope.world_session, item.listing_id, f"renewal-{item.ends_at}", now, why, fees)
 
 
 def fee_key(receipt_id: int) -> str:

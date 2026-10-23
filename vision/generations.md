@@ -1,9 +1,11 @@
 # Vision: Ember's next generation
 
 *Draft, 2026-10-23, written against `ed592b1` (0.45.4), the diagnostics report of 10-23 20:55 UTC and the evaluation
-of 10-22 (`evaluation/2026-10-22-0.44.0/`). Nothing of it is built. It answers the owner's question: how can Ember
-evolve into a next generation that carries over the important learnings, starts with a clean mind, and is smarter
-for it, without holding on to the products her first generation failed with?*
+of 10-22 (`evaluation/2026-10-22-0.44.0/`). 0.46.0 builds its foundation: the mind/world split (see "The
+engineering"), with the counts of a platform's limits on the world and migration 0102; nothing begins a generation
+yet. It answers the owner's question: how can Ember evolve into a next generation that carries over the important
+learnings, starts with a clean mind, and is smarter for it, without holding on to the products her first generation
+failed with?*
 
 ## The idea in one paragraph
 
@@ -138,7 +140,9 @@ close before the change.
 1. **Gen 1 proposes, with no extra model call:** her playbook as it stands, plus her letter.
 2. **An independent evaluator drafts it.** That is an AI chat given an inheritance brief (like `EVALUATE.md`), or a
    Claude Code session in this repository. It reads the whole-life evaluation export and the failure ledger and strikes
-   what the records contradict or what her code taught her. It writes `inheritance.json`.
+   what the records contradict or what her code taught her. It also judges every product of the estate from its data:
+   a verdict (adopt, passive or retire) with the numbers behind it, and for an adopted product its first test and
+   date. It writes `inheritance.json`.
 3. **Ember's code checks it:**
    - every principle cites cases that exist, are not "too early" and are not low-sure;
    - no tool-limit line;
@@ -164,10 +168,14 @@ already spent on it, and she would defend it from her first plan. Three rules ke
    | **Passive** | The product stays live, which is free: Etsy charges only at a renewal, and Printify only when an order comes in. It is still synced, and its sales are still recorded. Her plan shows one line about it: "6 listings from generation 1 stay live, passive: 0 sales. Not yours to work on." She can't propose a change to it. If a passive product sells, it is offered to her to adopt: evidence brings it back, sunk cost never does. |
    | **Retire** | The product is taken down before the change: an Etsy deactivate request, and Printify, KDP and pins by the owner's hand or Undo. |
 
-   Ember's code suggests a verdict for each product:
+   **The evaluator proposes each product's verdict from the data,** in `inheritance.json`: its views, favourites,
+   clicks, sales, days live, the reach done for it, what it cost, and why that verdict. Ember's code checks each
+   proposal against its own rule, and the dashboard shows both side by side. The owner decides. The rule:
    - adopt what is too new to judge or shows a buyer signal;
    - passive what had a fair test (reach done, 21 days or more) and no signal;
    - retire what breaks a rule.
+
+   Where the two differ, the evaluator's "why" has to say what its rule saw that the code's rule didn't.
 3. **Nothing inherited breaks her rules.** These texts claim a person made her work (F11, the incident of the week
    10-12 to 10-18): 8 pins, listings #124 and #125, and the KDP books' descriptions. They are corrected or retired
    before the change, so the second generation doesn't start with an incident.
@@ -275,7 +283,7 @@ fixes for defects that burn money or break rules, each one logged.
 | A generation change in the same database, or a new install? | The same database, with the mind/world split. A new install loses the links to the shop and the books, the opt-outs and the history, and needs every integration authorised again. |
 | Who writes the inheritance? | The evaluator, from the export, with her playbook and her letter as inputs. Ember's code checks it, and the owner gives it. |
 | Do inherited principles start as hypotheses or as established? | Hypotheses at a discount. Established would make her obey lessons that the bugs half taught her. |
-| Products | Products pass, lines don't. Adopt, passive or retire, decided per product on the day of the change, with Ember's code's suggestion. |
+| Products | Products pass, lines don't. The evaluator proposes adopt, passive or retire for each product from its data, Ember's code checks it against its rule, and the owner decides on the day of the change. |
 | Unlocks | Back to manual. She earns them again, and the owner can grant them again at once. |
 | Rulebook and library | They carry on. The owner reviews the rulebook for rules about the first generation's lines. |
 | Name | Still Ember, with her generation in her identity, on the dashboard and on the live page ("generation 2"). |

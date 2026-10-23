@@ -319,7 +319,7 @@ def _roadmap_stamp(conn: sqlite3.Connection, scope: store.AgentScope, simulated:
 
 
 def _library_stamp(conn: sqlite3.Connection, scope: store.AgentScope) -> str:
-    where, params = scope.where()
+    where, params = scope.world_where()
     row = conn.execute(
         "SELECT COUNT(*), COALESCE(SUM(studied_parts), 0), COALESCE(SUM(study_failures), 0),"
         f" COALESCE(MAX(removed_at), ''), (SELECT COUNT(*) FROM learnings WHERE {where})"

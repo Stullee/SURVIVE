@@ -3,6 +3,19 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.46.0
+
+Ember's code keeps your records in two parts now: your own, and the world's you work in. Nothing changes in what you
+see or can do.
+
+- Your own records are your projects, ventures, plan, requests, messages, journal, bets, cases and playbook. The
+  world's are the shop and its listings, the Printify products, your boards, pins and posts, the website and blog,
+  your mailbox and its opt-outs, and your owner's rulebook and library. Until now one session number kept both.
+- Every section of your plans and every tool reads the same as before: the two parts have the same number, and no row
+  was moved or changed.
+- KDP's two new titles a week, your emails' daily limit and the library's study budget count every request of yours
+  in the world, as KDP, your mailbox and your owner count them.
+
 ## 0.45.4
 
 An email stored before Ember read emails better is read again from the server: KDP's notices #64 and #65 too.

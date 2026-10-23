@@ -71,7 +71,7 @@ def meta_key(mode: str, name: str) -> str:
 
 def boards(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
     """Ember's boards (made), the oldest first."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     return conn.execute(
         f"SELECT * FROM pinterest_boards WHERE {where} AND status = 'active' ORDER BY id", params
     ).fetchall()
@@ -83,7 +83,7 @@ def board(conn: sqlite3.Connection, scope: AgentScope, board_id: str) -> sqlite3
 
 def pins(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) -> list[sqlite3.Row]:
     """Ember's pins, the newest first."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     return conn.execute(
         f"SELECT * FROM pinterest_pins WHERE {where} ORDER BY id DESC LIMIT ?", (*params, limit)
     ).fetchall()
@@ -108,7 +108,7 @@ def pin_json(r: sqlite3.Row) -> dict[str, Any]:
 
 def totals(conn: sqlite3.Connection, scope: AgentScope) -> tuple[int, int]:
     """Ember's live pins and their outbound clicks at the last sync (the metrics pins_live and pin_clicks)."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     row = conn.execute(
         f"SELECT COUNT(*), COALESCE(SUM(clicks), 0) FROM pinterest_pins WHERE {where} AND status = 'active'", params
     ).fetchone()
@@ -118,7 +118,7 @@ def totals(conn: sqlite3.Connection, scope: AgentScope) -> tuple[int, int]:
 def made_any(conn: sqlite3.Connection, scope: AgentScope) -> bool:
     """0.16.3 (analysis bug 1): whether Ember's code ever made a pin (it has Pinterest's id), deleted since or not: a
     Pinterest venture's first test ran only then (agent/stages.py)."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     found = conn.execute(f"SELECT 1 FROM pinterest_pins WHERE {where} AND pin_id IS NOT NULL LIMIT 1", params)
     return found.fetchone() is not None
 
@@ -126,7 +126,7 @@ def made_any(conn: sqlite3.Connection, scope: AgentScope) -> bool:
 def created_today(conn: sqlite3.Connection, clock: Clock, scope: AgentScope) -> int:
     """The pins started today, for pinterest_pins_per_day. 0.15.0: not one that failed before any pin request was sent
     (no board: its checks refused it, such as a listing no longer live), so it doesn't hold a valid pin back a day."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     start = to_iso(clock.day_start(clock.today()))
     return int(
         conn.execute(
@@ -462,7 +462,7 @@ class Publisher:
                 conn.execute(
                     "INSERT INTO pinterest_boards (mode, session, approval_id, name, status, started_at)"
                     " VALUES (?, ?, ?, ?, 'running', ?)",
-                    (scope.mode, scope.session, approval_id, name[:50], stamp),
+                    (scope.mode, scope.world_session, approval_id, name[:50], stamp),
                 ).lastrowid
             )
             connectors.begin(conn, approval_id, stamp, subject=name, name="pinterest.create_board")
@@ -505,7 +505,7 @@ class Publisher:
         conn.execute(
             "INSERT INTO pinterest_pins (mode, session, approval_id, title, link, status, started_at)"
             " VALUES (?, ?, ?, ?, ?, 'running', ?)",
-            (scope.mode, scope.session, approval_id, title[:100], link[:500], stamp),
+            (scope.mode, scope.world_session, approval_id, title[:100], link[:500], stamp),
         )
 
     def _lapsed(self, conn: sqlite3.Connection, row: sqlite3.Row, why: str, stamp: str) -> str:
@@ -617,7 +617,7 @@ class Publisher:
             return status
         with self.db.transaction() as conn:
             now = to_iso(self.clock.now())
-            where, params = scope.where()
+            where, params = scope.world_where()
             conn.execute(
                 f"UPDATE pinterest_pins SET status = 'deleted' WHERE {where} AND pin_id = ?", (*params, pin_id)
             )
@@ -724,7 +724,7 @@ class Publisher:
             last = self.db.get_meta(meta_key(scope.mode, "last_sync_at"))
             if not force and last and now - from_iso(last) < timedelta(hours=SYNC_HOURS):
                 return None
-            where, params = scope.where()
+            where, params = scope.world_where()
             with self.db.connection() as conn:
                 live = conn.execute(
                     f"SELECT approval_id, pin_id FROM pinterest_pins WHERE {where} AND status = 'active'", params

@@ -429,7 +429,7 @@ class Catalog:
 
 def products(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) -> list[sqlite3.Row]:
     """Ember's products, the newest first."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     return conn.execute(
         f"SELECT * FROM printify_products WHERE {where} ORDER BY id DESC LIMIT ?", (*params, limit)
     ).fetchall()
@@ -437,7 +437,7 @@ def products(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) -> li
 
 def listing_ids(conn: sqlite3.Connection, scope: AgentScope) -> list[int]:
     """The Etsy listings Printify made of Ember's products (Etsy's sync reads them as Ember's)."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     return [
         int(r[0])
         for r in conn.execute(
@@ -449,7 +449,7 @@ def listing_ids(conn: sqlite3.Connection, scope: AgentScope) -> list[int]:
 def live_listing(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -> sqlite3.Row | None:
     """0.32.0: the record of the product of Ember's whose Etsy listing Printify made is ``listing_id`` (its state at
     Etsy, its end and whether it renews itself as the Etsy sync last read them, like an etsy_listings row), or None."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     return conn.execute(
         f"SELECT * FROM printify_products WHERE {where} AND listing_id = ? AND status = 'active' ORDER BY id DESC"
         " LIMIT 1",
@@ -466,7 +466,7 @@ def current_product(conn: sqlite3.Connection, scope: AgentScope, listing_id: int
     if row is None:
         return None
     approval = conn.execute("SELECT action FROM approvals WHERE id = ?", (row["approval_id"],)).fetchone()
-    where, params = scope.where("e")
+    where, params = scope.world_where("e")
     try:
         product = product_from_action(approval["action"] if approval is not None else "null")
         for change in conn.execute(
@@ -536,7 +536,7 @@ def cancel_key(order_id: str) -> str:
 def orders_json(conn: sqlite3.Connection, scope: AgentScope, limit: int = 20) -> list[dict[str, Any]]:
     """The Printify orders of Ember's products, newest first: what making and shipping each costs the owner, and
     whether that cost is in the ledger."""
-    where, params = scope.where("o")
+    where, params = scope.world_where("o")
     # 0.15.0: with the tax Printify bills, and the project (and its venture) the product belongs to, as its sale's
     # revenue (the cost was the owner's overhead)
     rows = conn.execute(
@@ -700,7 +700,7 @@ def _taken_back(conn: sqlite3.Connection, order: dict[str, Any]) -> PreparedEntr
 def totals(conn: sqlite3.Connection, scope: AgentScope) -> tuple[int, int]:
     """Ember's products in the shop now, and the orders of its products in all (the metrics pod_products_live and
     pod_orders): Printify's records at the last sync."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     live = conn.execute(  # 0.15.0: live at Etsy as the Etsy sync last read it (an expired listing isn't)
         f"SELECT COUNT(*) FROM printify_products WHERE {where} AND status = 'active' AND COALESCE(state, ?) = ?",
         (*params, etsy.LIVE_STATE, etsy.LIVE_STATE),
@@ -715,13 +715,13 @@ def totals(conn: sqlite3.Connection, scope: AgentScope) -> tuple[int, int]:
 def made_any(conn: sqlite3.Connection, scope: AgentScope) -> bool:
     """0.16.3 (analysis bug 1): whether Ember's code ever made a product at Printify (it has Printify's id), deleted
     since or not: a print-on-demand venture's first test ran only then (agent/stages.py)."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     found = conn.execute(f"SELECT 1 FROM printify_products WHERE {where} AND product_id IS NOT NULL LIMIT 1", params)
     return found.fetchone() is not None
 
 
 def created_today(conn: sqlite3.Connection, clock: Clock, scope: AgentScope) -> int:
-    where, params = scope.where()
+    where, params = scope.world_where()
     start = to_iso(clock.day_start(clock.today()))
     return int(
         conn.execute(
@@ -1082,7 +1082,7 @@ class Publisher:
         conn.execute(
             "INSERT INTO printify_products (mode, session, approval_id, title, currency, status, started_at)"
             " VALUES (?, ?, ?, ?, ?, 'running', ?)",
-            (scope.mode, scope.session, approval_id, title[:140], currency[:3], stamp),
+            (scope.mode, scope.world_session, approval_id, title[:140], currency[:3], stamp),
         )
 
     def _failed(self, conn: sqlite3.Connection, approval_id: int, reason: str) -> str:
@@ -1204,7 +1204,7 @@ class Publisher:
             return status
         with self.db.transaction() as conn:
             now = to_iso(self.clock.now())
-            where, params = scope.where()
+            where, params = scope.world_where()
             conn.execute(
                 f"UPDATE printify_products SET status = 'deleted' WHERE {where} AND product_id = ?",
                 (*params, product_id),
@@ -1312,7 +1312,7 @@ class Publisher:
         conn.execute(
             "INSERT INTO printify_edits (mode, session, approval_id, product_id, listing_id, status, started_at)"
             " VALUES (?, ?, ?, ?, ?, 'running', ?)",
-            (scope.mode, scope.session, approval_id, edit.product_id[:40], edit.listing_id, stamp),
+            (scope.mode, scope.world_session, approval_id, edit.product_id[:40], edit.listing_id, stamp),
         )
 
     def _edit_failed(self, conn: sqlite3.Connection, approval_id: int, reason: str) -> str:
@@ -1348,7 +1348,7 @@ class Publisher:
                 (status, now, note[:1000], _said(error)[:500] if error else None, approval_id),
             )
             if took and edit.title is not None:
-                where, params = scope.where()
+                where, params = scope.world_where()
                 conn.execute(
                     f"UPDATE printify_products SET title = ? WHERE {where} AND product_id = ?",
                     (edit.title[:140], *params, edit.product_id),
@@ -1369,12 +1369,13 @@ class Publisher:
         0.39.0: and a change of a product."""
         with self.db.transaction() as conn:
             changing = conn.execute(
-                "SELECT e.mode, e.session, e.approval_id, a.action FROM printify_edits e JOIN approvals a"
-                " ON a.id = e.approval_id WHERE e.status = 'running'"
+                "SELECT e.mode, a.session, e.session AS world, e.approval_id, a.action FROM printify_edits e"
+                " JOIN approvals a ON a.id = e.approval_id WHERE e.status = 'running'"
             ).fetchall()
         for row in changing:
             note = f"It is unclear what Printify changed ({EDIT_INTERRUPTED}). Ember won't try again: check the product"
-            scope = AgentScope(str(row["mode"]), int(row["session"]), 0)  # its records' (where() reads these two)
+            # its records': its request's mind and the change's world (0.46.0; where() reads these)
+            scope = AgentScope(str(row["mode"]), int(row["session"]), 0, int(row["world"]))
             edit = edit_from_action(row["action"])  # readable: one that wasn't failed as it began
             self._edited(scope, row["approval_id"], edit, "unclear", note, PrintifyError(EDIT_INTERRUPTED))
         with self.db.transaction() as conn:
@@ -1416,7 +1417,7 @@ class Publisher:
                 return None
             scope = self.scope()
             now = self.clock.now()
-            where, params = scope.where()
+            where, params = scope.world_where()
             with self.db.connection() as conn:
                 mine = conn.execute(
                     "SELECT approval_id, product_id, status, currency, finished_at, error, prices"
@@ -1451,7 +1452,7 @@ class Publisher:
                             " THEN printify_orders.created_at ELSE excluded.created_at END",
                             (
                                 scope.mode,
-                                scope.session,
+                                scope.world_session,
                                 line.order_id,
                                 line.product_id,
                                 max(0, line.quantity),

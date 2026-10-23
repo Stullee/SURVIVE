@@ -88,7 +88,7 @@ def _channel_factors(conn: sqlite3.Connection, scope: AgentScope, now: str) -> d
     Live on 10-15, Bluesky was worth its reactions (2.3 a post, from people following Ember's story, who don't buy:
     case #25) and the blog 1.0, never measured: its monthly posts ranked second after the daily review had stopped
     its test for near-zero traffic, while Pinterest, measured at 0 clicks, sat at the floor."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     factors = {c: 1.0 for c in CHANNELS}
     settled = to_iso(from_iso(now) - timedelta(days=RESULT_DAYS))
     pins = conn.execute(
@@ -129,7 +129,7 @@ def _views_after(conn: sqlite3.Connection, scope: AgentScope, day: str, text: st
     """0.39.6: the views the listings ``text`` links gained from ``day`` to RESULT_DAYS later, by the daily views
     Ember's code observes (from its first day observed after ``day`` when none was before; 0 for a text that links no
     listing: what it brought the shop can't be seen)."""
-    where, params = scope.where()
+    where, params = scope.world_where()  # 0.46.0: a listing's days are the world's
     until = (date.fromisoformat(day) + timedelta(days=RESULT_DAYS)).isoformat()
 
     def seen(listing: int, condition: str, bound: str, order: str) -> int | None:

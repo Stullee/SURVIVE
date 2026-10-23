@@ -46,7 +46,7 @@ def address(settings: Settings) -> str:
 
 def pages(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
     """The site's pages, the home page first."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     return conn.execute(
         f"SELECT * FROM site_pages WHERE {where} AND removed_at IS NULL ORDER BY slug <> ?, slug", (*params, site.HOME)
     ).fetchall()
@@ -55,7 +55,7 @@ def pages(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
 def save(conn: sqlite3.Connection, scope: AgentScope, page: site.Page, cycle_id: int | None, now: str) -> bool:
     """Write a page: a new one, or a new version of it (a removed one comes back). Returns whether it is new on the
     site. Raises site.SiteError when the site is full."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     known = conn.execute(
         f"SELECT removed_at FROM site_pages WHERE {where} AND slug = ?", (*params, page.slug)
     ).fetchone()
@@ -67,14 +67,24 @@ def save(conn: sqlite3.Connection, scope: AgentScope, page: site.Page, cycle_id:
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (mode, session, slug) DO UPDATE SET title = excluded.title,"
         " description = excluded.description, menu = excluded.menu, source = excluded.source,"
         " cycle_id = excluded.cycle_id, updated_at = excluded.updated_at, removed_at = NULL",
-        (scope.mode, scope.session, page.slug, page.title, page.description, page.menu, page.source, cycle_id, now),
+        (
+            scope.mode,
+            scope.world_session,
+            page.slug,
+            page.title,
+            page.description,
+            page.menu,
+            page.source,
+            cycle_id,
+            now,
+        ),
     )
     return new
 
 
 def remove(conn: sqlite3.Connection, scope: AgentScope, slug: str, now: str) -> bool:
     """Take a page off the site. Returns whether there was one."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     cursor = conn.execute(
         f"UPDATE site_pages SET removed_at = ?, updated_at = ? WHERE {where} AND slug = ? AND removed_at IS NULL",
         (now, now, *params, slug),
@@ -89,7 +99,7 @@ def built(conn: sqlite3.Connection, scope: AgentScope, who: site.Owner) -> dict[
 
 
 def last_download(conn: sqlite3.Connection, scope: AgentScope) -> sqlite3.Row | None:
-    where, params = scope.where()
+    where, params = scope.world_where()
     return conn.execute(f"SELECT * FROM site_downloads WHERE {where} ORDER BY id DESC LIMIT 1", params).fetchone()
 
 
@@ -103,7 +113,7 @@ def record_download(conn: sqlite3.Connection, scope: AgentScope, files: dict[str
     fingerprints = json.dumps(site.fingerprints(files), separators=(",", ":"))
     conn.execute(
         "INSERT INTO site_downloads (mode, session, downloaded_at, files) VALUES (?, ?, ?, ?)",
-        (scope.mode, scope.session, now, fingerprints),
+        (scope.mode, scope.world_session, now, fingerprints),
     )
 
 

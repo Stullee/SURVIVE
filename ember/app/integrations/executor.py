@@ -152,7 +152,7 @@ def build_message(
 
 def sent_today(conn: sqlite3.Connection, clock: Clock, scope: AgentScope) -> int:
     start, end = clock.day_bounds(clock.today())
-    where, params = scope.where("a")
+    where, params = scope.minds_where("a")  # 0.46.0: the mailbox's day, whichever generation's requests sent them
     row = conn.execute(
         f"SELECT COUNT(*) FROM email_actions x JOIN approvals a ON a.id = x.approval_id WHERE {where}"
         f" AND x.status IN {COUNTED} AND x.started_at >= ? AND x.started_at < ?",

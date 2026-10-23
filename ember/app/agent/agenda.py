@@ -83,7 +83,7 @@ def _orders(conn: sqlite3.Connection, scope: AgentScope, since: str, now: str) -
     ours = {int(r["listing_id"]): str(r["title"]) for r in metrics.listings(conn, scope, None, None)}
     if not ours:
         return []
-    where, params = scope.where()
+    where, params = scope.world_where()
     noted = []
     for order in conn.execute(
         f"SELECT receipt_id, ordered_at, items FROM etsy_orders WHERE {where} AND {etsy.COUNTED_ORDERS}"
@@ -107,7 +107,7 @@ def _mail(conn: sqlite3.Connection, scope: AgentScope, since: str, now: str) -> 
     """Emails that arrived: an answer to one Ember sent (reply), or a person writing to Ember first (inquiry). 0.15.0:
     either only a person's email (mailstore.person) from someone who didn't ask to stop, so an out-of-office, a bounce
     or a forged sender wakes no one (the next plan's MAIL section still shows it)."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     sent = {
         str(r["message_id"])
         for r in conn.execute(

@@ -125,7 +125,7 @@ def funnels(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, Funnel]:
         found[project_id].pins += 1
     for project_id in _linked(_bluesky(conn, scope), owner):
         found[project_id].bluesky += 1
-    where, params = scope.where()
+    where, params = scope.world_where()
     for e in conn.execute(  # 0.39.0: a Printify product's listing changed at Printify counts too
         f"SELECT listing_id FROM etsy_edits WHERE {where} AND status IN ('done', 'partial') UNION ALL"
         f" SELECT listing_id FROM printify_edits WHERE {where} AND status IN ('done', 'partial')",
@@ -147,7 +147,7 @@ def _linked(texts: list[str], owner: dict[int, int]) -> list[int]:
 
 def _posts(conn: sqlite3.Connection, scope: AgentScope) -> list[str]:
     """The requests of the blog posts online on the owner's site (their text names the product they recommend)."""
-    where, params = scope.where("b")
+    where, params = scope.world_where("b")
     return [
         str(r["payload"] or "")
         for r in conn.execute(
@@ -159,7 +159,7 @@ def _posts(conn: sqlite3.Connection, scope: AgentScope) -> list[str]:
 
 
 def _pins(conn: sqlite3.Connection, scope: AgentScope) -> list[str]:
-    where, params = scope.where()
+    where, params = scope.world_where()
     return [
         str(r["link"])
         for r in conn.execute(f"SELECT link FROM pinterest_pins WHERE {where} AND status = 'active'", params)
@@ -169,7 +169,7 @@ def _pins(conn: sqlite3.Connection, scope: AgentScope) -> list[str]:
 def _bluesky(conn: sqlite3.Connection, scope: AgentScope) -> list[str]:
     """0.19.0: the links of Ember's Bluesky posts live now, a post's in one text (0.25.1: with its second link, so a
     post counts once for each product line it links)."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     return [
         f"{r['link']} {r['second_link'] or ''}"
         for r in conn.execute(

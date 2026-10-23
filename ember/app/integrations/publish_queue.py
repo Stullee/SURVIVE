@@ -219,7 +219,7 @@ def queued(conn: sqlite3.Connection, scope: AgentScope, channel: str) -> list[It
 def made(conn: sqlite3.Connection, scope: AgentScope, channel: str, since: datetime) -> list[Made]:
     """What Ember's code made on a channel since ``since``, as the daily limits count it (a pin no request reached
     Pinterest for, and a post never sent, count for nothing)."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     if channel == "pinterest":
         rows = conn.execute(
             f"SELECT started_at, link, NULL AS second_link FROM pinterest_pins WHERE {where} AND started_at >= ?"

@@ -678,6 +678,22 @@ It reads the last 30 days' emails it still finds under their number on the
 server, a few per check. A stored email stays as it was; its new text is kept
 beside it, the agent sees that one, and a "stop" in it counts.
 
+0.46.0 lays the groundwork for a generation change
+([vision/generations.md](vision/generations.md)): a later Ember that starts
+with a clean mind in the same world. Ember's records are kept in two parts now,
+her mind's (projects, ventures, plan, requests, messages, cases, playbook) and
+the world's (the shop and its listings, Printify, Pinterest, Bluesky, the
+website and blog, the mailbox and its opt-outs, your rulebook and library),
+each with its own session number. A plain new session for her mind would have
+cut her off from the real world: the Etsy sync would have read no orders, the
+opt-outs been forgotten, a listing fee noted before dropped unbooked, and KDP's
+weekly limit counted from zero. Every query of the world's tables now reads the
+world's session (a test reads the code to keep it so), and NEVER's first
+contact and first publication and an unlock's scope read the world a request
+works in (migration 0102). Until a generation change both numbers are the same,
+so nothing Ember sees or does changes. Nothing begins a generation yet: that is
+the next step, with the estate of products and the inheritance.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

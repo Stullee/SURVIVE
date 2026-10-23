@@ -147,7 +147,7 @@ def _started_by_them(conn: sqlite3.Connection, scope: AgentScope, action: Mappin
     chain = str(action.get("references") or action.get("in_reply_to") or "").split()
     if not to or not chain:
         return False
-    where, params = scope.where()
+    where, params = scope.world_where()
     root = conn.execute(
         f"SELECT {mailstore.person()} AS person, from_addr FROM emails WHERE {where} AND message_id = ?"
         " ORDER BY id LIMIT 1",
@@ -179,7 +179,7 @@ def approved_price(conn: sqlite3.Connection, scope: AgentScope, listing_id: int)
     """0.15.0: the price a listing of Ember's had when the owner last approved one: after the newest price change they
     approved (their Undo included), else as it was listed. The price band is measured from it, so the changes an unlock
     carries can't add up past PRICE_BAND (three cuts of 14% took EUR 4.50 to 2.86 in a day)."""
-    where, params = scope.where("e")
+    where, params = scope.world_where("e")
     changed = conn.execute(
         f"SELECT e.listing FROM etsy_edits e JOIN approvals a ON a.id = e.approval_id WHERE {where}"
         " AND e.listing_id = ? AND e.status IN ('done', 'partial') AND e.listing IS NOT NULL"
@@ -652,7 +652,8 @@ def _revocation(conn: sqlite3.Connection, g: sqlite3.Row, clock: Clock) -> str:
     if g["rule"] == "email_reply":  # 0.13.0 (Phase E1): the channel's kill rule
         stopped = conn.execute(
             "SELECT u.approval_id FROM policy_uses u JOIN approvals a ON a.id = u.approval_id"
-            " JOIN email_suppressions s ON s.mode = a.mode AND s.session = a.session"
+            # 0.46.0: an opt-out is the world's, at or below the session of any mind working in it
+            " JOIN email_suppressions s ON s.mode = a.mode AND s.session <= a.session"
             " AND s.address = lower(json_extract(a.action, '$.to')) WHERE u.grant_id = ? AND u.approved_at IS NOT NULL"
             " AND s.since >= u.approved_at ORDER BY u.id LIMIT 1",
             (g["id"],),

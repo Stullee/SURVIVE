@@ -189,7 +189,7 @@ def _answered(conn: sqlite3.Connection, scope: Scope, mail: IncomingMail) -> lis
     ids = sorted({mail.in_reply_to or "", *(mail.references or "").split()} - {""})
     if not ids:
         return []
-    where, params = scope.where()
+    where, params = scope.world_where()
     marks = ", ".join("?" for _ in ids)
     found = conn.execute(
         f"SELECT DISTINCT lower(to_addr) FROM emails WHERE {where} AND direction = 'out' AND message_id IN ({marks})",
@@ -207,7 +207,7 @@ def reread(db: Database, clock: Clock, scope: Scope, mailbox: Mailbox, deadline:
     read (their UIDs are other emails). Never raises: a read that fails is tried again with the next check."""
     validity = _int(db.get_meta(meta_key(scope.mode, "uidvalidity")))
     since = to_iso(clock.now() - timedelta(days=REREAD_DAYS))
-    where, params = scope.where("e")
+    where, params = scope.world_where("e")
     with db.connection() as conn:
         due = conn.execute(
             f"SELECT e.id, e.uid, e.message_id, e.body, e.body_cut, e.attachments FROM emails e WHERE {where}"
@@ -350,7 +350,7 @@ def store_incoming(
     """Store one fetched email once; returns its id, or None if it is already stored. 0.15.0: a machine's mail and
     mail from Ember's own address (``own``) are stored as no person's (bulk), like a list's: Ember can't answer its
     own address, and nothing could close it."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     if (
         mail.message_id
         and conn.execute(
@@ -365,7 +365,7 @@ def store_incoming(
         " bulk, authenticated, text_version) VALUES (?, ?, ?, 'in', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             scope.mode,
-            scope.session,
+            scope.world_session,
             scope.life_id or None,
             uidvalidity,
             mail.uid,
@@ -410,7 +410,7 @@ def store_outgoing(
         " VALUES (?, ?, ?, 'out', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             scope.mode,
-            scope.session,
+            scope.world_session,
             scope.life_id or None,
             message_id,
             in_reply_to,
@@ -438,14 +438,14 @@ def suppress(
     cursor = conn.execute(
         "INSERT OR IGNORE INTO email_suppressions (mode, session, address, since, reason, email_id)"
         " VALUES (?, ?, ?, ?, ?, ?)",
-        (scope.mode, scope.session, address.lower(), since, reason[:300] or "asked to stop", email_id),
+        (scope.mode, scope.world_session, address.lower(), since, reason[:300] or "asked to stop", email_id),
     )
     return cursor.rowcount == 1
 
 
 def suppressions(conn: sqlite3.Connection, scope: Scope, limit: int = 20) -> tuple[int, list[dict[str, str]]]:
     """How many addresses Ember never emails, and the newest ``limit`` of them (0.12.0: for the owner)."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     count = conn.execute(f"SELECT COUNT(*) FROM email_suppressions WHERE {where}", params).fetchone()[0]
     rows = conn.execute(
         f"SELECT address, since, reason FROM email_suppressions WHERE {where} ORDER BY since DESC, address LIMIT ?",
@@ -455,7 +455,7 @@ def suppressions(conn: sqlite3.Connection, scope: Scope, limit: int = 20) -> tup
 
 
 def is_suppressed(conn: sqlite3.Connection, scope: Scope, address: str) -> bool:
-    where, params = scope.where()
+    where, params = scope.world_where()
     row = conn.execute(
         f"SELECT 1 FROM email_suppressions WHERE {where} AND address = ?", (*params, address.lower())
     ).fetchone()
@@ -473,7 +473,7 @@ def person(alias: str = "") -> str:
 
 def has_written(conn: sqlite3.Connection, scope: Scope, address: str) -> bool:
     """Whether a person ever wrote to Ember from ``address`` (if not, an email to it is a first contact)."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     row = conn.execute(
         f"SELECT 1 FROM emails WHERE {where} AND {person()} AND lower(from_addr) = ? LIMIT 1",
         (*params, address.lower()),
@@ -486,9 +486,10 @@ def has_written(conn: sqlite3.Connection, scope: Scope, address: str) -> bool:
 INQUIRIES_SHOWN = 6
 
 
-# An email request that answers someone: made after their email arrived, and not turned down or dropped.
+# An email request that answers someone: made after their email arrived, and not turned down or dropped. 0.46.0: an
+# email is the world's and a request a mind's, so a request of any mind of the email's world (AgentScope.minds_where).
 _ANSWERED = (
-    "EXISTS (SELECT 1 FROM approvals a WHERE a.mode = e.mode AND a.session = e.session AND a.executor = 'email'"
+    "EXISTS (SELECT 1 FROM approvals a WHERE a.mode = e.mode AND a.session >= e.session AND a.executor = 'email'"
     " AND lower(json_extract(a.action, '$.to')) = lower(e.from_addr) AND a.created_at >= e.received_at"
     " AND a.status NOT IN ('rejected', 'withdrawn', 'expired', 'failed'))"
 )
@@ -497,7 +498,7 @@ _ANSWERED = (
 def inquiries(conn: sqlite3.Connection, scope: Scope) -> list[sqlite3.Row]:
     """The emails of people that wait for an answer, the oldest first: a person's (``person``: 0.15.0, verified, and
     no list's, machine's or Ember's own), from someone who didn't ask to stop, neither answered nor closed."""
-    where, params = scope.where("e")
+    where, params = scope.world_where("e")
     return conn.execute(
         f"SELECT e.* FROM emails e WHERE {where} AND {person('e')}"
         " AND NOT EXISTS (SELECT 1 FROM email_suppressions s WHERE s.mode = e.mode AND s.session = e.session"
@@ -522,7 +523,7 @@ def close_inquiry(conn: sqlite3.Connection, email_id: int, reason: str, by: str,
 def counts(conn: sqlite3.Connection, scope: Scope, since: str) -> tuple[int, int]:
     """People's emails (``person``) received since then, and how many of them an email Ember sent answered (the
     metrics inquiries_received and inquiries_answered)."""
-    where, params = scope.where("e")
+    where, params = scope.world_where("e")
     row = conn.execute(
         f"SELECT COUNT(*), COALESCE(SUM(EXISTS (SELECT 1 FROM emails o WHERE o.mode = e.mode AND o.session ="
         " e.session AND o.direction = 'out' AND lower(o.to_addr) = lower(e.from_addr) AND COALESCE(o.sent_at,"
@@ -547,7 +548,7 @@ _UNREAD = f"(read_by_agent_at IS NULL OR {_AGAIN})"
 def unread(conn: sqlite3.Connection, scope: Scope, limit: int = 3) -> tuple[int, list[sqlite3.Row]]:
     """How many incoming emails the agent hasn't read, and the newest of them (``again``: 0.45.4, one it read before
     whose text read again from the server it hasn't)."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     condition = f"{where} AND direction = 'in' AND {_UNREAD}"
     count = conn.execute(f"SELECT COUNT(*) FROM emails WHERE {condition}", params).fetchone()[0]
     rows = conn.execute(
@@ -560,7 +561,7 @@ def unread(conn: sqlite3.Connection, scope: Scope, limit: int = 3) -> tuple[int,
 
 def inbox(conn: sqlite3.Connection, scope: Scope, unread_only: bool = False, limit: int = 15) -> list[sqlite3.Row]:
     """The newest incoming emails, each with whether the agent hasn't read it (``unread``)."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     only = f" AND {_UNREAD}" if unread_only else ""
     return conn.execute(
         f"SELECT *, {_UNREAD} AS unread FROM emails WHERE {where} AND direction = 'in'{only} ORDER BY id DESC LIMIT ?",
@@ -570,7 +571,7 @@ def inbox(conn: sqlite3.Connection, scope: Scope, unread_only: bool = False, lim
 
 def email(conn: sqlite3.Connection, scope: Scope, email_id: int) -> sqlite3.Row | None:
     """A stored email, with whether the agent hasn't read it (``unread``)."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     return conn.execute(
         f"SELECT *, {_UNREAD} AS unread FROM emails WHERE id = ? AND {where}", (email_id, *params)
     ).fetchone()
@@ -607,7 +608,7 @@ def unread_reply(
     References) a message of ``thread`` (the approved email's own headers) or an email Ember sent to ``to`` (not one
     from Ember's ``own`` address). None: there is none, and the approved email may go out. Until then only the
     opt-out check read such a reply, and a "stop" in words it missed went unseen."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     sent = conn.execute(
         f"SELECT message_id FROM emails WHERE {where} AND direction = 'out' AND lower(to_addr) = ?"
         " AND message_id IS NOT NULL",

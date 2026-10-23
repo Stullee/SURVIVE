@@ -831,8 +831,9 @@ def weekly(conn: sqlite3.Connection, scope: AgentScope, now: datetime) -> dict[s
     """The books of each format proposed in KDP's week holding ``now`` (``week_start``) that KDP may still count (not
     rejected, withdrawn, expired or failed): what WEEKLY_TITLES holds. 0.42.0 (analysis-0.40.1 codebase, 6.2.1): one
     count, which propose_kdp_book refuses by and the plan waits on (agent/preconditions.py) and the KDP section shows
-    (``text``); each counted them on its own."""
-    where, params = scope.where()
+    (``text``); each counted them on its own. 0.46.0: the books of every generation of hers (AgentScope.minds_where):
+    KDP's limit is the account's, which a generation change doesn't reset."""
+    where, params = scope.minds_where()
     rows = conn.execute(
         f"SELECT action FROM approvals WHERE {where} AND executor = ? AND created_at >= ?"
         " AND status NOT IN ('rejected', 'withdrawn', 'expired', 'failed')",

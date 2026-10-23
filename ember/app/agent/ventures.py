@@ -1013,8 +1013,9 @@ def seed(conn: sqlite3.Connection, scope: AgentScope, now: str) -> int:
     empty again) and put the projects that made Etsy listings under the Etsy leg. Returns how many were planted."""
     if scope.life_id <= 0 or count(conn, scope):
         return 0
+    world, shop = scope.world_where()  # 0.46.0: the shop is the world's (a later generation's leg stands on it too)
+    listed = conn.execute(f"SELECT 1 FROM etsy_listings WHERE {world} AND status = 'active' LIMIT 1", shop).fetchone()
     where, params = scope.where()
-    listed = conn.execute(f"SELECT 1 FROM etsy_listings WHERE {where} AND status = 'active' LIMIT 1", params).fetchone()
     ids: dict[str, int] = {}
     for key, parent, title, pitch, stage, by, note in SEEDS:
         if key == "etsy" and listed is None:
@@ -1071,9 +1072,11 @@ def _channel_row(conn: sqlite3.Connection, scope: AgentScope, channel: str) -> s
 CHANNEL_TABLES = (("etsy", "etsy_listings"), ("printify", "printify_products"))  # where a channel's listings are kept
 # 0.39.8 (analysis-0.39.6, 3.3): the line a listing ``alias`` (a row of etsy_listings or printify_products, joined with
 # its request ``a`` and that request's cycle ``y``) belongs to: the line it was moved to (listing_lines' newest row for
-# it, project_update's listing_id), else its request's project or its cycle's.
+# it, project_update's listing_id), else its request's project or its cycle's. 0.46.0: a listing is the world's and a
+# line a mind's, so the newest move by any mind of the listing's world (AgentScope.minds_where): a later generation's
+# line for a listing it took over wins.
 _MOVED = (
-    "(SELECT m.project_id FROM listing_lines m WHERE m.mode = {alias}.mode AND m.session = {alias}.session"
+    "(SELECT m.project_id FROM listing_lines m WHERE m.mode = {alias}.mode AND m.session >= {alias}.session"
     " AND m.listing_id = {alias}.listing_id ORDER BY m.id DESC LIMIT 1)"
 )
 
@@ -1135,7 +1138,7 @@ def listing_line(conn: sqlite3.Connection, scope: AgentScope, listing_id: int) -
     """0.28.0: the channel and the product line (its project) of one of Ember's listings, as metrics.listings counts
     them: by its request's project or its cycle's (0.39.8: or the line it was moved to). None when it isn't Ember's;
     the line is None for a listing of no project."""
-    where, params = scope.where("l")
+    where, params = scope.world_where("l")
     for name, table in CHANNEL_TABLES:
         row = conn.execute(
             f"SELECT {line_sql()} AS project_id FROM {table} l JOIN approvals a"

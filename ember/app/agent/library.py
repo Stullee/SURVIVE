@@ -260,13 +260,13 @@ def _pieces(paragraph: str) -> list[str]:
 
 
 def get(conn: sqlite3.Connection, scope: AgentScope, document_id: int) -> sqlite3.Row | None:
-    where, params = scope.where()
+    where, params = scope.world_where()
     return conn.execute(f"SELECT * FROM library_documents WHERE id = ? AND {where}", (document_id, *params)).fetchone()
 
 
 def documents(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
     """The library's documents (not the removed ones), the newest first."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     return conn.execute(
         f"SELECT * FROM library_documents WHERE {where} AND removed_at IS NULL ORDER BY id DESC", params
     ).fetchall()
@@ -274,7 +274,7 @@ def documents(conn: sqlite3.Connection, scope: AgentScope) -> list[sqlite3.Row]:
 
 def totals(conn: sqlite3.Connection, scope: AgentScope) -> tuple[int, int]:
     """(documents, characters) in the library."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     row = conn.execute(
         f"SELECT COUNT(*), COALESCE(SUM(chars), 0) FROM library_documents WHERE {where} AND removed_at IS NULL", params
     ).fetchone()
@@ -313,7 +313,7 @@ def add(
             409,
         )
     digest = store.sha256(text)
-    where, params = scope.where()
+    where, params = scope.world_where()
     same = conn.execute(
         f"SELECT id, title FROM library_documents WHERE {where} AND sha256 = ? AND removed_at IS NULL",
         (*params, digest),
@@ -326,7 +326,7 @@ def add(
         " parts, sha256, added_at, added_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             scope.mode,
-            scope.session,
+            scope.world_session,
             title,
             source,
             note,
@@ -383,14 +383,14 @@ def learnings_of(conn: sqlite3.Connection, document_id: int) -> list[sqlite3.Row
 
 
 def learning_counts(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, int]:
-    where, params = scope.where()
+    where, params = scope.world_where()
     rows = conn.execute(f"SELECT document_id, COUNT(*) FROM learnings WHERE {where} GROUP BY document_id", params)
     return {int(r[0]): int(r[1]) for r in rows}
 
 
 def _learnings(conn: sqlite3.Connection, scope: AgentScope, extra: str = "", params: tuple[Any, ...] = ()) -> list[Any]:
     """The learnings of the documents still in the library, with their document's title and links."""
-    where, scoped = scope.where("l")
+    where, scoped = scope.world_where("l")
     return conn.execute(
         "SELECT l.*, d.title AS document_title, d.venture_id, d.project_id FROM learnings l"
         f" JOIN library_documents d ON d.id = l.document_id WHERE {where} AND d.removed_at IS NULL{extra}"
@@ -412,7 +412,7 @@ class Study:
 
 def next_to_study(conn: sqlite3.Connection, scope: AgentScope) -> sqlite3.Row | None:
     """The oldest document still waiting for its study."""
-    where, params = scope.where()
+    where, params = scope.world_where()
     return conn.execute(
         f"SELECT * FROM library_documents WHERE {where} AND removed_at IS NULL AND study = 'waiting' ORDER BY id"
         " LIMIT 1",
@@ -438,12 +438,13 @@ def next_parts(conn: sqlite3.Connection, document: Mapping[str, Any]) -> list[sq
 
 
 def study_spent(conn: sqlite3.Connection, scope: AgentScope, day: date) -> int:
-    """What the study calls of ``day`` (the owner's local day) cost, the pending ones at their estimate."""
+    """What the study calls of ``day`` (the owner's local day) cost, the pending ones at their estimate. 0.46.0: of
+    every generation of hers (AgentScope.minds_where): the library and its daily budget are the owner's."""
     row = conn.execute(
         "SELECT COALESCE(SUM(CASE WHEN c.status = 'pending' THEN c.estimate_micros ELSE c.cost_micros END), 0)"
         " FROM llm_calls c JOIN cycles y ON y.id = c.cycle_id"
-        " WHERE c.purpose = 'study' AND c.local_day = ? AND y.simulated = ? AND y.session = ?",
-        (day.isoformat(), 1 if scope.simulated else 0, scope.session),
+        " WHERE c.purpose = 'study' AND c.local_day = ? AND y.simulated = ? AND y.session >= ?",
+        (day.isoformat(), 1 if scope.simulated else 0, scope.world_session),
     ).fetchone()
     return int(row[0])
 
@@ -533,7 +534,7 @@ def save_study(
         conn.execute(
             "INSERT INTO learnings (mode, session, document_id, part, topic, text, cycle_id, llm_call_id, created_at)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (scope.mode, scope.session, document["id"], part, topic, said, cycle_id, llm_call_id, now),
+            (scope.mode, scope.world_session, document["id"], part, topic, said, cycle_id, llm_call_id, now),
         )
         added += 1
     done = last_part >= int(document["parts"])
@@ -657,7 +658,7 @@ class Passage:
 
 
 def search_parts(conn: sqlite3.Connection, scope: AgentScope, words: list[str], limit: int = 3) -> list[Passage]:
-    where, params = scope.where("d")
+    where, params = scope.world_where("d")
     rows = conn.execute(
         "SELECT p.document_id, p.part, p.text, d.title, d.parts FROM library_parts p"
         f" JOIN library_documents d ON d.id = p.document_id WHERE {where} AND d.removed_at IS NULL",
@@ -741,7 +742,7 @@ def shelf(conn: sqlite3.Connection, scope: AgentScope) -> Shelf | None:
     rows = documents(conn, scope)
     if not rows:
         return None
-    where, params = scope.where("l")
+    where, params = scope.world_where("l")
     learned = conn.execute(
         "SELECT COUNT(*) FROM learnings l JOIN library_documents d ON d.id = l.document_id"
         f" WHERE {where} AND d.removed_at IS NULL",

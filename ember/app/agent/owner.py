@@ -470,7 +470,7 @@ class Owner:
             conn.execute(
                 "INSERT INTO rules (mode, session, place, created_at, entered_by, text, replaces)"
                 " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (self.scope.mode, self.scope.session, place, self._now(), who, text, replaces),
+                (self.scope.mode, self.scope.world_session, place, self._now(), who, text, replaces),
             ).lastrowid
         )
 
