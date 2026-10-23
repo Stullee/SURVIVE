@@ -127,6 +127,7 @@ from .tools_limits import KDP_NOTE as KDP_NOTE
 from .tools_limits import KDP_TOOLS as KDP_TOOLS
 from .tools_limits import LIBRARY_TOOLS as LIBRARY_TOOLS
 from .tools_limits import LOOK_PIXELS as LOOK_PIXELS
+from .tools_limits import MAIL_READS as MAIL_READS
 from .tools_limits import MAIL_TOOLS as MAIL_TOOLS
 from .tools_limits import MAKERS as MAKERS
 from .tools_limits import MARKETING_TOOLS as MARKETING_TOOLS
@@ -281,9 +282,13 @@ def _run(
                 "KDP, email and Reddit belong to ordinary and marketing cycles"
             )
         if spec is not None and ctx.marketing and name in BUILDING_TOOLS:  # 0.28.0
+            # 0.45.1: reading an email is a marketing cycle's too (MAIL_READS)
+            reads = (
+                "; email_read opens an email by its number (MAIL lists the unread ones)" if name in MAIL_TOOLS else ""
+            )
             raise ToolError(
                 f"{name} is not one of your tools in a marketing cycle: making documents and spreadsheets, the "
-                "workshop, new listings and products, KDP and email belong to ordinary cycles"
+                f"workshop, new listings and products, KDP and answering email belong to ordinary cycles{reads}"
             )
         if spec is not None and ctx.marketing_apart and not ctx.marketing and name in MARKETING_TOOLS:  # 0.28.0
             raise ToolError(

@@ -159,8 +159,8 @@ for finding and deciding new ways to earn beyond what you do now, so that severa
 venture by the evidence: what would have to be true for it to pay, what does the research say, and what is the
 smallest honest test? A no backed by data, with the numbers and the closest test, is a result: park the venture with
 them.
-- Answer your owner's waiting messages first (OBLIGATIONS); what they ask that needs files or the shop is your next
-  ordinary cycle's: say so.
+- Answer your owner's waiting messages first (OBLIGATIONS); what they ask that needs files, the shop or your mail
+  (email_read) is your next ordinary cycle's: say so.
 - Work on ventures only: a venture cycle has no tools for making files, the shop, email or Reddit (products and
   listings belong to ordinary cycles).
 - YOUR STEP is the decision Ember's code took (your owner's word, deadlines, then what its case expects, the

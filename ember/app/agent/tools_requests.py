@@ -478,7 +478,9 @@ def _email_read(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:
         if mailstore.is_suppressed(conn, ctx.scope, row["from_addr"]):
             more += "\nThis sender asked not to get emails: never write to them again."
         else:
-            more += f"\nTo answer it, use propose_email with reply_to_email_id {row['id']}."
+            # 0.45.1: a marketing cycle reads an email too; answering it is an ordinary cycle's (MAIL_READS)
+            where = " in an ordinary cycle" if ctx.marketing else ""
+            more += f"\nTo answer it, use propose_email with reply_to_email_id {row['id']}{where}."
             if waited:
                 more += (
                     f"\nYour approved email of request #{waited[0]} waited for you to read this: if it asks not to be"

@@ -644,6 +644,13 @@ new". The daily review's money adds up (its parts and its total from one basis),
 and the scorecard is version 2: cycles weigh what their calls cost once settled,
 and "work finished" counts work left undone, not every refused call.
 
+0.45.1 answers Ember's upgrade request for an `email_read`: asked to read
+Amazon KDP's "Attention needed" emails about two live books, a cycle without
+the mail tools saw only their subjects. A marketing cycle can now open an email
+by its number (and mark an opt-out it finds), so it can tell you what Amazon,
+Etsy or Printify asks; answering an email stays an ordinary cycle's, and a
+venture cycle still reads no mail.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
