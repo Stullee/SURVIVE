@@ -92,6 +92,13 @@ SITE_TOOLS = frozenset({"site_page"})
 BLOG_TOOLS = frozenset({"propose_blog_post", "propose_link_page"})
 # Offered only when Ember has a mailbox (the fake one in dry run, the configured one live).
 MAIL_TOOLS = frozenset({"email_inbox", "email_read", "mark_opt_out", "propose_email", "inquiry_done"})
+# 0.45.1 (upgrade request: an email_read for KDP's notices): reading an email is a marketing cycle's too, as 0.37.7 made
+# reading a channel's numbers (CHANNEL_READS). Live, a cycle the owner asked to read KDP's "Attention needed" emails #64
+# and #65 about live books #140 and #141 saw their subjects in MAIL and had no email_read: it could only tell the owner
+# they existed. mark_opt_out comes with it: a read email lets an approved one to its sender go out (MAIL's "waits until
+# you read email #N"). Answering (propose_email, inquiry_done) and the inbox's list of read emails too stay an ordinary
+# cycle's (MAIL and the owner name an email's number), and a venture cycle decides a venture: it has none of them.
+MAIL_READS = frozenset({"email_read", "mark_opt_out"})
 # Offered only in venture cycles (0.10.0; evidence 0.12.0: a venture's case, which grades pages any research found;
 # venture_case 0.13.0: its numbers).
 VENTURE_TOOLS = frozenset({"brainstorm", "evidence", "venture_case"})
@@ -133,13 +140,17 @@ CHANNEL_READS = frozenset({"bluesky_posts"})
 # burn mode, nothing live to market). A Reddit post stays an ordinary cycle's too (a first test of demand, often).
 MARKETING_TOOLS = (PINTEREST_TOOLS | BLUESKY_TOOLS | BLOG_TOOLS) - CHANNEL_READS
 # 0.28.0: what a marketing cycle doesn't carry: making documents, spreadsheets and statements, the workshop, new
-# listings and products, KDP, email and the owner's site pages (an ordinary cycle's work). 0.39.0: a change of a
-# Printify product is a marketing cycle's too, as a change of a listing is.
+# listings and products, KDP, answering email and the owner's site pages (an ordinary cycle's work). 0.39.0: a change
+# of a Printify product is a marketing cycle's too, as a change of a listing is. 0.45.1: demand_note, which serves a
+# line's first listing (a demand step takes an ordinary cycle), makes room for reading an email (MAIL_READS): a
+# marketing cycle's fixed prompt stays under 80% of an ordinary one's.
 BUILDING_TOOLS = (
-    frozenset({"make_document", "make_spreadsheet", "make_cost_statement", "workshop", "propose_etsy_listing"})
+    frozenset(
+        {"make_document", "make_spreadsheet", "make_cost_statement", "workshop", "propose_etsy_listing", "demand_note"}
+    )
     | (PRINTIFY_TOOLS - {"propose_printify_edit"})
     | KDP_TOOLS
-    | MAIL_TOOLS
+    | (MAIL_TOOLS - MAIL_READS)
     | SITE_TOOLS
 )
 # Model calls of their own (and, 0.12.0, the Etsy market probe of a demand note): they need the network, and no

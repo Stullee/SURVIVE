@@ -1180,7 +1180,11 @@ Reddit draft you post, better titles, tags and photos (a change you approve).
 Ember's code keeps every link on that product's listings. The agent bets on
 what the reach will bring, so the next marketing cycle learns from it. A
 marketing cycle makes no documents, spreadsheets, new listings, products or
-books and sends no email.
+books and sends no email. It can read one, though (since 0.45.1): `email_read`
+opens an email by its number, so asked by you about an Amazon KDP, Etsy or
+Printify notice it can say what the notice asks; answering stays an ordinary
+cycle's. Demand notes, which a line's first listing needs, are an ordinary
+cycle's too.
 
 An ordinary cycle doesn't carry the marketing tools, and its plan doesn't show
 Pinterest, Bluesky or the blog, with three exceptions: a channel that waits for
@@ -3160,7 +3164,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.45.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.45.1 (by /u/your name)`.
 
 ## Amazon KDP
 
