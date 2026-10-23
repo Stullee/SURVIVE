@@ -727,7 +727,7 @@ def _book(ctx: ToolContext, spec: dict[str, Any], cover_path: str) -> tuple[kdp.
         wrong = kdp.check_cover(cover_sizes[0], interior.pages, trim, paper)
         if wrong:
             raise ToolError("; ".join(wrong))
-        notes += _front(spec, cover.path, cover_data, trim, interior.pages, paper)
+        notes += _safe_zone(spec, cover.path, cover_data, trim, interior.pages, paper)
         price = kdp.check_price(spec["price"], form, pages=interior.pages, paper=paper, trim=trim)
         if interior.bleed:
             keep = kdp.inches(kdp.OUTSIDE_MARGIN_BLEED)
@@ -749,35 +749,45 @@ def _book(ctx: ToolContext, spec: dict[str, Any], cover_path: str) -> tuple[kdp.
         raise ToolError(str(exc)) from None
 
 
-def _front(spec: dict[str, Any], path: str, data: bytes, trim: str, pages: int, paper: str) -> list[str]:
+def _safe_zone(spec: dict[str, Any], path: str, data: bytes, trim: str, pages: int, paper: str) -> list[str]:
     """0.45.0 (evaluation 2026-10-22, C6): a paperback cover's front keeps its words kdp.SAFE_ZONE inside the trim, or
     the book is refused with what to change; a front whose art reaches its edges is a note (Ember's code can't tell its
     words from its picture). Live, the Haushaltsbuch's title printed 0.048 in inside the trim (a pin's 2:3 front
-    picture on an 8.5x11 front, 13% of it cut off) and the tool said KDP would take it."""
-    fold = float(kdp.BLEED + kdp.trim_size(trim)[0] + kdp.spine_width(pages, paper))
+    picture on an 8.5x11 front, 13% of it cut off) and the tool said KDP would take it. 0.45.3: its back too (in a
+    cover file of the agent's own: Ember's code keeps a back's words make.BACK_MARGIN from its trim and fold), both
+    also from the spine's fold, at a kdp.SAFE_ZONE of 0.25 in: KDP's reviewers asked for 0.375 in from the edges of two
+    live covers 0.125 in had passed."""
+    back_fold = kdp.BLEED + kdp.trim_size(trim)[0]
+    folds = (float(back_fold), float(back_fold + kdp.spine_width(pages, paper)))
     try:
-        plain, box = images.front_ink(data, fold, kdp.FRONT_DPI, kdp.FRONT_CONTRAST)
+        inks = images.cover_ink(data, folds, kdp.FRONT_DPI, kdp.FRONT_CONTRAST)
     except images.ImageError as exc:
         raise ToolError(f"{path}: {exc}") from None
-    if not plain:
-        return [
-            f"the front's picture reaches its edges, so Ember's code can't tell its words from it: look at the cover's "
-            f"preview, its words keep {kdp.inches(kdp.SAFE_ZONE)} inside the trim"
-        ]
-    close = kdp.check_front(box, trim, pages, paper)
-    if not close:
-        return []
+    room, edge = kdp.inches(kdp.SAFE_ZONE), kdp.inches(kdp.BLEED + kdp.SAFE_ZONE)
     cover = spec["cover"]
-    if isinstance(cover, dict):
-        shape = make.front_shape(trim)
-        fix = (
-            f"make {cover['front']} again in make_image's shape {shape} (the nearest to a front at {trim}: the least "
-            "of it is cut off) with its words 0.25 in from its edges, then propose the book again"
-        )
-    else:
-        room, edge = kdp.inches(kdp.SAFE_ZONE), kdp.inches(kdp.BLEED + kdp.SAFE_ZONE)
-        fix = f"move its words {room} inside the trim ({edge} from the cover's edges)"
-    raise ToolError(f"{path}: {close[0]}: {fix}")
+    notes, refused = [], []
+    for panel, (plain, box) in zip(kdp.PANELS, inks, strict=True):
+        if not plain:
+            notes.append(
+                f"the {panel}'s picture reaches its edges, so Ember's code can't tell its words from it: look at the "
+                f"cover's preview, its words keep {edge} from the cover's edges and {room} from the spine's fold"
+            )
+            continue
+        close = kdp.check_panel(panel, box, trim, pages, paper)
+        if not close:
+            continue
+        if panel == "front" and isinstance(cover, dict):
+            shape = make.front_shape(trim)
+            fix = (
+                f"make {cover['front']} again in make_image's shape {shape} (the nearest to a front at {trim}: the "
+                f"least of it is cut off) with its words {edge} from its edges, then propose the book again"
+            )
+        else:
+            fix = "move them that far in"
+        refused.append(f"{close[0]}: {fix}")
+    if refused:
+        raise ToolError(f"{path}: {'; '.join(refused)}")
+    return notes
 
 
 def _propose_kdp_book(ctx: ToolContext, args: dict[str, Any]) -> Outcome:

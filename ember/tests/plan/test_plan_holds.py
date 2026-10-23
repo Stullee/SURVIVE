@@ -279,13 +279,15 @@ def test_only_a_rework_is_declined_and_the_owner_has_it_made_anyway(ingress_clie
     with agent.db.transaction() as conn:
         plan.decline_step(conn, agent.scope(), book, step, WHY, None, now(agent))
     assert post(ingress_client, f"api/plan/steps/{step}/rework", headers={}).status_code == 403
+    before = now(agent)
     reworked = post(ingress_client, f"api/plan/steps/{step}/rework")
     assert reworked.status_code == 200, reworked.text
     new = reworked.json()["step"]
     assert reworked.json() == {"id": step, "line": book, "step": new, "pinned": True}
     [row] = rows(agent, f"SELECT title, status, pinned, source, check_spec FROM plan_nodes WHERE id = {new}")
     assert (row["title"], row["status"], row["pinned"], row["source"]) == (again, "open", 1, "owner")
-    assert json.loads(row["check_spec"]) == {"executor": "kdp_package", "since": now(agent)}
+    spec = json.loads(row["check_spec"])  # stamped by the request: a second may pass before now() is read again
+    assert spec["executor"] == "kdp_package" and before <= spec["since"] <= now(agent), spec
     taken = steered(agent)
     assert taken.step is not None and taken.step.id == new  # pinned: the next cycle takes it
     assert candidate(taken, again, book).step.urgency == weights.REWORK

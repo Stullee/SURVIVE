@@ -41,6 +41,9 @@ SHAPE_NAMES = tuple(SHAPES)
 MAX_PIXELS = 40_000_000  # 0.15.0: 12 MP until then
 LAYOUTS = ("photo", "text", "poster", "table")  # 0.38.0: table
 POSTER_SIDE = 6_000  # a poster's longer side: 150 dpi or more on every poster Printify prints (A1, 24 x 36 in)
+# 0.45.3: a poster's margin, a share of its shorter side (9% until then). A KDP front keeps its words 0.375 in from the
+# cover's edges; a pin cut to a 5x8 front kept them 0.18 to 0.23 in inside the trim at 9%, 0.29 in at 11%
+POSTER_MARGIN = 0.11
 PRINT_DPI = 300  # 0.17.0: what a print file made by ``fitted`` says it is meant for (Printify's print areas)
 # A region of a page or picture make_image zooms in on ('shop/cv.pdf#1@top'): left, top, right, bottom, as fractions.
 REGIONS = {
@@ -154,17 +157,18 @@ def ink_boxes(pdf: bytes, dpi: int, level: int) -> list[tuple[float, float, floa
         document.close()
 
 
-PLAIN_EDGE = 0.9  # 0.45.0: the share of a cover front's edge that is its background colour on a plain front
+PLAIN_EDGE = 0.9  # 0.45.0: the share of a cover panel's edge that is its background colour on a plain panel
+Ink = tuple[bool, tuple[float, float, float, float] | None]
 
 
-def front_ink(
-    pdf: bytes, fold: float, dpi: int, contrast: int
-) -> tuple[bool, tuple[float, float, float, float] | None]:
-    """0.45.0 (evaluation 2026-10-22, C6): whether a paperback cover's front (right of ``fold``, in inches) has edges
-    of one colour, and what it prints on that background, in inches from the cover's top left corner (left, top,
-    right, bottom; None: nothing): where a channel differs by more than ``contrast`` from the edge's colour, the
-    cover's first page drawn at ``dpi``. A front whose art reaches its edges is (False, None): Ember's code can't tell
-    its words from its picture."""
+def cover_ink(pdf: bytes, folds: tuple[float, float], dpi: int, contrast: int) -> tuple[Ink, Ink]:
+    """0.45.0 (evaluation 2026-10-22, C6): whether a paperback cover's back (left of the spine, whose ``folds`` are in
+    inches) and its front (right of it) each have edges of one colour, and what each prints on that background, in
+    inches from the cover's top left corner (left, top, right, bottom; None: nothing): where a channel differs by more
+    than ``contrast`` from the edge's colour, the cover's first page drawn at ``dpi``. A panel whose art reaches its
+    edges is (False, None): Ember's code can't tell its words from its picture. 0.45.3: the back too, and each panel
+    from a pixel past its fold: the pixels at a fold are partly the spine's, and a spine in another colour than the
+    front (cover.background) read as words down the front's whole height."""
     document = _opened(pdf)
     try:
         page = document[0]
@@ -177,10 +181,19 @@ def front_ink(
     finally:
         document.close()
     per_inch = scale * 72
-    left = min(picture.width - 1, max(0, round(fold * per_inch)))
-    front = picture.crop((left, 0, picture.width, picture.height))
-    w, h = front.size
-    ring = [front.crop(box) for box in ((0, 0, w, 2), (0, h - 2, w, h), (w - 2, 0, w, h))]  # top, bottom, outside
+    right = min(picture.width - 1, max(1, math.floor(folds[0] * per_inch) - 1))
+    left = min(picture.width - 1, max(right, math.ceil(folds[1] * per_inch) + 1))
+    back = _panel_ink(picture.crop((0, 0, right, picture.height)), 0, per_inch, contrast, outside_left=True)
+    front = _panel_ink(picture.crop((left, 0, picture.width, picture.height)), left, per_inch, contrast)
+    return back, front
+
+
+def _panel_ink(panel: Image.Image, left: int, per_inch: float, contrast: int, outside_left: bool = False) -> Ink:
+    """A cover panel's background (the median colour of its top, bottom and outside edge) and what it prints on it;
+    ``left`` is where it begins on the cover, in pixels."""
+    w, h = panel.size
+    outside = (0, 0, 2, h) if outside_left else (w - 2, 0, w, h)
+    ring = [panel.crop(box) for box in ((0, 0, w, 2), (0, h - 2, w, h), outside)]
     counts = [sum(values) for values in zip(*(part.histogram() for part in ring), strict=True)]
     total = sum(part.width * part.height for part in ring)
 
@@ -200,7 +213,7 @@ def front_ink(
 
     if sum(off(part).histogram()[255] for part in ring) > (1 - PLAIN_EDGE) * total:
         return False, None
-    box = off(front).getbbox()
+    box = off(panel).getbbox()
     if box is None:
         return True, None
     return True, ((box[0] + left) / per_inch, box[1] / per_inch, (box[2] + left) / per_inch, box[3] / per_inch)
@@ -835,7 +848,7 @@ def poster(
     accent_rgb, bg, ink = _colours(background, accent)
     canvas = Image.new("RGB", (width, height), bg)
     draw = ImageDraw.Draw(canvas)
-    margin = int(min(width, height) * 0.09)
+    margin = int(min(width, height) * POSTER_MARGIN)
     box_w = width - 2 * margin
     font = _font(lines_family, "", max(24, int(height * 0.028)))
     shown = [part for line in lines for part in _wrap(draw, line, font, box_w)][:12]

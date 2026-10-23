@@ -3166,7 +3166,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.45.2 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.45.3 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3219,14 +3219,26 @@ own account. Ember never logs in to Amazon or reads its pages.
   higher), fewer than 24 pages or more than KDP prints at that size and paper,
   anything printed in KDP's margins without bleed (0.25 in at the top, bottom
   and outside edge; 0.375 in to 0.875 in at the inside edge, by page count), a
-  cover that isn't this interior's full wrap, a paperback cover whose front
-  prints words within 0.125 in of the trim (0.45.0: on the Haushaltsbuch the
-  title printed 0.048 in inside it, from a front picture in shape pin, 2:3,
-  whose centre was cut to the 8.5x11 front: 13% of it; the refusal names the
-  shape nearest the front, portrait there; a front whose art reaches its edges
-  is a note, as Ember's code can't tell its words from its picture), an ebook
-  cover out of KDP's proportions, or a price outside KDP's band or below what
-  printing costs.
+  cover that isn't this interior's full wrap, a paperback cover whose front or
+  back prints words within 0.375 in of the cover's edges (0.25 in inside the
+  trim) or within 0.25 in of the spine's folds, an ebook cover out of KDP's
+  proportions, or a price outside KDP's band or below what printing costs.
+  The cover's rule: 0.45.0 refused words within 0.125 in of the trim, KDP's
+  cover guide. On the Haushaltsbuch the title had printed 0.048 in inside it,
+  from a front picture in shape pin, 2:3, whose centre was cut to the 8.5x11
+  front (13% of it); the refusal names the shape nearest the front, portrait
+  there. Since 0.45.3 it is 0.25 in, as KDP's reviewers asked of "Household
+  Budget Book 2027" and "Haushaltsbuch 2027" ("move all text at least 0.375
+  inches (9.5 mm) away from all edges of the cover"), live covers the 0.125 in
+  had passed. The back is checked too, which matters for a cover file of the
+  agent's own (the back Ember's code makes keeps its words 0.5 in inside the
+  trim and the fold), and both keep 0.25 in from the spine's folds: a fold may
+  shift, and a word beside it can wrap onto the spine. A front or back whose art
+  reaches its edges is a note, as Ember's code can't tell its words from its
+  picture. Ember's posters (`make_image`, layout poster) keep 11% of their
+  shorter side free at their edges since 0.45.3 (9% before), so that a front of
+  Ember's keeps its words 0.375 in from the edges at every trim in the shape the
+  refusal names.
   KDP's previewer checks the files again when you upload them.
 - **Its pages, checked before you see them** (0.40.0, upgrade request #12): a
   paperback's `check` also draws its interior's pages fresh, 600 pixels wide,
