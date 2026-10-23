@@ -50,5 +50,30 @@ def test_the_page_has_the_card_and_its_dialog(ingress_client: TestClient) -> Non
         "generation-dialog",
         "generation-confirm",
         "generation-go",
+        "generation-letter-ask",  # 0.48.0
+        "inheritance-file",
+        "inheritance-give",
+        "generation-dialog-inheritance",
     ):
         assert f'id="{element}"' in page
+
+
+def test_the_card_takes_an_inheritance_and_asks_for_her_letter(ingress_client: TestClient) -> None:
+    """0.48.0: the inheritance's preview and giving, and the owner's ask for her letter, each with CSRF."""
+    found = ingress_client.get("api/generation").json()["inheritance"]
+    assert found == {"given": None, "received": None, "letter": None, "letter_asked": False}
+    draft = {"format": 1, "evaluation": "x", "generation": 1, "strategy": "Sell where buyers already search."}
+    assert ingress_client.post("api/inheritance/preview", json=draft).status_code == 403  # CSRF
+    shown = ingress_client.post("api/inheritance/preview", json=draft, headers=CSRF)
+    assert shown.status_code == 200 and "Sell where buyers already search" in shown.json()["strategy"]
+    wrong = ingress_client.post("api/inheritance/preview", json={**draft, "generation": 3}, headers=CSRF)
+    assert wrong.status_code == 422 and wrong.json()["field"] == "generation"
+    given = ingress_client.post(
+        "api/inheritance", json={"inheritance": draft, "strike": {"letter": True}}, headers=CSRF
+    )
+    assert given.status_code == 201, given.text
+    assert ingress_client.post("api/inheritance", json=draft, headers=CSRF).status_code == 422  # not wrapped
+    assert ingress_client.post("api/generation/letter", json={}).status_code == 403
+    assert ingress_client.post("api/generation/letter", json={}, headers=CSRF).status_code == 202
+    found = ingress_client.get("api/generation").json()["inheritance"]
+    assert found["letter_asked"] is True and found["given"]["strategy"] is True and found["given"]["letter"] is False

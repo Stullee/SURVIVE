@@ -81,6 +81,7 @@ from . import (
     estate,
     evidence,
     generation,
+    inheritance,
     knockouts,
     learning,
     library,
@@ -116,6 +117,8 @@ from .workshop import report as workshop_report
 log = logging.getLogger(__name__)
 
 MAX_TOOL_CALLS_PER_TURN = tools.MAX_TOOL_CALLS_PER_TURN
+# The cycles of one call and no plan (no sync, no sleep cut): the last will; 0.48.0, her letter to the next generation
+ONE_CALL = ("last_will", "letter")
 # The work conversation's size limit (bytes of JSON, pictures counted as below). At 24,000 (until 0.9.0) it ended every
 # cycle that made a product and looked at its pictures after 5 to 10 tool steps. Money is checked before each step.
 # 0.40.1 (analysis-0.40.0, 3.3): at 64,000 four of the five cycles on the KDP book ended before they could propose it,
@@ -431,7 +434,7 @@ class CycleRunner:
             mode = self._cycle_burn(cycle_id)
             # 0.15.0: no workshop runs in maintenance (a run costs about what the whole cycle may)
             ctx.workshop = self._workshop_fn(ctx) if prompts.workshop_on(self.settings) and mode.workshop else None
-            if trigger != "last_will":
+            if trigger not in ONE_CALL:
                 # 0.28.0: what the cycle is (an ordinary, a marketing or a venture one) is decided once Ember's code
                 # kept its rules, right before the plan (_plan_act_reflect): it reads the obligations they keep
                 with self.db.connection() as conn:
@@ -446,11 +449,12 @@ class CycleRunner:
                 ctx.kdp = tools.KdpAccess(self.settings.kdp_author) if self.kdp_on else None  # 0.25.0
                 self._expire_requests()
             with netguard.sealed() if self.dry_run else contextlib.nullcontext():
-                end = (
-                    self._last_will(cycle_id)
-                    if trigger == "last_will"
-                    else self._plan_act_reflect(cycle_id, ctx, trigger, mode)
-                )
+                if trigger == "last_will":
+                    end = self._last_will(cycle_id)
+                elif trigger == "letter":
+                    end = self._letter(cycle_id)
+                else:
+                    end = self._plan_act_reflect(cycle_id, ctx, trigger, mode)
         except Stopping:
             end = CycleEnd("interrupted", "the app was stopping")
         except EndCycle as exc:
@@ -480,7 +484,7 @@ class CycleRunner:
         sleep at most. 0.37.6: steps a cycle can advance (plan.busy): not one a cycle took with nothing it is checked
         by moving since, nor this cycle's own step if it moved nothing (live on 2026-10-09 a step no cycle could
         advance cut every sleep to 30 minutes until the daily cap was spent)."""
-        if end.status != "completed" or trigger == "last_will":
+        if end.status != "completed" or trigger in ONE_CALL:
             return
         mode_now = burn.peek(self.db, self.economy.life.evaluate()).mode
         shortest = self.settings.min_sleep_minutes
@@ -2688,6 +2692,43 @@ class CycleRunner:
                 self.db, "warning", "agent", f"{self.settings.agent_name} wrote a last will", {"cycle_id": cycle_id}
             )
         return CycleEnd("completed", "last will written")
+
+    def _letter(self, cycle_id: int) -> CycleEnd:
+        """0.48.0 (vision/generations.md): her letter to the next generation, which the owner asked for: one call, as
+        the last will's (its context, its budget), kept in ``letters``; the change passes the newest one."""
+        snap = self._snapshot(cycle_id=cycle_id)
+        self._progress(cycle_id, phase="letter", current_action="Writing the letter to the next generation")
+        task = "Write your letter to the next generation now."
+        request = prompts.letter_request(self.settings, context.will_context(snap, self.dry_run, task))
+        if not context.fits(request, LAST_WILL.input_tokens):
+            cut = context.cut(context.will_context(snap, self.dry_run, task), 2_000)
+            request = prompts.letter_request(self.settings, cut)
+        try:
+            result = self._call(cycle_id, "letter", request)
+        except CallRefused as exc:
+            return CycleEnd("refused", f"letter refused: {exc.reason}")
+        except CallFailed as exc:
+            return CycleEnd("failed", f"letter failed: {exc.result.error or exc.result.status}")
+        response = result.response or {}
+        text = _text_of(response).strip()
+        if not text:
+            return CycleEnd("failed", "the letter was empty")
+        cut_off = response.get("stop_reason") == "max_tokens"
+        now = to_iso(self.clock.now())
+        with self.db.transaction() as conn:
+            store.save_call_text(conn, result.call_id, text)
+            inheritance.save_letter(conn, self.scope, cycle_id, result.call_id, text, cut_off, now)
+            store.write_journal(
+                conn, self.scope, cycle_id, "agent", "Wrote my letter to the next generation", text[:2000], now
+            )
+            events.record(
+                self.db,
+                "info",
+                "agent",
+                f"{self.settings.agent_name} wrote her letter to the next generation",
+                {"cycle_id": cycle_id},
+            )
+        return CycleEnd("completed", "letter written")
 
     def _save_text(self, call_id: int, text: str, response: dict[str, Any]) -> None:
         details = response.get("stop_details") if isinstance(response.get("stop_details"), dict) else None

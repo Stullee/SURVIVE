@@ -3170,7 +3170,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.47.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.48.0 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3735,6 +3735,42 @@ or a sale; a book's royalty entry), passive after a fair test without one, and
 retire for a product whose public text breaks a rule (a person named as its
 maker, legal certainty, "no refunds") or that is down.
 
+**Her letter.** 0.48.0: **Ask for her letter** on the card, and one call of hers
+writes her letter to the next generation at her next wake, as a last will is
+written (about the same cost): what she tried, what worked and what didn't,
+what she would do differently. The card shows it; ask again for a new one. It
+passes as `inheritance/letter.md` in her successor's workspace, as her view,
+not evidence, unless you strike it.
+
+**The inheritance.** 0.48.0: what she learned passes only as you give it. Make
+an evaluation export (Diagnostics tab) and ask an AI evaluator for the
+inheritance: the export's `INHERIT.md` tells it how to draft an
+`inheritance.json` from her whole life:
+
+- **principles**, at most 12: business lessons with the cases of hers behind
+  them. Ember's code refuses one that cites no case, a case that was too early
+  or low-sure, names a tool (her tools change with her code) or names an id of
+  hers (the next generation has none of her records);
+- **a direction** for her seed strategy, at most 600 characters;
+- **craft files**, at most 8: files of her workspace she would need again (a
+  checklist, a book's spec), or a short note the evaluator wrote (your quality
+  bar).
+
+Upload it on the card: the preview shows each principle with its cases, the
+seed strategy and identity as they would be written, the craft files, and the
+facts of her work. Untick what shouldn't pass and **Give the inheritance**. A
+newer one you give replaces it; nothing of it reaches her before the change.
+
+At the change the principles enter the new playbook as inherited hypotheses,
+shown with their evidence ("inherited: generation 1, 8 cases for, 0 against"):
+her predecessor's cases count as one case, so two cases of her own establish
+one, her first case against disputes it, and 60 days without a case of hers
+retire it. Priors to test, not rules. Whatever you give, Ember's code writes
+the facts of her predecessor's work (spend, sales, views, clicks, followers,
+each product's numbers; no model writes them) to `inheritance/facts.md`, a seed
+strategy that opens with them, and a seed identity that says which generation
+she is and why her predecessor's life ended. Her lessons file starts empty.
+
 **Beginning it.** The change waits until no wake cycle runs, no request waits
 for your decision or to be carried out (mark the KDP books you published done),
 no action is under way, every product has a verdict and the retired ones are
@@ -3742,8 +3778,9 @@ down: the card lists what is in the way. **Begin generation N…** asks you to
 type the agent's name and the new generation's number. Then Ember's code copies
 the database to `/data/backups` (`ember-generation…`), moves the old folders
 aside, ends the life (state ended) and begins the next, which a grant isn't
-needed for: the money carries on. The new generation's plans say which
-generation she is and, in her first days, what passed to her.
+needed for: the money carries on. The inheritance passes in the same step. The
+new generation's plans say which generation she is and, in her first days,
+what passed to her and where (`inheritance/` in her workspace).
 
 **Going back.** The dashboard can't undo a generation change. To go back, stop
 the app, restore the `ember-generation…` copy as `/data/ember.db`, move the

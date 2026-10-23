@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 
 from . import diagnostics, export, feedback
 from . import events as event_log
-from .agent import estate, generation, views
+from .agent import estate, generation, inheritance, views
 from .agent import owner as owner_side
 from .agent.views import WorkspaceFileError
 from .db import utcnow
@@ -1323,6 +1323,55 @@ def generation_begin(request: Request, body: Annotated[Any, Body()] = None) -> J
     except generation.GenerationError as exc:
         return JSONResponse({"error": str(exc), "checks": [c.to_json() for c in exc.checks]}, status_code=exc.status)
     return JSONResponse(done, status_code=201)
+
+
+# 0.48.0 (vision/generations.md): the inheritance: an evaluation's inheritance.json, its preview and the owner's
+# giving (with what they struck), and her letter to the next generation, which the owner asks for.
+def _inheritance_error(exc: inheritance.InheritanceError) -> JSONResponse:
+    return JSONResponse(
+        {"error": f"The inheritance can't be given: {exc}.", "field": exc.field}, status_code=exc.status
+    )
+
+
+@router.post("/api/inheritance/preview")
+def inheritance_preview(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """What would pass of an inheritance.json (nothing is written): the principles with the cases behind them, the
+    craft files, the seed strategy and identity as the change would write them today, the facts and her letter."""
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    try:
+        return JSONResponse(inheritance.preview(agent, body), headers={"cache-control": "no-store"})
+    except inheritance.InheritanceError as exc:
+        return _inheritance_error(exc)
+
+
+@router.post("/api/inheritance")
+def inheritance_give(request: Request, body: Annotated[Any, Body()] = None) -> JSONResponse:
+    """Gives the inheritance, to pass at the change: {"inheritance": <inheritance.json>, "strike": {"principles":
+    [numbers], "craft": [numbers], "strategy": bool, "letter": bool}}. It replaces one given before."""
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    if not isinstance(body, dict) or set(body) - {"inheritance", "strike"}:
+        return JSONResponse({"error": 'send {"inheritance": {...}, "strike": {...}}', "field": "inheritance"}, 422)
+    try:
+        given = inheritance.give(agent, body.get("inheritance"), body.get("strike"), _owner(request))
+    except inheritance.InheritanceError as exc:
+        return _inheritance_error(exc)
+    return JSONResponse(given, status_code=201)
+
+
+@router.post("/api/generation/letter")
+def generation_letter(request: Request) -> JSONResponse:
+    """Asks her for her letter to the next generation: one call of hers writes it at the next round."""
+    agent = _state(request).agent
+    if agent is None:
+        return NO_AGENT
+    status, body = agent.ask_letter(_owner(request))
+    if status == 202:
+        _poke(request)
+    return JSONResponse(body, status_code=status)
 
 
 # 0.44.0 (vision/evaluation.md): the feedback of an evaluation, given back to Ember: its preview, then the giving.

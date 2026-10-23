@@ -148,12 +148,13 @@ def test_the_change_ends_her_life_and_begins_a_clean_mind_in_the_same_world(data
     assert agent.economy.life.evaluate().state == "alive"  # the money carried on
     assert agent.db.get_meta(f"agent.{old.mode}.sleep_cut") is None  # the old mind's
     assert (paths.backups_dir() / done["backup"]).is_file()
-    # her old folders are kept beside the new ones, which begin with the seeds and the adopted listing's files
+    # her old folders are kept beside the new ones, which begin with the seeds, the adopted listing's files and (0.48.0)
+    # the facts of her predecessor's work
     archive = workspace.parent / "generations" / "1"
     assert files_in(archive / "workspace") == kept
     assert (archive / "memory" / "lessons.md").read_text(encoding="utf-8") == old_lessons
     assert (memory_root / "lessons.md").read_text(encoding="utf-8") == memory.SEEDS["lessons"]
-    assert done["copied"] and files_in(workspace) == sorted(done["copied"])
+    assert done["copied"] and files_in(workspace) == sorted(done["copied"] + ["inheritance/facts.md"])
     # her records: empty but for what she received
     with agent.db.connection() as conn:
         assert store.open_projects(conn, new) == []

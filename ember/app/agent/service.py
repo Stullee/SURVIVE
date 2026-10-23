@@ -439,6 +439,8 @@ class Agent:
             if retry is None or now >= retry or self.wake_requested:
                 return Decision(True, "last_will", "the last will is due")
             return Decision(False, reason="The last will is due; retrying later", wait_until=retry)
+        if self.letter_asked(status.life_id):  # 0.48.0: the owner asked for it; it runs dormant too, as Wake now
+            return Decision(True, "letter", "your owner asked for your letter to the next generation")
         mode = (burn.peek if preview else burn.current)(self.db, status).mode  # 0.15.0: a preview keeps no mode
         # 0.12.0: dormant, no model calls until money comes in; only the owner's Wake now runs a cycle
         if mode == burn.DORMANT and not self.wake_requested:
@@ -793,6 +795,28 @@ class Agent:
 
     # --- the next generation (0.47.0) ---
 
+    def ask_letter(self, by: str | None) -> tuple[int, dict[str, Any]]:
+        """0.48.0: the owner asks for her letter to the next generation: one call of hers writes it at the next round
+        (decide), as the last will is written. (HTTP status, body)."""
+        life = self.economy.life.evaluate()
+        if life.life_id is None or not life.can_run:
+            return 409, {"error": f"{self.settings.agent_name} isn't alive: there is no one to write it"}
+        if self.letter_asked(life.life_id):
+            return 409, {"error": "asked already: she writes it at her next wake"}
+        self.db.set_meta(self._key("letter_asked"), str(life.life_id))
+        events.record(
+            self.db,
+            "info",
+            "owner",
+            f"{by or 'The owner'} asked {self.settings.agent_name} for her letter to the next generation",
+        )
+        return 202, {"asked": True}
+
+    def letter_asked(self, life_id: int | None = None) -> bool:
+        """0.48.0: whether the owner asked this life for her letter and it wasn't written yet."""
+        life_id = self.economy.life.evaluate().life_id if life_id is None else life_id
+        return life_id is not None and self.db.get_meta(self._key("letter_asked")) == str(life_id)
+
     def begin_generation(self, by: str) -> dict[str, Any]:
         """0.47.0 (vision/generations.md): the owner's generation change (generation.begin), while no cycle can start:
         it holds the cycle lock, so a wake waits until the new mind is ready. GenerationError says what is in the
@@ -906,6 +930,13 @@ class Agent:
     def _after(self, trigger: str, end: CycleEnd) -> None:
         now = self.clock.now()
         failures = int(self.db.get_meta(self._key("failures")) or 0)
+        if trigger == "letter":  # 0.48.0: one try, whatever came of it (the card says it); her wakes stay as they were
+            self.db.set_meta(self._key("letter_asked"), "")
+            if end.status != "completed":
+                events.record(
+                    self.db, "warning", "agent", f"The letter to the next generation wasn't written: {end.note}"
+                )
+            return
         if trigger == "last_will":
             if end.status == "completed":
                 self._set_time("will_retry_at", None)

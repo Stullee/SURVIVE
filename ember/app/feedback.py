@@ -106,7 +106,7 @@ def parse(
     projects, ventures = _ids(conn, scope, "projects"), _ids(conn, scope, "ventures")
     cases = tuple(_case(c, n, projects, ventures) for n, c in enumerate(_list(body, "cases", MAX_CASES), start=1))
     corrections = tuple(_correction(c, n) for n, c in enumerate(_list(body, "corrections", MAX_CORRECTIONS), start=1))
-    proposals = tuple(_proposal(p, n, products) for n, p in enumerate(_list(body, "estate", MAX_ESTATE), start=1))
+    proposals = tuple(proposal(p, n, products) for n, p in enumerate(_list(body, "estate", MAX_ESTATE), start=1))
     if len({(p["kind"], p["ref"]) for p in proposals}) < len(proposals):
         raise FeedbackError("estate", "estate proposes once for each product")
     if not cases and not corrections and not proposals:
@@ -198,7 +198,7 @@ def _correction(item: Any, number: int) -> dict[str, str]:
     return {key: _text(item, key, limit, where, required=key == "right") for key, limit in CORRECTION_LIMITS.items()}
 
 
-def _proposal(item: Any, number: int, products: set[tuple[str, str]] | None) -> dict[str, str]:
+def proposal(item: Any, number: int, products: set[tuple[str, str]] | None) -> dict[str, str]:
     """0.47.0: a proposal for the estate: a product of the hand-over (its kind and ref, as the Next generation card
     and the export's estate, etsy_listings, printify_products and approvals name them), a verdict and why."""
     where = f"estate {number}"

@@ -1230,6 +1230,17 @@ def _project(conn: sqlite3.Connection, scope: store.AgentScope, p: sqlite3.Row) 
     }
 
 
+def _inherited(origin: dict[str, Any] | None) -> dict[str, Any] | None:
+    """0.48.0: an inherited principle's generation and its evidence there, as Mind → Playbook shows it."""
+    if origin is None:
+        return None
+    return {
+        "generation": origin.get("generation"),
+        "for": len(origin.get("for") or []),
+        "against": len(origin.get("against") or []),
+    }
+
+
 def _playbook(conn: sqlite3.Connection, scope: store.AgentScope, today: Any) -> dict[str, Any]:
     """0.30.0: Mind → Playbook: the principles Ember's code keeps from the agent's cases (the active ones, the
     established first, then those retired last), each with the cases for and against it; how many cases there are
@@ -1264,6 +1275,7 @@ def _playbook(conn: sqlite3.Connection, scope: store.AgentScope, today: Any) -> 
             "retired_why": p["retired_why"],
             "supports": [case(i) for i in supports],
             "against": [case(i) for i in against],
+            "inherited": _inherited(learning.inherited(p)),  # 0.48.0
         }
 
     counted = conn.execute(

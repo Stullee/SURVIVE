@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import diagnostics, events, paths, scorecard
+from .agent import estate
 from .agent.sandbox import SandboxError, kind_of
 from .agent.store import context_text
 from .agent.tools_limits import LIBRARY_TOOLS
@@ -65,6 +66,9 @@ log = logging.getLogger(__name__)
 
 KEEP = 2  # exports kept in /data/exports, the newest
 BRIEF_PATH = paths.APP_DIR / "evaluation_brief.md"  # 0.44.0: EVALUATE.md, what the evaluator is to do with it
+INHERIT_PATH = (
+    paths.APP_DIR / "inheritance_brief.md"
+)  # 0.48.0: INHERIT.md, the inheritance's brief (vision/generations.md)
 PRODUCT_DAYS = 35  # her files changed in these days go in at most: the week evaluated and the four before it
 FILE_DAYS = (0, 7, PRODUCT_DAYS)  # 0.44.0: the owner's choice: none of her files, the week's, or the five weeks'
 PRODUCT_BYTES = 300 * 1024 * 1024  # of them, the newest first
@@ -202,12 +206,14 @@ def build(state: AppState, progress: Callable[[str], None] | None = None, option
         say("packing the data")
         data_name = f"{base}-data.zip"
         brief = _brief(state, now, [data_name, *names], options, texts.get("scorecard.json"))
-        texts = {"EVALUATE.md": brief, **texts}  # 0.44.0: the evaluator's brief, the first file of the data
+        # 0.44.0: the evaluator's brief, the first file of the data; 0.48.0, then the inheritance's, for the owner's ask
+        texts = {"EVALUATE.md": brief, "INHERIT.md": _inherit_brief(state, now), **texts}
         listed = [_listed(path, data, data_name) for path, data in texts.items()] + listed
         parts = [
             {
                 "name": data_name,
-                "holds": "EVALUATE.md, the manifest, ember.db, the scorecard, the report, memory/, the forms",
+                "holds": "EVALUATE.md, INHERIT.md, the manifest, ember.db, the scorecard, the report, memory/,"
+                " the forms",
             }
         ]
         parts += [{"name": n, "bytes": (work / n).stat().st_size, "holds": "her files"} for n in names]
@@ -253,6 +259,23 @@ def _brief(state: AppState, now: datetime, zips: list[str], options: Options, ca
         "{{week}}": week,
     }
     text = BRIEF_PATH.read_text(encoding="utf-8")
+    for marker, fact in facts.items():
+        text = text.replace(marker, fact)
+    return text.encode()
+
+
+def _inherit_brief(state: AppState, now: datetime) -> bytes:
+    """0.48.0: INHERIT.md (inheritance_brief.md), with the generation that would hand on and where her records are."""
+    scope = state.agent.scope() if state.agent is not None else None
+    facts = {
+        "{{made_at}}": now.strftime("%Y-%m-%d %H:%M UTC"),
+        "{{version}}": app_version(),
+        "{{mode}}": "a dry run" if state.loaded.settings.dry_run else "live",
+        "{{generation}}": str(estate.generation(scope)) if scope else "1",
+        "{{db_mode}}": scope.mode if scope else "live",
+        "{{session}}": str(scope.session) if scope else "0",
+    }
+    text = INHERIT_PATH.read_text(encoding="utf-8")
     for marker, fact in facts.items():
         text = text.replace(marker, fact)
     return text.encode()

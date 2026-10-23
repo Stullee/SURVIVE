@@ -1190,7 +1190,8 @@ def _venture_brief(s: Snapshot) -> str:
     return VENTURE_BRIEF if s.brainstorm else VENTURE_BRIEF.replace(BRAINSTORM_BRIEF, "")
 
 
-def will_context(s: Snapshot, dry_run: bool) -> str:
+def will_context(s: Snapshot, dry_run: bool, task: str = "Write your last will now.") -> str:
+    """The last will's context; 0.48.0, with another ``task``, her letter to the next generation's."""
     closed = "\n".join(f"- {flat(j['summary'])}" for j in reversed(s.journal)) or "No journal yet."
     parts = [
         ("STATUS", status_text(s, dry_run)),
@@ -1199,7 +1200,7 @@ def will_context(s: Snapshot, dry_run: bool) -> str:
         ("RECENT JOURNAL", closed),
         (LESSONS_HEADING, lessons_text(s, 1_200)),
         (STRATEGY_HEADING, s.memory.get("strategy", "")[:800]),
-        ("TASK", "Write your last will now."),
+        ("TASK", task),
     ]
     return cut(_sections(parts), WILL_BUDGET)
 

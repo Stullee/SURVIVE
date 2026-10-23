@@ -4,7 +4,12 @@
 of 10-22 (`evaluation/2026-10-22-0.44.0/`). 0.46.0 builds its foundation: the mind/world split (see "The
 engineering"), with the counts of a platform's limits on the world and migration 0102; nothing begins a generation
 yet. 0.47.0 builds the estate and the generation change ("The estate", "The change, step by step"; Prepare is the
-card's hand-over and its checks). The inheritance (principles, facts, craft, the letter) is next. It answers the
+card's hand-over and its checks). 0.48.0 builds the inheritance (principles, facts, craft, the letter, the seeds;
+agent/inheritance.py), with three changes to this draft: the facts are `inheritance/facts.md` and the seed strategy's
+opening rather than a knowledge document, and no model writes a number, so there is none of the evaluator's to check;
+the owner strikes items rather than editing them; the letter is asked for on the card, and one call writes it. Still
+open: the scorecard by generation, closing the first generation's open lines at the change, re-pinning lessons, the
+dress rehearsal on a copy of the live database, and phase 2. It answers the
 owner's question: how can Ember evolve into a next generation that carries over the important learnings, starts with a
 clean mind, and is smarter for it, without holding on to the products her first generation failed with?*
 

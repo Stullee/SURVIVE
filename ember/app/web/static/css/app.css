@@ -1606,3 +1606,9 @@ body[data-stale="true"] .live { display: none; }
 .generation-checks .check-open { font-weight: 600; }
 .generation-prepare { margin-top: 12px; }
 .generation-prepare > summary { cursor: pointer; font-weight: 600; }
+.inheritance-preview h4 { font-size: 0.95rem; margin: 14px 0 4px; }
+.inheritance-preview ol { padding-left: 1.4em; }
+.inheritance-preview li { margin-bottom: 8px; }
+.inheritance-preview .strike { display: inline-flex; gap: 6px; align-items: baseline; }
+.inheritance-preview .struck { text-decoration: line-through; color: var(--muted); }
+.generation-letter { white-space: pre-wrap; max-height: 24em; overflow: auto; }

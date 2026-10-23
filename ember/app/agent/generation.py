@@ -6,7 +6,9 @@ messages, journal, bets, cases, playbook) and her memory and workspace folders, 
 ``generations/<n>/`` beside them. What carries on is the world (``AgentScope.world_where``): the money, the shop, the
 accounts, the mailbox and its opt-outs, the owner's rulebook and library. The products pass as the estate the owner
 sorted (agent/estate.py): an adopted one becomes a line of the new mind at her first cycle (``file``), with its files
-copied into her workspace; a passive one isn't hers to work on.
+copied into her workspace; a passive one isn't hers to work on. 0.48.0: what she learned passes as the inheritance
+the owner gave (agent/inheritance.py): her principles as inherited hypotheses, the facts of her work, her craft files
+and her letter, and a seed strategy and identity.
 
 The change waits until nothing is under way: no cycle running, no request waiting for the owner or for Ember's code,
 a verdict for every product, the retired ones down. It copies the database first, as a migration does."""
@@ -27,7 +29,7 @@ from ..db import MAX_BACKUPS
 from ..economy.clock import local_date, to_iso
 from ..economy.life import LIVE_SESSION_KEY, SESSION_NO_KEY, WORLD_KEY
 from ..integrations import etsy
-from . import estate, store
+from . import estate, inheritance, learning, store
 from .store import AgentScope
 
 if TYPE_CHECKING:
@@ -52,6 +54,7 @@ RESET = (
     "next_wake_reason",
     "will_retry_at",
     "will_attempts",
+    "letter_asked",  # 0.48.0: the owner's ask for her letter (agent/service.py)
 )
 WAITING = ("pending", "approved", "approved_with_changes")  # a request not decided, or not carried out yet
 BACKUP_PREFIX = "ember-generation"
@@ -164,6 +167,7 @@ def status(conn: sqlite3.Connection, agent: Agent) -> dict[str, Any]:
         "received": [estate.to_json(r) for r in estate.received(conn, scope)],
         "checks": [c.to_json() for c in found],
         "ready": all(c.ok for c in found),
+        "inheritance": inheritance.status(conn, agent, scope),  # 0.48.0
     }
 
 
@@ -255,12 +259,14 @@ def _carry_files(agent: Agent, conn: sqlite3.Connection, rows: list[sqlite3.Row]
 
 def begin(agent: Agent, by: str) -> dict[str, Any]:
     """The change, while the caller holds the agent's cycle lock: the checks, a copy of the database, the folders moved
-    aside, then in one transaction the estate handed on, the life ended and the next begun, the mind's session counted
-    up and its per-mode keys reset; then the adopted products' files and the new mind's first files (Agent.recover)."""
+    aside, then in one transaction the estate handed on, the inherited principles written, the life ended and the next
+    begun, the mind's session counted up and its per-mode keys reset; then the new mind's first files (Agent.recover),
+    the inheritance's (its seed strategy and identity, the facts, her letter, the craft) and the adopted products'."""
     scope = agent.scope()
     with agent.db.transaction() as conn:
         estate.refresh(conn, scope, agent.clock)
         found = checks(conn, scope, running=False)
+        handed = inheritance.passing(conn, agent, scope)  # 0.48.0: what passes, read while the old mind is here
     if not all(c.ok for c in found):
         raise GenerationError("The next generation can't begin yet", 409, found)
     number = estate.generation(scope)
@@ -278,12 +284,13 @@ def begin(agent: Agent, by: str) -> dict[str, Any]:
             )
             adopted = sum(1 for r in rows if r["verdict"] == "adopt")
             passive = sum(1 for r in rows if r["verdict"] == "passive")
+            inherited = inheritance.write_principles(conn, scope, handed, new_session, now)
             ended, born = agent.economy.life.succeed(
                 conn,
                 now,
                 f"succeeded by generation {number + 1}: {by or 'the owner'} ended this life so the next could begin",
                 f"generation {number + 1}, by {by or 'the owner'}: {_count(adopted, 'product')} adopted, {passive}"
-                " passive",
+                f" passive, {_count(len(inherited), 'principle')} inherited",
             )
             if scope.mode == "live":
                 agent.db.set_meta(LIVE_SESSION_KEY, str(new_session))
@@ -298,6 +305,7 @@ def begin(agent: Agent, by: str) -> dict[str, Any]:
     agent.economy.life.evaluate_and_persist()  # the new life is alive (or unfunded) from now
     agent.recover()  # the new mind's first files, the venture tree's seeds, as at a start
     old = next((target for root, target in moved if root.name == "workspace"), None)
+    written = inheritance.write_files(agent, agent.scope(), handed, old, now)
     with agent.db.connection() as conn:
         copied = _carry_files(agent, conn, rows, old)
     events.record(
@@ -305,8 +313,17 @@ def begin(agent: Agent, by: str) -> dict[str, Any]:
         "warning",
         "life",
         f"{by or 'The owner'} began generation {number + 1} of {agent.settings.agent_name}: life #{ended} ended, life"
-        f" #{born} began with {_count(adopted, 'product')} adopted and {passive} passive",
-        {"ended": ended, "born": born, "session": new_session, "backup": backup.name, "copied": len(copied)},
+        f" #{born} began with {_count(adopted, 'product')} adopted and {passive} passive,"
+        f" {_count(len(inherited), 'principle')} inherited",
+        {
+            "ended": ended,
+            "born": born,
+            "session": new_session,
+            "backup": backup.name,
+            "copied": len(copied),
+            "inherited": len(inherited),
+            "written": written,
+        },
     )
     return {
         "generation": number + 1,
@@ -315,6 +332,8 @@ def begin(agent: Agent, by: str) -> dict[str, Any]:
         "backup": backup.name,
         "archived": [str(target) for _, target in moved],
         "copied": copied,
+        "inherited": inherited,
+        "written": written,
     }
 
 
@@ -385,9 +404,22 @@ def status_line(conn: sqlite3.Connection, scope: AgentScope, today: date, born: 
     rows = estate.received(conn, scope)
     adopted = [r for r in rows if r["verdict"] == "adopt"]
     passive = [r for r in rows if r["verdict"] != "adopt"]
-    return (
-        line + f" What passed to you: the money, the shop and the accounts, your owner's rulebook and library;"
+    line += (
+        f" What passed to you: the money, the shop and the accounts, your owner's rulebook and library;"
         f" {len(adopted)} of her products as lines of yours, each with its first test, and {len(passive)} that stay"
-        " live but aren't yours to work on. Nothing of her plans, requests, cases or lessons: your playbook begins"
-        " with what you learn."
+        " live but aren't yours to work on."
+    )
+    got = inheritance.received(conn, scope)  # 0.48.0
+    content = json.loads(got["payload"]) if got is not None else {}
+    principles = len(content.get("principles", []))
+    if principles:
+        line += (
+            f" {_count(principles, 'principle')} of hers in your playbook as inherited hypotheses: yours to test, not"
+            f" to obey (two cases of yours establish one, one against disputes it, {learning.INHERITED_FADE_DAYS} days"
+            " without one retire it)."
+        )
+    letter = ", her letter" if inheritance.letter_passed(conn, scope) else ""
+    return (
+        line + f" The facts of her work{letter} and what else passed are in {inheritance.FOLDER}/ in your workspace."
+        " Nothing of her plans, requests, cases or lessons: the rest of your playbook begins with what you learn."
     )

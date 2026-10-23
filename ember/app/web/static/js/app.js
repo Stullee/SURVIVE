@@ -417,10 +417,10 @@
     interrupted: { icon: "↯", label: "Interrupted", tone: "warning" },
   };
 
-  var TRIGGERS = { schedule: "scheduled", owner: "woken by you", last_will: "last will", event: "woken by an event" };
-  var PHASES = { review: "Daily review", study: "Studying the library", plan: "Plan", act: "Act", reflect: "Reflect", last_will: "Last will" };
+  var TRIGGERS = { schedule: "scheduled", owner: "woken by you", last_will: "last will", event: "woken by an event", letter: "her letter, asked by you" };
+  var PHASES = { review: "Daily review", study: "Studying the library", plan: "Plan", act: "Act", reflect: "Reflect", last_will: "Last will", letter: "Letter" };
   var PURPOSES = { review: "Daily review", plan: "Plan", work: "Work", reflect: "Reflect", research: "Research",
-    workshop: "Workshop", draft: "Draft", brainstorm: "Brainstorm", study: "Library study", last_will: "Last will",
+    workshop: "Workshop", draft: "Draft", brainstorm: "Brainstorm", study: "Library study", last_will: "Last will", letter: "Letter",
     consolidate: "Lessons consolidated", research_check: "Research model check", critic: "Critic" };
 
   function triggerText(trigger) { return TRIGGERS[trigger] || (trigger ? String(trigger).replace(/_/g, " ") : "–"); }
@@ -4565,6 +4565,9 @@
       h("p", { class: "journal-summary" }, retired ? null : chip(CONFIDENCE, p.confidence, String(p.confidence || "?")),
         retired ? "" : " ", asText(p.text)),
       retired ? reviewLine("Why it was retired", p.retired_why) : null,
+      isObject(p.inherited) ? reviewLine("Inherited", "from generation " + p.inherited.generation + ", where " +
+        plural(Number(p.inherited.for) || 0, "case") + (Number(p.inherited.for) === 1 ? " was" : " were") + " for it and " +
+        (Number(p.inherited.against) || 0) + " against: a hypothesis to test, which two cases of its own establish") : null,
       supports.length || against.length ? h("details", { class: "review-numbers" }, h("summary", { text: count }),
         h("ul", { class: "verdicts" }, supports.map(function (c) { return caseItem(c, "for"); })
           .concat(against.map(function (c) { return caseItem(c, "against"); })))) : null);
@@ -6408,8 +6411,37 @@
       }))));
   }
 
+  // 0.48.0: her letter, asked for here, and the inheritance: an evaluation's inheritance.json, read and shown as it
+  // would pass, a box to each principle and craft file to strike it; only "Give the inheritance" sends it.
+
+  function inheritanceSummary(i, received) {
+    if (!isObject(i)) return null;
+    var parts = [plural(arr(i.principles).length, "principle"), plural(arr(i.craft).length, "craft file"),
+      i.strategy ? "a direction for her seed strategy" : "no direction for her seed strategy",
+      i.letter ? "her letter" : "not her letter"];
+    return h("div", { class: "small" },
+      h("p", { text: (received ? "What she learned passed from the evaluation \u201c" : "Given: the evaluation \u201c") + asText(i.evaluation) +
+        "\u201d" + (i.entered_by ? ", by " + asText(i.entered_by) : "") + ": " + parts.join(", ") + "." +
+        (received ? "" : " It passes at the change; a newer one you give replaces it.") }),
+      arr(i.principles).length ? h("ol", null, arr(i.principles).map(function (t) { return h("li", { text: asText(t) }); })) : null);
+  }
+
+  function showLetter(inh) {
+    var letter = inh.letter;
+    replace($("generation-letter"), isObject(letter) ? [
+      h("p", { class: "muted small" }, "Written ", timeEl(letter.created_at), letter.cut_off ? ", cut off before she could finish it." : "."),
+      h("pre", { class: "diag-report generation-letter", text: asText(letter.text) }),
+    ] : h("p", { class: "muted", text: inh.letter_asked ? "Asked: she writes it at her next wake." : "No letter yet." }));
+    $("generation-letter-ask").textContent = isObject(letter) ? "Ask for a new letter" : "Ask for her letter";
+    $("generation-letter-ask").disabled = !!inh.letter_asked;
+  }
+
   function showGeneration(g) {
     ui.generation = g;
+    var inh = isObject(g.inheritance) ? g.inheritance : {};
+    showLetter(inh);
+    replace($("generation-inheritance"), inheritanceSummary(inh.given, false) || h("p", { class: "muted", text: "No inheritance given yet." }));
+    replace($("generation-received-inheritance"), inheritanceSummary(inh.received, true) || []);
     $("generation-now").textContent = "This is generation " + count(g.generation) + " of " + asText(g.agent_name || agentName()) + ".";
     replace($("generation-estate"), estateTable(arr(g.estate), false));
     var received = arr(g.received);
@@ -6452,8 +6484,18 @@
     else dialog.removeAttribute("open");
   }
 
+  function dialogInheritance(g) {
+    var given = isObject(g.inheritance) ? g.inheritance.given : null;
+    if (!isObject(given)) {
+      return "No inheritance was given: she begins with none of her predecessor's principles. The facts of her work, a seed strategy and identity are written all the same.";
+    }
+    return "The inheritance passes: " + plural(arr(given.principles).length, "principle") + " as hypotheses in her playbook, " +
+      plural(arr(given.craft).length, "craft file") + (given.letter ? ", her letter" : "") + ", the facts of her work, a seed strategy and identity.";
+  }
+
   $("generation-begin").addEventListener("click", function () {
     if (this.disabled || !ui.generation) return;
+    $("generation-dialog-inheritance").textContent = dialogInheritance(ui.generation);
     $("generation-confirm-show").textContent = generationWord();
     $("generation-dialog-title").textContent = "Begin generation " + count(ui.generation.next) + "?";
     $("generation-confirm").value = "";
@@ -6510,6 +6552,128 @@
       syncGenerationGo();
     });
   });
+
+  $("generation-letter-ask").addEventListener("click", function () {
+    var btn = this;
+    btn.disabled = true;
+    setStatusText("generation-letter-status", "Asking…", "");
+    request("POST", "api/generation/letter", {}).then(function (res) {
+      if (!res.ok) throw httpError(res);
+      setStatusText("generation-letter-status", "Asked: she writes it at her next wake, in one call.", "ok");
+      loadGeneration();
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      setStatusText("generation-letter-status", "Not asked: " + errorText(err) + ".", "error");
+      btn.disabled = false;
+    });
+  });
+
+  function passBox(label, onChange) {
+    var box = h("input", { type: "checkbox", "aria-label": label });
+    box.checked = true;  // it passes until struck
+    box.addEventListener("change", function () { onChange(box.checked); });
+    return box;
+  }
+
+  function strikeToggle(key, n, passes) {
+    var list = ui.inheritanceStrike[key].filter(function (x) { return x !== n; });
+    if (!passes) list.push(n);
+    ui.inheritanceStrike[key] = list.sort(function (a, b) { return a - b; });
+  }
+
+  function clearInheritance() {
+    ui.inheritance = null;
+    $("inheritance-preview").hidden = true;
+    replace($("inheritance-preview"), []);
+    $("inheritance-give").hidden = true;
+  }
+
+  function showInheritancePreview(p) {
+    ui.inheritanceStrike = { principles: [], craft: [], strategy: false, letter: false };
+    var principles = arr(p.principles).map(function (pr, i) {
+      var n = i + 1;
+      var text = h("span", { text: asText(pr.text) });
+      var box = passBox("Principle " + n + " passes", function (on) { strikeToggle("principles", n, on); text.classList.toggle("struck", !on); });
+      var cases = arr(pr.for).map(function (c) { return caseItem(c, "for"); }).concat(arr(pr.against).map(function (c) { return caseItem(c, "against"); }));
+      return h("li", null, h("label", { class: "strike" }, box, text),
+        h("p", { class: "muted small", text: plural(arr(pr.for).length, "case") + " of hers for it, " + arr(pr.against).length + " against" +
+          (pr.why ? ". Why it passes: " + asText(pr.why) : ".") }),
+        cases.length ? h("details", { class: "review-numbers" }, h("summary", { text: "Its cases" }), h("ul", { class: "verdicts" }, cases)) : null);
+    });
+    var craft = arr(p.craft).map(function (c, i) {
+      var n = i + 1;
+      var label = h("span", { text: "inheritance/craft/" + asText(c.name) + (c.path ? " (her " + asText(c.path) + ")" : " (a note the evaluation wrote)") +
+        ", " + byteSize(Number(c.bytes) || 0) + (c.why ? ": " + asText(c.why) : "") });
+      var box = passBox("Craft file " + n + " passes", function (on) { strikeToggle("craft", n, on); label.classList.toggle("struck", !on); });
+      return h("li", null, h("label", { class: "strike" }, box, label),
+        c.text ? h("details", null, h("summary", { text: "Its text" }), h("pre", { class: "diag-report", text: asText(c.text) })) : null);
+    });
+    var strategy = h("pre", { class: "diag-report", text: asText(p.strategy) });
+    var direction = p.direction ? h("label", { class: "strike" }, passBox("The evaluation's direction passes", function (on) {
+      ui.inheritanceStrike.strategy = !on;
+      strategy.textContent = on ? asText(p.strategy) : asText(p.strategy).replace("\nFrom the evaluation of her life: " + asText(p.direction) + "\n", "");
+    }), h("span", { text: "The evaluation's direction passes in her seed strategy" })) : null;
+    var letter = h("label", { class: "strike" }, passBox("Her letter passes", function (on) { ui.inheritanceStrike.letter = !on; }),
+      h("span", { text: isObject(p.letter) ? "Her letter passes (above)" : "Her letter passes, once she has written one (ask for it above)" }));
+    var proposals = arr(p.estate).map(function (e) {
+      return h("li", { text: (ESTATE_KINDS[e.kind] || asText(e.kind)) + " " + asText(e.ref) + ": " + (ESTATE_VERDICTS[e.verdict] || asText(e.verdict)) + ". " + asText(e.why) });
+    });
+    replace($("inheritance-preview"), [
+      h("p", { text: "From the evaluation \u201c" + asText(p.evaluation) + "\u201d for generation " + count(Number(p.generation) + 1) + ". Untick what shouldn't pass." }),
+      h("h4", { text: plural(principles.length, "principle") + ", as hypotheses in her playbook" }),
+      principles.length ? h("ol", null, principles) : h("p", { class: "muted", text: "None." }),
+      h("h4", { text: "Her seed strategy" }), direction, strategy,
+      h("h4", { text: "Her seed identity" }), h("pre", { class: "diag-report", text: asText(p.identity) }),
+      h("h4", { text: plural(craft.length, "craft file") }), craft.length ? h("ul", null, craft) : h("p", { class: "muted", text: "None." }),
+      h("h4", { text: "Her letter" }), letter,
+      h("details", null, h("summary", { text: "The facts of her work, as Ember's code computed them today" }), h("pre", { class: "diag-report", text: asText(p.facts) })),
+      proposals.length ? h("p", { text: plural(proposals.length, "proposal") + " for the estate, which go beside the rule's suggestions above:" }) : null,
+      proposals.length ? h("ul", null, proposals) : null,
+    ]);
+    $("inheritance-preview").hidden = false;
+  }
+
+  function readInheritance() {
+    clearInheritance();
+    var file = $("inheritance-file").files && $("inheritance-file").files[0];
+    if (!file) { setStatusText("inheritance-status", "", ""); return; }
+    setStatusText("inheritance-status", "Reading " + file.name + "…", "");
+    file.text().then(function (text) {
+      var data;
+      try { data = JSON.parse(text); } catch (e) { throw new RequestError("malformed", file.name + " isn't JSON"); }
+      return request("POST", "api/inheritance/preview", data).then(function (res) {
+        if (!res.ok) throw httpError(res);
+        ui.inheritance = data;
+        showInheritancePreview(res.data);
+        $("inheritance-give").hidden = false;
+        setStatusText("inheritance-status", "Read it, untick what shouldn't pass, then give it, or choose another file.", "");
+      });
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      setStatusText("inheritance-status", "Ember can't take this file: " + errorText(err) + ".", "error");
+    });
+  }
+
+  function giveInheritance() {
+    if (!ui.inheritance) return;
+    $("inheritance-give").disabled = true;
+    request("POST", "api/inheritance", { inheritance: ui.inheritance, strike: ui.inheritanceStrike }).then(function (res) {
+      if (!res.ok) throw httpError(res);
+      clearInheritance();
+      $("inheritance-file").value = "";
+      setStatusText("inheritance-status", "Given: " + plural(res.data.principles, "principle") + " and " + plural(res.data.craft, "craft file") +
+        " pass at the change.", "ok");
+      loadGeneration();
+    }).catch(function (err) {
+      if (!(err instanceof RequestError)) console.error(err);
+      setStatusText("inheritance-status", "It wasn't given: " + errorText(err) + ".", "error");
+    }).then(function () {
+      $("inheritance-give").disabled = false;
+    });
+  }
+
+  $("inheritance-file").addEventListener("change", readInheritance);
+  $("inheritance-give").addEventListener("click", giveInheritance);
 
   // ------------------------------------------------------------------ inbox composer
 

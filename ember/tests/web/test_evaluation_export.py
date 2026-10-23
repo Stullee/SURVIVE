@@ -453,7 +453,10 @@ def test_the_data_begins_with_the_evaluator_s_brief(data_dir: Path) -> None:
     with zipfile.ZipFile(made[0]) as zipped:
         assert zipped.namelist()[:3] == ["EVALUATE.md", "manifest.json", "ember.db"]
         brief = zipped.read("EVALUATE.md").decode()
+        inherit = zipped.read("INHERIT.md").decode()  # 0.48.0: for when the owner asks for the inheritance
         weeks = json.loads(zipped.read("scorecard.json"))["weeks"]
+    assert "{{" not in inherit and inherit.startswith("# Draft Ember's inheritance: your brief")
+    assert "**generation 1**" in inherit and "`mode = 'dry_run'`" in inherit and '"generation": 1,' in inherit
     assert "{{" not in brief and brief.startswith("# Evaluate Ember's work: your brief")
     assert all(f"`{p.name}`" in brief for p in made)
     assert f"Evaluate **the week {weeks[-1]['from']} to {weeks[-1]['to']}**" in brief  # none whole yet: this one

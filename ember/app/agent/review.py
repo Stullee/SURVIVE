@@ -72,6 +72,7 @@ _PURPOSES = {
     "critic": "reviews",  # 0.13.0
     "brainstorm": "brainstorms",
     "last_will": "the last will",
+    "letter": "the letter to the next generation",  # 0.48.0
 }
 _DECIDED = ("approved", "approved_with_changes", "rejected", "withdrawn", "expired")
 _PRODUCT_TOOLS = {

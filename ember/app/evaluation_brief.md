@@ -15,6 +15,8 @@ and go on.
 
 This export: {{parts}}. Options the owner chose: {{options}}.
 
+- **`INHERIT.md`**: the brief for another task. Only when the owner asks you to draft the inheritance for Ember's next
+  generation (an `inheritance.json`) is it your brief instead of this one.
 - **`manifest.json`**: what is in each zip, every table's rows, how to read the database (`how_to_read`), what was
   left out. Read it first. If a zip it lists is missing, say so and evaluate what you have.
 - **`scorecard.json`** and **`scorecard.md`**: the computed measures, by week (Monday to Sunday, the owner's time zone)

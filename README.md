@@ -713,6 +713,19 @@ same world, the money included. The adopted products become her lines at her
 first cycle, with their files. What she inherits of what her predecessor
 learned is the next step.
 
+0.48.0 builds that inheritance ([The next generation](ember/DOCS.md#the-next-generation)).
+An AI evaluator drafts it from the whole-life export (its `INHERIT.md` says
+how) as an `inheritance.json`: at most 12 principles, each with the cases
+behind it, a direction for her seed strategy, and craft files (a checklist, a
+book's spec). Ember's code refuses a principle that cites no case, a case that
+was too early or low-sure, a tool or an id of hers. You read its preview on the
+System tab, untick what shouldn't pass and give it. At the change the
+principles enter the new playbook as inherited hypotheses: her predecessor's
+cases count as one case, two of her own establish one, one against disputes it,
+60 days without one retire it. Ember's code also writes the facts of the old
+generation's work (no model writes them), a seed strategy and identity, and her
+letter to the next generation, which one call of hers writes when you ask.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
