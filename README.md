@@ -671,6 +671,13 @@ with `make_image` keeps its words far enough in at every trim; at 9%, a 5x8
 front lost them to the cut. A spine in another colour than the front no longer
 reads as words at the fold, which had refused such a cover.
 
+0.45.4 reads stored emails again from the mail server after a change to how
+Ember reads an email's text, so a fix like 0.45.2's reaches the emails that
+arrived before it: KDP's two notices come back unread with their whole text.
+It reads the last 30 days' emails it still finds under their number on the
+server, a few per check. A stored email stays as it was; its new text is kept
+beside it, the agent sees that one, and a "stop" in it counts.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

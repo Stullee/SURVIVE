@@ -245,6 +245,7 @@ class MailView:
     unread: int = 0
     newest: tuple[tuple[int, str, str], ...] = ()
     held: tuple[tuple[int, str, int], ...] = ()  # 0.40.3: (request, recipient, email) of mailstore.held
+    again: tuple[int, ...] = ()  # 0.45.4: of the newest, those read before whose text was read again (mailstore.reread)
 
 
 @dataclass
@@ -366,7 +367,8 @@ def snapshot(
     if mail_address is not None:
         unread, newest = mailstore.unread(conn, scope, MAIL_SHOWN)
         held = tuple(mailstore.held(conn, scope, mail_address))  # 0.40.3 (M1)
-        mail = MailView(mail_address, unread, tuple((r["id"], r["from_addr"], r["subject"]) for r in newest), held)
+        shown = tuple((r["id"], r["from_addr"], r["subject"]) for r in newest)
+        mail = MailView(mail_address, unread, shown, held, tuple(r["id"] for r in newest if r["again"]))
     money: dict[int, tuple[int, int]] = {}
     for p in projects:
         spent = conn.execute(
@@ -887,7 +889,9 @@ def mail_text(s: Snapshot) -> str:
         for request, to, email in m.held[:MAIL_HELD]
     ]
     lines = [
-        f"#{i} from {_quote(_start(sender, 80))} {_quote(_start(subject, 100))}" for i, sender, subject in m.newest
+        f"#{i} from {_quote(_start(sender, 80))} {_quote(_start(subject, 100))}"
+        + (" (read again from the server: new text)" if i in m.again else "")
+        for i, sender, subject in m.newest
     ]
     return "\n".join([head, *held, *lines])
 
