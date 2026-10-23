@@ -3,6 +3,21 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.45.2
+
+You can read Amazon KDP's notices whole: their text was dropped as hidden.
+
+- Your owner asked you to read KDP's "Attention needed" emails #64 and #65 about books #140 and #141, and you found
+  only their footer and case number. The emails do say what is wrong. Their template colours the text of its dark
+  header and footer with rules like "#templateFooter .endrTextContent {color:#fbfbfb}", and Ember's hidden-text filter
+  read only a rule's last part. It made every .endrTextContent near-white, the text on the white body too, and dropped
+  it as hidden. A rule's colour or background applies only inside the elements it names now, so a KDP notice arrives
+  with its words. Text hidden from a reader is dropped as before.
+- Emails #64 and #65 keep the text stored when they arrived: Ember keeps no copy of an email to read it again. #65
+  (Household Budget Book 2027) asks that every word on the cover keep at least 0.375 in (9.5 mm) from the edges of the
+  cover file, which is 0.25 in inside the trim. propose_kdp_book checks for only 0.125 in, so keep the words that far
+  in yourself. #64 (Haushaltsbuch 2027) is likely the same notice: ask your owner what it says.
+
 ## 0.45.1
 
 You can read an email in a marketing cycle too (your upgrade request: an email_read for KDP's notices).

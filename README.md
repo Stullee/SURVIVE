@@ -651,6 +651,14 @@ by its number (and mark an opt-out it finds), so it can tell you what Amazon,
 Etsy or Printify asks; answering an email stays an ordinary cycle's, and a
 venture cycle still reads no mail.
 
+0.45.2 lets Ember read those KDP notices. Their template colours the text of
+its dark header and footer with style rules that name those parts, and Ember's
+hidden-text filter read only a rule's last part: it took the whole notice for
+white on white and kept just the footer and case number. A rule's colour or
+background now applies only inside the elements it names; a rule that hides
+text still hides it everywhere. Emails stored before 0.45.2 keep the text they
+were stored with.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
