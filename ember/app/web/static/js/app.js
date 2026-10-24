@@ -721,6 +721,7 @@
     var parts = [];
     if (agent.state_reason) parts.push(sentence(agent.state_reason));
     if (typeof agent.age_days === "number") parts.push("Age " + plural(Math.floor(agent.age_days), "day"));
+    if (Number(agent.generation) > 1) parts.push("Generation " + count(agent.generation));  // 0.51.0
     if (agent.life_id && (agent.life_id > 1 || arr(d.lives).length)) parts.push("Life " + agent.life_id);
     var version = versionLabel(d.system.version);
     if (version) parts.push(version);

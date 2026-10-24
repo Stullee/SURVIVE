@@ -998,7 +998,11 @@ def _agent(state: AppState, full: bool = True) -> str:
         return "agent not running"
     scope = agent.scope()
     where, params = scope.where()
-    out = [f"scope: mode={scope.mode} session={scope.session} world={scope.world_session} life={scope.life_id}"]
+    generation = scope.session - scope.world_session + 1  # 0.51.0
+    out = [
+        f"scope: mode={scope.mode} generation={generation} session={scope.session} world={scope.world_session}"
+        f" life={scope.life_id}"
+    ]
     tables: list[tuple[str, list[Any], list[str]]] = []  # each table's heading, rows and columns
     with state.db.connection() as conn:
         for table, columns, limit in (

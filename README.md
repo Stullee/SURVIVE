@@ -738,6 +738,10 @@ generation N": her lines, ventures, plan, milestones, bets, predictions and
 promises, and her unlocks go back to manual. The owner's goal carries over to
 the next generation.
 
+0.51.0 names her generation once there is more than one: on the dashboard's
+header ("Generation 2"), in the sensors JSON and on the live page ("Day 3 of
+generation 2").
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

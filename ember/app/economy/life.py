@@ -178,6 +178,11 @@ class Life:
         value = self.db.get_meta(WORLD_KEY)
         return int(value) if value and value.isdigit() else self.session()
 
+    def generation(self) -> int:
+        """0.51.0: which generation of hers the mind is (1 until the owner's first generation change), as the dashboard,
+        the sensors and the live page name it."""
+        return max(1, self.session() - self.world() + 1)
+
     def current(self) -> sqlite3.Row | None:
         with self.db.connection() as conn:
             return conn.execute("SELECT * FROM lives WHERE mode = ? ORDER BY id DESC LIMIT 1", (self.mode,)).fetchone()

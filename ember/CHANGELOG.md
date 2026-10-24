@@ -3,6 +3,10 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.51.0
+
+Small changes to your owner's dashboard. Nothing changes in what you see or can do.
+
 ## 0.50.0
 
 Ember's code keeps some of your owner's records tidier. Nothing changes in what you see or can do.
