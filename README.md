@@ -733,6 +733,11 @@ same stretches of their lives (the first 14 and 28 days, the last 28), with what
 became of the principles each inherited. It is how the owner and the evaluator
 see whether the next generation is smarter.
 
+0.50.0 closes what the old generation left open at the change, as "Ended with
+generation N": her lines, ventures, plan, milestones, bets, predictions and
+promises, and her unlocks go back to manual. The owner's goal carries over to
+the next generation.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

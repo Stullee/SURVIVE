@@ -3170,7 +3170,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.49.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.50.0 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3786,6 +3786,15 @@ aside, ends the life (state ended) and begins the next, which a grant isn't
 needed for: the money carries on. The inheritance passes in the same step. The
 new generation's plans say which generation she is and, in her first days,
 what passed to her and where (`inheritance/` in her workspace).
+
+0.50.0: in the same step, what the old generation left open closes as "Ended
+with generation N": her lines (abandoned), ventures (parked by Ember's code),
+plan steps and milestones (dropped; yours by you, as the change is yours),
+bets and predictions (void) and promises (closed), and her unlocks go back to
+manual: the next generation earns them again, and you can grant them again at
+once. Your goal carries over: the next generation works toward the same amount
+by the same day (a goal in total counts from the change). One due within a
+week isn't carried: set a new one on the Plan tab.
 
 **How you know she is smarter.** 0.49.0: the evaluation export's scorecard
 compares the generations over the same stretches of their lives (the first 14

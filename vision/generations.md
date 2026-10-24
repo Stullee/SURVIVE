@@ -8,9 +8,11 @@ card's hand-over and its checks). 0.48.0 builds the inheritance (principles, fac
 agent/inheritance.py), with three changes to this draft: the facts are `inheritance/facts.md` and the seed strategy's
 opening rather than a knowledge document, and no model writes a number, so there is none of the evaluator's to check;
 the owner strikes items rather than editing them; the letter is asked for on the card, and one call writes it. Still
-open: closing the first generation's open lines at the change, re-pinning lessons, the dress rehearsal on a copy of
-the live database, and phase 2. 0.49.0 builds the scorecard by generation ("How we know she is smarter"): a
-generation's measures over its first 14 and 28 days and its last 28, beside its predecessor's. It answers the
+open: re-pinning lessons, the dress rehearsal on a copy of the live database, and phase 2. 0.49.0 builds the scorecard
+by generation ("How we know she is smarter"): a generation's measures over its first 14 and 28 days and its last 28,
+beside its predecessor's. 0.50.0 closes the old generation's open work at the change (its lines, ventures, plan,
+milestones, bets, predictions, promises and unlocks) and carries the owner's goal, which is theirs as the rulebook
+is. It answers the
 owner's question: how can Ember evolve into a next generation that carries over the important learnings, starts with a
 clean mind, and is smarter for it, without holding on to the products her first generation failed with?*
 
