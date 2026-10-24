@@ -6523,8 +6523,12 @@
       var data = isObject(res.data) ? res.data : {};
       if (res.ok) {
         closeGenerationDialog();
+        var closed = isObject(data.closed) ? data.closed : {};
+        var ended = Object.keys(closed).reduce(function (n, k) { return n + (Number(closed[k]) || 0); }, 0);
         setStatusText("generation-status", "Generation " + count(data.generation) + " began: life #" + count(data.ended) + " ended, life #" +
-          count(data.born) + " began. The database was copied to " + asText(data.backup) + " first.", "ok");
+          count(data.born) + " began. " + (ended ? plural(ended, "open item") + " of the old mind's work closed as ended with it. " : "") +
+          (data.goal ? "Your goal carried over as #" + count(data.goal) + ". " : "") +
+          "The database was copied to " + asText(data.backup) + " first.", "ok");
         ui.generationShown = false;  // the next hand-over folds away again
         loadGeneration();
         refresh();

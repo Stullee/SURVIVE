@@ -8,7 +8,8 @@ accounts, the mailbox and its opt-outs, the owner's rulebook and library. The pr
 sorted (agent/estate.py): an adopted one becomes a line of the new mind at her first cycle (``file``), with its files
 copied into her workspace; a passive one isn't hers to work on. 0.48.0: what she learned passes as the inheritance
 the owner gave (agent/inheritance.py): her principles as inherited hypotheses, the facts of her work, her craft files
-and her letter, and a seed strategy and identity.
+and her letter, and a seed strategy and identity. 0.50.0: the old mind's open work closes as ended with its generation
+(``close``), and the owner's goal carries over (``carry_goal``).
 
 The change waits until nothing is under way: no cycle running, no request waiting for the owner or for Ember's code,
 a verdict for every product, the retired ones down. It copies the database first, as a migration does."""
@@ -20,7 +21,7 @@ import logging
 import shutil
 import sqlite3
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -29,7 +30,7 @@ from ..db import MAX_BACKUPS
 from ..economy.clock import local_date, to_iso
 from ..economy.life import LIVE_SESSION_KEY, SESSION_NO_KEY, WORLD_KEY
 from ..integrations import etsy
-from . import estate, inheritance, learning, store
+from . import estate, inheritance, learning, policy, roadmap, store
 from .store import AgentScope
 
 if TYPE_CHECKING:
@@ -171,6 +172,104 @@ def status(conn: sqlite3.Connection, agent: Agent) -> dict[str, Any]:
     }
 
 
+def close(conn: sqlite3.Connection, scope: AgentScope, number: int, by: str, now: str) -> dict[str, int]:
+    """0.50.0 (vision/generations.md, "The change"): in the change's transaction, the old mind's open work closes as
+    ended with its generation, so nothing of hers stands open forever where a later reading finds it: her lines
+    (abandoned), ventures (parked by Ember's code: only the owner kills one), plan nodes and milestones (dropped; the
+    owner's own by the owner, whose change it is), bets and predictions (void), promises (closed), and her unlocks
+    (taken back: the next generation earns them again). Returns how many of each closed."""
+    why = f"Ended with generation {number}: {by} began generation {number + 1}."
+    where, params = scope.where()
+    closed: dict[str, int] = {}
+    lines = conn.execute(
+        f"SELECT id, notes FROM projects WHERE {where} AND status IN ('idea', 'active', 'waiting')", params
+    ).fetchall()
+    for r in lines:
+        conn.execute(
+            "UPDATE projects SET status = 'abandoned', notes = ?, updated_at = ? WHERE id = ?",
+            (_noted(r["notes"], why), now, r["id"]),
+        )
+    closed["lines"] = len(lines)
+    ventures = conn.execute(
+        f"SELECT id, notes FROM ventures WHERE {where} AND stage NOT IN ('parked', 'killed')", params
+    ).fetchall()
+    for r in ventures:
+        conn.execute(
+            "UPDATE ventures SET stage = 'parked', parked_by = 'code', notes = ?, updated_at = ? WHERE id = ?",
+            (_noted(r["notes"], why), now, r["id"]),
+        )
+    closed["ventures"] = len(ventures)
+    closed["plan_nodes"] = conn.execute(
+        f"UPDATE plan_nodes SET status = 'dropped', closed_at = ?, closed_by = 'code', result = ?, updated_at = ?"
+        f" WHERE {where} AND status = 'open'",
+        (now, why[:300], now, *params),
+    ).rowcount
+    closed["milestones"] = conn.execute(
+        "UPDATE milestones SET status = 'dropped', closed_at = ?, result = ?, updated_at = ?, closed_by = CASE"
+        f" WHEN created_by = 'owner' THEN 'owner' ELSE 'code' END WHERE {where} AND status = 'open'",
+        (now, why[:600], now, *params),
+    ).rowcount
+    closed["bets"] = conn.execute(
+        f"UPDATE bets SET status = 'void', settled_at = ? WHERE {where} AND status = 'open'", (now, *params)
+    ).rowcount
+    closed["predictions"] = conn.execute(
+        f"UPDATE predictions SET status = 'void', settled_at = ?, result = ? WHERE {where} AND status = 'open'",
+        (now, why[:300], *params),
+    ).rowcount
+    closed["promises"] = conn.execute(
+        f"UPDATE obligations SET status = 'closed', closed_at = ?, closed_by = 'code', result = ? WHERE {where}"
+        " AND status = 'open'",
+        (now, why[:300], *params),
+    ).rowcount
+    closed["unlocks"] = len(policy.revoke_all(conn, scope, now, by=policy.REVOKED_BY, why=f"generation {number} ended"))
+    return closed
+
+
+def _closed(closed: dict[str, int]) -> str:
+    words = {
+        "lines": "line",
+        "ventures": "venture",
+        "plan_nodes": "plan step",
+        "milestones": "milestone",
+        "bets": "bet",
+        "predictions": "prediction",
+        "promises": "promise",
+        "unlocks": "unlock",
+    }
+    said = [_count(n, words[key]) for key, n in closed.items() if n]
+    return ", ".join(said) if said else "nothing"
+
+
+def _noted(notes: str | None, why: str, most: int = 2_000) -> str:
+    """Notes with ``why`` at their end, the oldest of them cut to fit."""
+    old = (notes or "").strip()
+    room = most - len(why) - 1
+    return (old[-room:] + "\n" + why if old else why) if room > 0 else why[:most]
+
+
+def carry_goal(
+    conn: sqlite3.Connection, goal: sqlite3.Row, number: int, new: AgentScope, by: str, today: date, now: str
+) -> int | None:
+    """0.50.0: the owner's goal (``goal``, the old mind's, read before it closed) is theirs, as the rulebook is: the
+    next generation works toward the same amount by the same day (a goal in total counts from the change: her
+    predecessor's revenue is hers no more). Its number, or None (one due too soon to set again)."""
+    per = roadmap.goal_per(goal)
+    if per is None or date.fromisoformat(goal["due"]) < today + timedelta(days=roadmap.GOAL_DAYS_MIN):
+        return None
+    goal_id, _ = roadmap.set_goal(
+        conn,
+        new,
+        per=per,
+        target=int(goal["target"]),
+        due=date.fromisoformat(goal["due"]),
+        today=today,
+        now=now,
+        who=by,
+        comment=f"Carried from generation {number} (goal #{goal['id']}) at the change.",
+    )
+    return goal_id
+
+
 def _backup(agent: Agent, number: int) -> Path:
     """A copy of the database before the change, beside the migrations' (BACKUP_PREFIX; the newest MAX_BACKUPS)."""
     folder = paths.backups_dir()
@@ -285,6 +384,8 @@ def begin(agent: Agent, by: str) -> dict[str, Any]:
             adopted = sum(1 for r in rows if r["verdict"] == "adopt")
             passive = sum(1 for r in rows if r["verdict"] == "passive")
             inherited = inheritance.write_principles(conn, scope, handed, new_session, now)
+            goal = roadmap.owner_goal(conn, scope)  # 0.50.0: carried after the old mind's work closes
+            closed = close(conn, scope, number, by or "the owner", now)
             ended, born = agent.economy.life.succeed(
                 conn,
                 now,
@@ -299,6 +400,10 @@ def begin(agent: Agent, by: str) -> dict[str, Any]:
                 agent.db.set_meta(SESSION_NO_KEY, str(new_session))
             for name in RESET:
                 conn.execute("DELETE FROM meta WHERE key = ?", (f"agent.{scope.mode}.{name}",))
+            carried: int | None = None
+            if goal is not None:
+                new = AgentScope(scope.mode, new_session, born, scope.world)
+                carried = carry_goal(conn, goal, number, new, by or "the owner", agent.clock.today(), now)
     except BaseException:
         _restore(moved)
         raise
@@ -314,7 +419,8 @@ def begin(agent: Agent, by: str) -> dict[str, Any]:
         "life",
         f"{by or 'The owner'} began generation {number + 1} of {agent.settings.agent_name}: life #{ended} ended, life"
         f" #{born} began with {_count(adopted, 'product')} adopted and {passive} passive,"
-        f" {_count(len(inherited), 'principle')} inherited",
+        f" {_count(len(inherited), 'principle')} inherited; of the old mind's work {_closed(closed)} closed"
+        + (f", your goal carried as #{carried}" if carried else ""),
         {
             "ended": ended,
             "born": born,
@@ -323,6 +429,8 @@ def begin(agent: Agent, by: str) -> dict[str, Any]:
             "copied": len(copied),
             "inherited": len(inherited),
             "written": written,
+            "closed": closed,
+            "goal": carried,
         },
     )
     return {
@@ -334,6 +442,8 @@ def begin(agent: Agent, by: str) -> dict[str, Any]:
         "copied": copied,
         "inherited": inherited,
         "written": written,
+        "closed": closed,  # 0.50.0
+        "goal": carried,
     }
 
 

@@ -49,7 +49,7 @@ def test_a_cycle_weighs_what_its_calls_cost_once_settled(data_dir: Path) -> None
     assert card.cost[cycle] == before + 1_000_000 + 2_000_000 + 600_000
     [version] = card.versions()
     assert version["cost_usd"] == round(sum(card.cost.values()) / 1_000_000, 2)
-    assert scorecard.VERSION == 2
+    assert scorecard.VERSION == 3
 
 
 def test_x2_counts_the_work_left_undone(data_dir: Path) -> None:

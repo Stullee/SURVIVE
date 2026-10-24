@@ -31,11 +31,13 @@ from typing import Any
 
 from .agent import digest
 from .economy.ledger import OWN_CORRECTIONS, SETTLED_COST
+from .economy.life import WORLD_KEY
 
 # The definitions' version: a changed floor, target or formula gets a new one. 2 (0.45.0, evaluation 2026-10-22, C2):
 # cycles weigh what their calls cost once settled (ledger.SETTLED_COST), not what was booked, and X2 counts work
-# left undone.
-VERSION = 2
+# left undone. 3 (0.49.0, vision/generations.md): by generation: each mind's weeks end at the change, and her own
+# records count for the mind that made them (a first generation's open lines and promises aren't the second's).
+VERSION = 3
 LIMITS = ("step limit reached", "the conversation got too long")  # how a cycle's work was cut (loop's end reasons)
 PRODUCT_TOOLS = ("make_document", "make_spreadsheet", "make_image", "make_cost_statement", "resize_image", "workshop")
 BATCHED_TOOLS = ("venture_update", "plan_step", "project_update")  # decisions one cycle can make together
@@ -46,6 +48,7 @@ NOT_DONE = ("error", "skipped", "interrupted", "started")  # a tool call that wa
 ANSWER_HOURS = 12  # an owner's message answered within this many hours counts as answered
 CASE_DAYS = 2  # a retrospective within this many days of what settled counts
 LOOKBACK_DAYS = 28  # calibration, evidence and the critic's cases: the last four weeks
+STRETCHES = (("first_14_days", 14, "first"), ("first_28_days", 28, "first"), ("last_28_days", 28, "last"))
 TEST_DAYS = 56  # the first tests: the last eight weeks
 WEIGHTS = {  # vision/evaluation.md: Outcome and Capability
     "outcome": {"economy": 0.6, "market": 0.4},
@@ -168,8 +171,60 @@ def _iso(moment: datetime) -> str:
     return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _moment(text: str) -> datetime:
+    return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+
+
 def _start(day: date, tz: tzinfo) -> datetime:
     return datetime.combine(day, time(0), tz).astimezone(UTC)
+
+
+@dataclass(frozen=True)
+class Mind:
+    """0.49.0 (vision/generations.md, "How we know she is smarter"): one mind of hers: a generation live (its session,
+    the generation's number) or a dry-run session, from the change that began it (else its first cycle) until the next
+    change, or now."""
+
+    session: int
+    generation: int | None  # None: a dry-run session of a test world before the current one
+    start: datetime
+    end: datetime | None  # None: the current mind
+    after: bool = False  # it began where another mind ended (its weeks start there, not on the Monday)
+
+
+def minds(conn: sqlite3.Connection, mode: str) -> list[Mind]:
+    """Every mind of a mode's records, the oldest first, by the cycles' sessions. Live, the world is always 0, so a
+    session is its generation less one; a dry run's current test world began with the session the meta names. A mind
+    that a generation change began starts at the change (its predecessor's life ended then: agent/generation.py),
+    else at its first cycle."""
+    rows = conn.execute(
+        "SELECT session, MIN(started_at) FROM cycles WHERE simulated = ? GROUP BY session ORDER BY MIN(started_at)",
+        (1 if mode == "dry_run" else 0,),
+    ).fetchall()
+    changes = [
+        _moment(str(r[0]))
+        for r in conn.execute(
+            "SELECT ended_at FROM lives WHERE mode = ? AND state = 'ended' AND end_reason LIKE 'succeeded by"
+            " generation %' AND ended_at IS NOT NULL ORDER BY ended_at",
+            (mode,),
+        )
+    ]
+    world = 0
+    if mode == "dry_run":
+        row = conn.execute("SELECT value FROM meta WHERE key = ?", (WORLD_KEY,)).fetchone()
+        world = int(row[0]) if row and str(row[0]).isdigit() else (int(rows[-1][0]) if rows else 0)
+    starts = []
+    for n, (_, first) in enumerate(rows):
+        cycle = _moment(first)
+        before = starts[-1] if starts else None
+        change = [t for t in changes if t <= cycle and (before is None or t > before)]
+        starts.append(change[-1] if n > 0 and change else cycle)
+    found = []
+    for n, (session, _) in enumerate(rows):
+        generation = int(session) - world + 1 if int(session) >= world else None
+        end = starts[n + 1] if n + 1 < len(rows) else None
+        found.append(Mind(int(session), generation, starts[n], end, after=n > 0))
+    return found
 
 
 def window(first: date, days: int, now: datetime, tz: tzinfo) -> Window:
@@ -181,14 +236,19 @@ def window(first: date, days: int, now: datetime, tz: tzinfo) -> Window:
 
 
 class Scorer:
-    """The measures of one mode's records ('live' or 'dry_run') in a database."""
+    """The measures of one mode's records ('live' or 'dry_run') in a database; 0.49.0, of one mind's (``mind``: a
+    generation of hers): her own records by its session, and the world's (the shop's numbers, the ledger) in its time,
+    from the change that began it to the next."""
 
-    def __init__(self, conn: sqlite3.Connection, mode: str, now: datetime, tz: tzinfo) -> None:
+    def __init__(
+        self, conn: sqlite3.Connection, mode: str, now: datetime, tz: tzinfo, mind: Mind | None = None
+    ) -> None:
         self.conn = conn
         self.mode = mode
         self.sim = 1 if mode == "dry_run" else 0
         self.now = now
         self.tz = tz
+        self.mind = mind
         # 0.45.0 (scorecard 2, evaluation 2026-10-22, C2): each cycle's calls at what they cost once settled
         # (ledger.SETTLED_COST), once: E3, V1, the alarms and by version weigh by it. Version 1 weighed the calls'
         # booked cost: E3 read 74.6% for a real 78.7% in the week 10-12 to 10-18, 0.39.6 $0.922 a cycle for $0.258.
@@ -201,6 +261,12 @@ class Scorer:
             )
         }
 
+    def mine(self, alias: str = "") -> tuple[str, tuple[Any, ...]]:
+        """0.49.0: the clause that keeps a query of her own records to this mind's (none without one)."""
+        if self.mind is None:
+            return "", ()
+        return f" AND {alias + '.' if alias else ''}session = ?", (self.mind.session,)
+
     def one(self, sql: str, params: tuple[Any, ...] = ()) -> Any:
         row = self.conn.execute(sql, params).fetchone()
         return row[0] if row else None
@@ -211,18 +277,34 @@ class Scorer:
     # --- the weeks ---
 
     def weeks(self) -> list[Window]:
-        """Each of the owner's weeks from the one of her first cycle to this one."""
-        first = self.one("SELECT MIN(started_at) FROM cycles WHERE simulated = ?", (self.sim,))
+        """Each of the owner's weeks from the one of her first cycle to this one; 0.49.0, of this mind's: from its
+        start (a change, or its first cycle) to the next change, its first and last weeks cut there."""
+        mine, params = self.mine()
+        first = self.one(f"SELECT MIN(started_at) FROM cycles WHERE simulated = ?{mine}", (self.sim, *params))
         if first is None:
             return []
-        day = datetime.strptime(first, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC).astimezone(self.tz).date()
+        day = (self.mind.start if self.mind is not None else _moment(first)).astimezone(self.tz).date()
         monday = day - timedelta(days=day.weekday())
-        today = self.now.astimezone(self.tz).date()
+        until = self.mind.end if self.mind is not None and self.mind.end is not None else self.now
+        last = until.astimezone(self.tz).date()
         found = []
-        while monday <= today:
-            found.append(window(monday, 7, self.now, self.tz))
+        while monday <= last:
+            found.append(self.cut(window(monday, 7, self.now, self.tz)))
             monday += timedelta(days=7)
         return found
+
+    def cut(self, w: Window) -> Window:
+        """0.49.0: a window cut to this mind's time: from the change that began it, until the next."""
+        if self.mind is None:
+            return w
+        start, end = _moment(w.start), _moment(w.end)
+        if self.mind.after:
+            start = max(start, self.mind.start)
+        if self.mind.end is not None:
+            end = min(end, self.mind.end)
+        complete = w.complete or (self.mind.end is not None and self.now >= end and end < _moment(w.end))
+        first, last = start.astimezone(self.tz).date(), (end - timedelta(seconds=1)).astimezone(self.tz).date()
+        return Window(_iso(start), _iso(end), first, max(first, min(last, w.last)), complete)
 
     def measure(self, w: Window) -> dict[str, tuple[float | None, int]]:
         """Every computed measure of a window: its value (None: nothing to measure) and its sample."""
@@ -298,11 +380,12 @@ class Scorer:
         return [{**dict(c), "cost": self.cost.get(int(c["id"]), 0)} for c in cycles]
 
     def _cycles(self, w: Window) -> list[dict[str, Any]]:
+        mine, params = self.mine("c")
         return self._costed(
             self.rows(
-                "SELECT c.* FROM cycles c WHERE c.simulated = ? AND c.started_at >= ? AND c.started_at < ?"
+                f"SELECT c.* FROM cycles c WHERE c.simulated = ?{mine} AND c.started_at >= ? AND c.started_at < ?"
                 " ORDER BY c.id",
-                (self.sim, w.start, w.end),
+                (self.sim, *params, w.start, w.end),
             )
         )
 
@@ -310,6 +393,7 @@ class Scorer:
         """Whether a cycle moved something (E3's list)."""
         cid, start, end = c["id"], c["started_at"], c["ended_at"] or c["started_at"]
         marks = ", ".join("?" for _ in PRODUCT_TOOLS)
+        mine, params = self.mine()
         checks: tuple[tuple[str, tuple[Any, ...]], ...] = (
             ("SELECT 1 FROM approvals WHERE cycle_id = ?", (cid,)),
             (
@@ -324,14 +408,14 @@ class Scorer:
                 (cid,),
             ),
             (
-                "SELECT 1 FROM plan_nodes WHERE mode = ? AND status = 'done' AND closed_by IN ('agent', 'code')"
+                f"SELECT 1 FROM plan_nodes WHERE mode = ?{mine} AND status = 'done' AND closed_by IN ('agent', 'code')"
                 " AND closed_at >= ? AND closed_at <= ?",
-                (self.mode, start, end),
+                (self.mode, *params, start, end),
             ),
             (
-                "SELECT 1 FROM ventures WHERE mode = ? AND stage_at >= ? AND stage_at <= ? AND NOT (stage = 'parked'"
-                " AND julianday(stage_at) - julianday(created_at) < 1)",
-                (self.mode, start, end),
+                f"SELECT 1 FROM ventures WHERE mode = ?{mine} AND stage_at >= ? AND stage_at <= ? AND NOT (stage ="
+                " 'parked' AND julianday(stage_at) - julianday(created_at) < 1)",
+                (self.mode, *params, start, end),
             ),
         )
         return any(self.one(sql + " LIMIT 1", params) for sql, params in checks)
@@ -344,10 +428,11 @@ class Scorer:
         return sum(int(c["cost"]) for c in cycles if self.moved(c)) / total, len(cycles)
 
     def cost_per_shipped(self, w: Window) -> tuple[float | None, int]:
+        mine, params = self.mine()
         rows = self.rows(
-            "SELECT executor, type FROM approvals WHERE mode = ? AND decided_at >= ? AND decided_at < ?"
+            f"SELECT executor, type FROM approvals WHERE mode = ?{mine} AND decided_at >= ? AND decided_at < ?"
             " AND status IN ('approved', 'approved_with_changes', 'done', 'failed')",
-            (self.mode, w.start, w.end),
+            (self.mode, *params, w.start, w.end),
         )
         shipped = sum(
             0.2 if r["executor"] in SMALL_REQUESTS else 1.0
@@ -408,20 +493,22 @@ class Scorer:
     # --- execution ---
 
     def tools_done(self, w: Window) -> tuple[float | None, int]:
+        mine, params = self.mine("c")
         row = self.conn.execute(
             "SELECT COUNT(*), COALESCE(SUM(t.status = 'ok'), 0) FROM tool_calls t JOIN cycles c ON c.id = t.cycle_id"
-            " WHERE c.simulated = ? AND t.phase = 'act' AND t.started_at >= ? AND t.started_at < ?",
-            (self.sim, w.start, w.end),
+            f" WHERE c.simulated = ?{mine} AND t.phase = 'act' AND t.started_at >= ? AND t.started_at < ?",
+            (self.sim, *params, w.start, w.end),
         ).fetchone()
         return (row[1] / row[0], int(row[0])) if row[0] else (None, 0)
 
     def not_done(self, w: Window) -> int:
         """The work-step tool calls that didn't end ok (refused, failed, skipped or cut off)."""
+        mine, params = self.mine("c")
         return int(
             self.one(
-                "SELECT COUNT(*) FROM tool_calls t JOIN cycles c ON c.id = t.cycle_id WHERE c.simulated = ?"
+                f"SELECT COUNT(*) FROM tool_calls t JOIN cycles c ON c.id = t.cycle_id WHERE c.simulated = ?{mine}"
                 " AND t.phase = 'act' AND t.status <> 'ok' AND t.started_at >= ? AND t.started_at < ?",
-                (self.sim, w.start, w.end),
+                (self.sim, *params, w.start, w.end),
             )
         )
 
@@ -429,11 +516,12 @@ class Scorer:
         """The work cycles whose work no limit cut and that left nothing undone (``left_undone``). Version 1 counted
         every call not done (the digest's undone), a refusal the next call put right too: in the week 10-12 to 10-18
         X2 read 10% while 86% of the cycles weren't cut by a limit (the evaluation of 2026-10-22, Measurement 4)."""
+        mine, params = self.mine("c")
         cycles = self.rows(
-            "SELECT c.id, c.act_end_reason FROM cycles c WHERE c.simulated = ? AND c.started_at >= ?"
+            f"SELECT c.id, c.act_end_reason FROM cycles c WHERE c.simulated = ?{mine} AND c.started_at >= ?"
             " AND c.started_at < ? AND EXISTS (SELECT 1 FROM llm_calls l WHERE l.cycle_id = c.id"
             " AND l.purpose = 'work')",
-            (self.sim, w.start, w.end),
+            (self.sim, *params, w.start, w.end),
         )
         finished = sum(1 for c in cycles if c["act_end_reason"] not in LIMITS and not self.left_undone(int(c["id"])))
         return (finished / len(cycles), len(cycles)) if cycles else (None, 0)
@@ -457,24 +545,26 @@ class Scorer:
         )
 
     def first_pass(self, w: Window) -> tuple[float | None, int]:
+        mine, params = self.mine()
         row = self.conn.execute(
             "SELECT COUNT(*), COALESCE(SUM(status IN ('approved', 'done', 'failed') AND final_payload IS NULL), 0)"
-            " FROM approvals WHERE mode = ? AND decided_at >= ? AND decided_at < ? AND status IN ('approved',"
+            f" FROM approvals WHERE mode = ?{mine} AND decided_at >= ? AND decided_at < ? AND status IN ('approved',"
             " 'approved_with_changes', 'rejected', 'done', 'failed') AND COALESCE(decided_by, '') NOT LIKE"
             " 'Ember''s code%'",
-            (self.mode, w.start, w.end),
+            (self.mode, *params, w.start, w.end),
         ).fetchone()
         return (row[1] / row[0], int(row[0])) if row[0] else (None, 0)
 
     def critic_score(self, w: Window) -> tuple[float | None, int]:
+        mine, params = self.mine("q")
         scores = [
             r[0]
             for r in self.rows(
-                "SELECT q.score FROM quality_checks q WHERE q.mode = ? AND q.status = 'ok' AND q.created_at < ?"
-                " AND q.id = (SELECT MAX(q2.id) FROM quality_checks q2 WHERE q2.mode = q.mode AND q2.status = 'ok'"
-                " AND q2.created_at < ? AND COALESCE(q2.listing_id, -q2.project_id) = COALESCE(q.listing_id,"
-                " -q.project_id))",
-                (self.mode, w.end, w.end),
+                f"SELECT q.score FROM quality_checks q WHERE q.mode = ?{mine} AND q.status = 'ok' AND q.created_at < ?"
+                " AND q.id = (SELECT MAX(q2.id) FROM quality_checks q2 WHERE q2.mode = q.mode AND q2.session ="
+                " q.session AND q2.status = 'ok' AND q2.created_at < ? AND COALESCE(q2.listing_id, -q2.project_id) ="
+                " COALESCE(q.listing_id, -q.project_id))",
+                (self.mode, *params, w.end, w.end),
             )
         ]
         return (statistics.fmean(scores), len(scores)) if scores else (None, 0)
@@ -483,13 +573,14 @@ class Scorer:
 
     def batching(self, w: Window) -> tuple[float | None, int]:
         marks = ", ".join("?" for _ in BATCHED_TOOLS)
+        mine, params = self.mine("c")
         counts = [
             r[0]
             for r in self.rows(
-                f"SELECT COUNT(*) FROM tool_calls t JOIN cycles c ON c.id = t.cycle_id WHERE c.simulated = ?"
+                f"SELECT COUNT(*) FROM tool_calls t JOIN cycles c ON c.id = t.cycle_id WHERE c.simulated = ?{mine}"
                 f" AND t.status = 'ok' AND t.tool IN ({marks}) AND c.started_at >= ? AND c.started_at < ?"
                 " GROUP BY t.cycle_id",
-                (self.sim, *BATCHED_TOOLS, w.start, w.end),
+                (self.sim, *params, *BATCHED_TOOLS, w.start, w.end),
             )
         ]
         return (statistics.fmean(counts), len(counts)) if counts else (None, 0)
@@ -497,10 +588,11 @@ class Scorer:
     # --- learning ---
 
     def bet_coverage(self, w: Window) -> tuple[float | None, int]:
+        mine, params = self.mine()
         live = self.rows(
-            "SELECT DISTINCT project_id FROM plan_nodes WHERE mode = ? AND level = 'product' AND project_id IS NOT"
-            " NULL AND live_since IS NOT NULL AND live_since <= ? AND (status = 'open' OR closed_at >= ?)",
-            (self.mode, w.last.isoformat(), w.end),
+            f"SELECT DISTINCT project_id FROM plan_nodes WHERE mode = ?{mine} AND level = 'product' AND project_id IS"
+            " NOT NULL AND live_since IS NOT NULL AND live_since <= ? AND (status = 'open' OR closed_at >= ?)",
+            (self.mode, *params, w.last.isoformat(), w.end),
         )
         if not live:
             return None, 0
@@ -517,28 +609,29 @@ class Scorer:
 
     def settled(self, w: Window) -> list[tuple[str, str]]:
         """What settled in a window, as the daily review names it (learning.settled): its subject and when."""
-        params = (self.mode, w.start, w.end)
+        mine, own = self.mine()
+        params = (self.mode, *own, w.start, w.end)
         queries = (
-            ("bet #", "SELECT id, settled_at FROM bets WHERE mode = ? AND settled_at >= ? AND settled_at < ?"),
+            ("bet #", f"SELECT id, settled_at FROM bets WHERE mode = ?{mine} AND settled_at >= ? AND settled_at < ?"),
             (
                 "milestone #",
-                "SELECT id, closed_at FROM milestones WHERE mode = ? AND metric IS NOT NULL AND status IN ('done',"
-                " 'missed') AND closed_at >= ? AND closed_at < ?",
+                f"SELECT id, closed_at FROM milestones WHERE mode = ?{mine} AND metric IS NOT NULL AND status IN"
+                " ('done', 'missed') AND closed_at >= ? AND closed_at < ?",
             ),
             (
                 "project #",
-                "SELECT id, updated_at FROM projects WHERE mode = ? AND status IN ('succeeded', 'failed',"
+                f"SELECT id, updated_at FROM projects WHERE mode = ?{mine} AND status IN ('succeeded', 'failed',"
                 " 'abandoned') AND updated_at >= ? AND updated_at < ?",
             ),
             (
                 "venture #",
-                "SELECT id, stage_at FROM ventures WHERE mode = ? AND stage IN ('parked', 'killed') AND stage_at >= ?"
-                " AND stage_at < ?",
+                f"SELECT id, stage_at FROM ventures WHERE mode = ?{mine} AND stage IN ('parked', 'killed') AND"
+                " stage_at >= ? AND stage_at < ?",
             ),
             (
                 "request #",
-                "SELECT id, decided_at FROM approvals WHERE mode = ? AND status = 'rejected' AND decided_at >= ?"
-                " AND decided_at < ?",
+                f"SELECT id, decided_at FROM approvals WHERE mode = ?{mine} AND status = 'rejected' AND"
+                " decided_at >= ? AND decided_at < ?",
             ),
         )
         return [(f"{prefix}{r[0]}", str(r[1])) for prefix, sql in queries for r in self.rows(sql, params)]
@@ -547,23 +640,25 @@ class Scorer:
         items = self.settled(w)
         if not items:
             return None, 0
+        mine, params = self.mine()
         covered = sum(
             1
             for subject, when in items
             if self.one(
-                "SELECT 1 FROM cases WHERE mode = ? AND subject = ? AND julianday(created_at) <= julianday(?) + ?"
-                " LIMIT 1",
-                (self.mode, subject, when, CASE_DAYS),
+                f"SELECT 1 FROM cases WHERE mode = ?{mine} AND subject = ? AND julianday(created_at) <= julianday(?)"
+                " + ? LIMIT 1",
+                (self.mode, *params, subject, when, CASE_DAYS),
             )
         )
         return covered / len(items), len(items)
 
     def calibration(self, w: Window) -> tuple[float | None, int]:
         since = _iso(datetime.strptime(w.end, "%Y-%m-%dT%H:%M:%SZ") - timedelta(days=LOOKBACK_DAYS))
+        mine, params = self.mine()
         rows = self.rows(
-            "SELECT probability, status FROM predictions WHERE mode = ? AND status IN ('hit', 'miss')"
+            f"SELECT probability, status FROM predictions WHERE mode = ?{mine} AND status IN ('hit', 'miss')"
             " AND settled_at >= ? AND settled_at < ?",
-            (self.mode, since, w.end),
+            (self.mode, *params, since, w.end),
         )
         if not rows:
             return None, 0
@@ -572,10 +667,11 @@ class Scorer:
     # --- venturing ---
 
     def _moves(self, w: Window) -> list[Any]:
+        mine, params = self.mine()
         return self.rows(
-            "SELECT * FROM ventures WHERE mode = ? AND stage_at >= ? AND stage_at < ? AND stage IN ('researching',"
-            " 'proposed', 'parked', 'killed')",
-            (self.mode, w.start, w.end),
+            f"SELECT * FROM ventures WHERE mode = ?{mine} AND stage_at >= ? AND stage_at < ? AND stage IN"
+            " ('researching', 'proposed', 'parked', 'killed')",
+            (self.mode, *params, w.start, w.end),
         )
 
     def cost_per_decision(self, w: Window) -> tuple[float | None, int]:
@@ -601,32 +697,35 @@ class Scorer:
 
     def evidence_quality(self, w: Window) -> tuple[float | None, int]:
         since = _iso(datetime.strptime(w.end, "%Y-%m-%dT%H:%M:%SZ") - timedelta(days=LOOKBACK_DAYS))
+        mine, params = self.mine()
         row = self.conn.execute(
-            "SELECT COUNT(*), COALESCE(SUM(source = 'independent'), 0) FROM evidence WHERE mode = ? AND"
+            f"SELECT COUNT(*), COALESCE(SUM(source = 'independent'), 0) FROM evidence WHERE mode = ?{mine} AND"
             " created_at >= ? AND created_at < ?",
-            (self.mode, since, w.end),
+            (self.mode, *params, since, w.end),
         ).fetchone()
         return (row[1] / row[0], int(row[0])) if row[0] else (None, 0)
 
     def case_realism(self, w: Window) -> tuple[float | None, int]:
         since = _iso(datetime.strptime(w.end, "%Y-%m-%dT%H:%M:%SZ") - timedelta(days=LOOKBACK_DAYS))
+        mine, params = self.mine("v")
         ratios = [
             max(0.0, min(r[0] / r[1], 2.0))
             for r in self.rows(
                 "SELECT k.ev_eur, c.ev_eur FROM venture_critiques k JOIN venture_cases c ON c.id = k.case_id JOIN"
-                " ventures v ON v.id = k.venture_id WHERE v.mode = ? AND k.status = 'ok' AND c.ev_eur > 0"
+                f" ventures v ON v.id = k.venture_id WHERE v.mode = ?{mine} AND k.status = 'ok' AND c.ev_eur > 0"
                 " AND k.created_at >= ? AND k.created_at < ?",
-                (self.mode, since, w.end),
+                (self.mode, *params, since, w.end),
             )
         ]
         return (statistics.median(ratios), len(ratios)) if ratios else (None, 0)
 
     def first_tests(self, w: Window) -> tuple[float | None, int]:
         since = _iso(datetime.strptime(w.end, "%Y-%m-%dT%H:%M:%SZ") - timedelta(days=TEST_DAYS))
+        mine, params = self.mine()
         row = self.conn.execute(
-            "SELECT COUNT(*), COALESCE(SUM(status = 'done'), 0) FROM milestones WHERE mode = ? AND kind ="
+            f"SELECT COUNT(*), COALESCE(SUM(status = 'done'), 0) FROM milestones WHERE mode = ?{mine} AND kind ="
             " 'first_test' AND status IN ('done', 'missed') AND closed_at >= ? AND closed_at < ?",
-            (self.mode, since, w.end),
+            (self.mode, *params, since, w.end),
         ).fetchone()
         return (row[1] / row[0], int(row[0])) if row[0] else (None, 0)
 
@@ -644,10 +743,11 @@ class Scorer:
 
     def promises_kept(self, w: Window) -> tuple[float | None, int]:
         today = self.now.astimezone(self.tz).date().isoformat()
+        mine, params = self.mine()
         rows = self.rows(
-            "SELECT due, closed_at FROM obligations WHERE mode = ? AND kind = 'promise' AND due >= ? AND due <= ?"
-            " AND due < ?",
-            (self.mode, w.first.isoformat(), w.last.isoformat(), today),
+            f"SELECT due, closed_at FROM obligations WHERE mode = ?{mine} AND kind = 'promise' AND due >= ? AND"
+            " due <= ? AND due < ?",
+            (self.mode, *params, w.first.isoformat(), w.last.isoformat(), today),
         )
         if not rows:
             return None, 0
@@ -662,11 +762,12 @@ class Scorer:
 
     def answers(self, w: Window) -> tuple[float | None, int]:
         fresh = _iso(self.now - timedelta(hours=ANSWER_HOURS))
+        mine, params = self.mine("o")
         rows = self.rows(
             "SELECT o.created_at, a.created_at FROM messages o LEFT JOIN messages a ON a.id = o.answered_by"
-            " WHERE o.mode = ? AND o.sender = 'owner' AND o.created_at >= ? AND o.created_at < ?"
+            f" WHERE o.mode = ?{mine} AND o.sender = 'owner' AND o.created_at >= ? AND o.created_at < ?"
             " AND (o.created_at < ? OR o.answered_by IS NOT NULL)",
-            (self.mode, w.start, w.end, fresh),
+            (self.mode, *params, w.start, w.end, fresh),
         )
         if not rows:
             return None, 0
@@ -680,10 +781,11 @@ class Scorer:
         return on_time / len(rows), len(rows)
 
     def self_starting(self, w: Window) -> tuple[float | None, int]:
+        mine, params = self.mine()
         row = self.conn.execute(
-            "SELECT COUNT(*), COALESCE(SUM(trigger <> 'owner'), 0) FROM cycles WHERE simulated = ? AND"
+            f"SELECT COUNT(*), COALESCE(SUM(trigger <> 'owner'), 0) FROM cycles WHERE simulated = ?{mine} AND"
             " started_at >= ? AND started_at < ?",
-            (self.sim, w.start, w.end),
+            (self.sim, *params, w.start, w.end),
         ).fetchone()
         return (row[1] / row[0], int(row[0])) if row[0] else (None, 0)
 
@@ -785,20 +887,62 @@ def headline(scores: dict[str, float | None]) -> dict[str, Any]:
     return found
 
 
+def _scored(scorer: Scorer, w: Window) -> dict[str, Any]:
+    shown, scores = parts(scorer.measure(w))
+    return {
+        "from": w.first.isoformat(),
+        "to": w.last.isoformat(),
+        "complete": w.complete,
+        "measures": shown,
+        "parts": scores,
+        **headline(scores),
+    }
+
+
+def stretch(scorer: Scorer, days: int, which: str) -> Window:
+    """0.49.0: a mind's first or last ``days`` days (its last: until the change, or now), cut to its time."""
+    mind = scorer.mind
+    assert mind is not None
+    end = mind.end or scorer.now
+    start = mind.start if which == "first" else max(mind.start, end - timedelta(days=days))
+    stop = min(start + timedelta(days=days), end) if which == "first" else end
+    reach = start + timedelta(days=days) if mind.end is None else min(start + timedelta(days=days), mind.end)
+    complete = scorer.now >= reach if which == "first" else mind.end is not None
+    first = start.astimezone(scorer.tz).date()
+    last = max(first, (stop - timedelta(seconds=1)).astimezone(scorer.tz).date())
+    return Window(_iso(start), _iso(stop), first, last, complete)
+
+
+def inherited(conn: sqlite3.Connection, mode: str, session: int) -> dict[str, int]:
+    """0.49.0: what became of the principles a mind inherited: established, disputed or retired by her own cases, or
+    still hypotheses."""
+    rows = conn.execute(
+        "SELECT confidence, status FROM principles WHERE mode = ? AND session = ? AND inherited IS NOT NULL",
+        (mode, session),
+    ).fetchall()
+    found = {"inherited": len(rows), "established": 0, "hypothesis": 0, "disputed": 0, "retired": 0}
+    for confidence, status in rows:
+        found["retired" if status == "retired" else str(confidence)] += 1
+    return found
+
+
 def card(conn: sqlite3.Connection, mode: str, now: datetime, tz: tzinfo) -> dict[str, Any]:
-    """The whole scorecard of one mode's records: every week, by version, the alarms and the definitions."""
-    scorer = Scorer(conn, mode, now, tz)
-    weeks = []
-    for w in scorer.weeks():
-        shown, scores = parts(scorer.measure(w))
-        weeks.append(
+    """The whole scorecard of one mode's records: every week, by version, the alarms and the definitions; 0.49.0, by
+    generation: each mind's weeks (cut at the change) and its first and last days side by side."""
+    everyone = Scorer(conn, mode, now, tz)
+    weeks, generations = [], []
+    scorer = everyone
+    for mind in minds(conn, mode):
+        scorer = Scorer(conn, mode, now, tz, mind)
+        tag = {"session": mind.session, "generation": mind.generation}
+        weeks += [{**tag, **_scored(scorer, w)} for w in scorer.weeks()]
+        generations.append(
             {
-                "from": w.first.isoformat(),
-                "to": w.last.isoformat(),
-                "complete": w.complete,
-                "measures": shown,
-                "parts": scores,
-                **headline(scores),
+                **tag,
+                "from": _iso(mind.start),
+                "to": _iso(mind.end) if mind.end is not None else None,
+                "stretches": {name: _scored(scorer, stretch(scorer, days, which)) for name, days, which in STRETCHES},
+                "inherited": inherited(conn, mode, mind.session),
             }
         )
     return {
@@ -807,8 +951,9 @@ def card(conn: sqlite3.Connection, mode: str, now: datetime, tz: tzinfo) -> dict
         "mode": mode,
         "time_zone": str(tz),
         "weeks": weeks,
-        "versions": scorer.versions(),
-        "alarms": scorer.alarms(),
+        "generations": generations,
+        "versions": everyone.versions(),
+        "alarms": scorer.alarms(),  # the current mind's
         "definitions": [
             {
                 "key": k.key,
@@ -848,15 +993,22 @@ def markdown(data: dict[str, Any], weeks: int = 6) -> str:
             f"| {name.replace('_', ' ')} | {a['cycles']} | ${a['spent_usd']:.2f} | {_pct(a['productive_spend'])} |"
             f" {a['tool_calls_not_done']} | {kept} | {a['cycles_the_owner_started']} |"
         )
+    labelled = len(data.get("generations", [])) > 1  # 0.49.0
+    if labelled:
+        out += _generations(data["generations"])
     shown = data["weeks"][-weeks:]
     if shown:
-        out += ["", "## Weeks", "", "| | " + " | ".join(_week(w) for w in shown) + " |"]
+        out += ["", "## Weeks", "", "| | " + " | ".join(_week(w, labelled) for w in shown) + " |"]
         out.append("|---|" + "---|" * len(shown))
         for key in ("outcome", "capability"):
             out.append(f"| **{key.capitalize()}** | " + " | ".join(_num(w[key]) for w in shown) + " |")
         for part in PARTS:
             out.append(f"| {part} | " + " | ".join(_num(w["parts"][part]) for w in shown) + " |")
-        out += ["", "| Measure | " + " | ".join(_week(w) for w in shown) + " |", "|---|" + "---|" * len(shown)]
+        out += [
+            "",
+            "| Measure | " + " | ".join(_week(w, labelled) for w in shown) + " |",
+            "|---|" + "---|" * len(shown),
+        ]
         for kpi in DEFINITIONS:
             cells = []
             for w in shown:
@@ -880,8 +1032,59 @@ def markdown(data: dict[str, Any], weeks: int = 6) -> str:
     return "\n".join(out) + "\n"
 
 
-def _week(w: dict[str, Any]) -> str:
-    return f"{w['from'][5:]} to {w['to'][5:]}" + ("" if w["complete"] else " (so far)")
+def _week(w: dict[str, Any], labelled: bool = False) -> str:
+    mind = f" ({_mind(w)})" if labelled else ""  # 0.49.0: once there are several generations
+    return f"{w['from'][5:]} to {w['to'][5:]}{mind}" + ("" if w["complete"] else " (so far)")
+
+
+def _mind(g: dict[str, Any]) -> str:
+    return f"gen {g['generation']}" if g.get("generation") else f"session {g['session']}"
+
+
+def _generations(generations: list[dict[str, Any]]) -> list[str]:
+    """0.49.0: each generation's first 14 and 28 days and its last 28, side by side, and its inherited principles."""
+    columns = [
+        (g, name, label)
+        for g in generations
+        for name, label in (
+            ("first_14_days", "first 14 days"),
+            ("first_28_days", "first 28 days"),
+            ("last_28_days", "last 28 days"),
+        )
+    ]
+    head = [
+        f"{_mind(g)}, {label}" + ("" if g["stretches"][name]["complete"] else " (so far)") for g, name, label in columns
+    ]
+    out = [
+        "",
+        "## Generations",
+        "",
+        "Each generation's own records (the shop's numbers are every generation's) over the same stretches of its"
+        " life.",
+        "",
+        "| | " + " | ".join(head) + " |",
+        "|---|" + "---|" * len(columns),
+    ]
+    for key in ("outcome", "capability"):
+        out.append(
+            f"| **{key.capitalize()}** | " + " | ".join(_num(g["stretches"][n][key]) for g, n, _ in columns) + " |"
+        )
+    for part in PARTS:
+        out.append(f"| {part} | " + " | ".join(_num(g["stretches"][n]["parts"][part]) for g, n, _ in columns) + " |")
+    for kpi in DEFINITIONS:
+        cells = []
+        for g, n, _ in columns:
+            m = g["stretches"][n]["measures"][kpi.key]
+            cells.append("–" if m["value"] is None else f"{_value(m['value'], kpi.unit)} (n {m['sample']})")
+        out.append(f"| {kpi.key} {kpi.name} | " + " | ".join(cells) + " |")
+    for g in generations:
+        i = g["inherited"]
+        if i["inherited"]:
+            out.append(
+                f"\n{_mind(g)} inherited {i['inherited']} principles: {i['established']} established by her own cases,"
+                f" {i['disputed']} disputed, {i['retired']} retired, {i['hypothesis']} still hypotheses."
+            )
+    return out
 
 
 def _num(value: float | None) -> str:
