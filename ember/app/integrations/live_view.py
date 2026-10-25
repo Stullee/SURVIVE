@@ -365,6 +365,7 @@ def snapshot(agent: Agent) -> live.Snapshot:
         at=local,
         simulated=agent.mode == "dry_run",
         life_no=life_no,
+        generation=economy.life.generation(),  # 0.51.0
         age_days=age,
         balance=micros_to_usd(status.balance),
         runway_days=min(runway, RUNWAY_CAP_DAYS) if runway is not None else None,

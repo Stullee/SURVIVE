@@ -536,6 +536,7 @@ class Economy:
             "name": self.settings.agent_name,
             "mode": self.mode,
             "life_id": status.life_id,
+            "generation": self.life.generation(),  # 0.51.0
             "state": status.state,
             "state_reason": status.reason,
             "critical": status.critical,
@@ -629,6 +630,7 @@ class Economy:
             "name": self.settings.agent_name,
             "state": status.state,
             "mode": self.mode,
+            "generation": self.life.generation(),  # 0.51.0
             "safe_mode": self.loaded.safe_mode,
             "balance_usd": round(micros_to_usd(status.balance), 2),
             "runway_days": round(min(runway, RUNWAY_CAP_DAYS), 1) if runway is not None else RUNWAY_CAP_DAYS,

@@ -85,6 +85,7 @@ class Snapshot:
     at: datetime  # the owner's local time
     simulated: bool = False
     life_no: int = 1
+    generation: int = 1  # 0.51.0: after the owner's generation change, her days count in it, not in her lives
     age_days: float | None = None
     balance: float = 0.0
     runway_days: float | None = None
@@ -187,6 +188,8 @@ class Words:
 
     def age(self, s: Snapshot) -> str:
         day = self.number(int(s.age_days or 0) + 1)
+        if s.generation > 1:  # 0.51.0
+            return f"Tag {day} der {s.generation}. Generation"
         return f"Tag {day}" + (f" seines {s.life_no}. Lebens" if s.life_no > 1 else "")
 
     def times(self, count: int) -> str:
@@ -353,6 +356,8 @@ class English(Words):
 
     def age(self, s: Snapshot) -> str:
         day = self.number(int(s.age_days or 0) + 1)
+        if s.generation > 1:  # 0.51.0
+            return f"Day {day} of generation {s.generation}"
         return f"Day {day}" + (f" of life no. {s.life_no}" if s.life_no > 1 else "")
 
     def times(self, count: int) -> str:

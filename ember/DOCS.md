@@ -3170,7 +3170,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.50.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.51.0 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3796,6 +3796,11 @@ once. Your goal carries over: the next generation works toward the same amount
 by the same day (a goal in total counts from the change). One due within a
 week isn't carried: set a new one on the Plan tab.
 
+**Her name.** 0.51.0: she is still Ember. After a change the dashboard's header
+says which generation she is ("Generation 2 · Life 3"), the sensors JSON has
+`generation`, and the live page counts her days in her generation ("Day 3 of
+generation 2", "Tag 3 der 2. Generation") instead of in her lives.
+
 **How you know she is smarter.** 0.49.0: the evaluation export's scorecard
 compares the generations over the same stretches of their lives (the first 14
 and 28 days, the last 28) and says which inherited principles her own cases
@@ -3832,7 +3837,8 @@ rest:
         value_template: "{{ value_json.state }}"
 ```
 
-The JSON also has `mode` (`live` or `dry_run`), `runway_known` (runway is
+The JSON also has `mode` (`live` or `dry_run`), `generation` (0.51.0: 1 until
+your first generation change), `runway_known` (runway is
 reported as 365 days while it is unknown, for example before any spending),
 `net_runway_days` (the runway net of revenue and expenses; 365 while Ember earns
 at least what it spends or the runway is unknown),

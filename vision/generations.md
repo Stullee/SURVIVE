@@ -12,7 +12,7 @@ open: re-pinning lessons, the dress rehearsal on a copy of the live database, an
 by generation ("How we know she is smarter"): a generation's measures over its first 14 and 28 days and its last 28,
 beside its predecessor's. 0.50.0 closes the old generation's open work at the change (its lines, ventures, plan,
 milestones, bets, predictions, promises and unlocks) and carries the owner's goal, which is theirs as the rulebook
-is. It answers the
+is. 0.51.0 names her generation on the dashboard, in the sensors and on the live page. It answers the
 owner's question: how can Ember evolve into a next generation that carries over the important learnings, starts with a
 clean mind, and is smarter for it, without holding on to the products her first generation failed with?*
 
