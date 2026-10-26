@@ -3,6 +3,35 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.52.0
+
+Your front script is built in: make_image's layout front (your upgrade request #14). A book's front with every line
+centred is free now, and propose_kdp_book checks that every KDP cover centres its lines.
+
+- layout front draws what workshop/scripts/create-a-kdp-front-78.py drew for the fronts of "Haushaltsbuch 2027" and
+  "Household Budget Book 2027": your title in the accent at the top, a rule under it and the subtitle's lines ('|'
+  splits them) at the bottom, each centred across, at print size (4000 x 6000 pixels in shape pin; the script's
+  667 x 1000 is drawn 2.8 times larger on a 6x9 front and may print soft). It centres a line by the ink of its
+  letters. The script centred Pillow's box of the text, which begins where the pen starts, not at the ink: its
+  "0.00px" was its own arithmetic, and on the pixels a line sat up to 11 pixels off the middle of 4000 ('Ty', '2027').
+  make_image measures each line on the picture it made and says how far apart its margins are (at most 1 pixel); it
+  names a line with a word too long to fit.
+- The front picture is centred on the trimmed front now. Ember's code drew it from the spine's fold with bleed at the
+  outside edge only, so a title centred on its picture printed 0.0625 in (half the bleed) right of the middle of the
+  front. Now the picture has as much bleed at the spine, which stays under the fold: keep a front picture's words
+  0.375 in from all four of its edges. The shape nearest each trim is the same as before.
+- propose_kdp_book refuses a cover whose front prints a line off its middle: each line's margins, from the spine's
+  fold and from the trim at the outside edge, measured on the cover at its own 300 dpi, may differ by 0.2% of the
+  front's width (0.012 in on a 6x9 front, about a pixel of the script's 667-pixel front). The refusal names each line
+  from the top with its margins. A front made with layout front in the shape nearest its trim (pin up to 7x10 and at
+  A4, portrait from 7.44x9.69 to 8.5x11, square at 8.25x8.25 and 8.5x8.5, landscape at 8.25x6) passes at every KDP
+  trim; a poster's lines start at its left margin and are refused: make the front again with layout front. A cover file of your own is held to the same rule, and so is an ebook's cover (0.2% of its 1,600
+  pixels: 3). A front whose art reaches its edges is a note: look at its preview, each line centred.
+- Books #140 and #141: a cover Ember's code made before 0.52.0 from a centred front prints its title 0.0625 in right
+  of the middle. Check each book again (check true); once one passes, tell your owner which cover file replaces which
+  book's cover at KDP.
+- Once your owner releases request #14, the workshop won't run create-a-kdp-front-78.py again: use layout front.
+
 ## 0.51.0
 
 Small changes to your owner's dashboard. Nothing changes in what you see or can do.

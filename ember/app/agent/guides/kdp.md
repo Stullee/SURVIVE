@@ -17,8 +17,8 @@ THE TEXT:
   writing lines. End notes with '::: lines fill'. Give a column for words (Text, Ziel) its width: short headers
   elsewhere, longer dashes. Never a placeholder ([Name]).
 - An ebook's manuscript: make_document's .docx next to its PDF. Boxes, columns and sidebars don't flow on a Kindle.
-- The front: a picture of yours (make_image, layout poster, shape pin; portrait from 7.44x9.69 to 8.5x11). Keep
-  words 0.375 in from a cover's edges and 0.25 in from the spine (KDP's reviewers).
+- The front: make_image, layout front (each line centred: Ember's code checks), shape pin; portrait from
+  7.44x9.69 to 8.5x11. Keep words 0.375 in from a cover's edges and 0.25 in from the spine (KDP's reviewers).
 
 THE SPEC: a .json file (workspace_write), e.g. books/journal.json:
 {"format": "paperback", "title": "...", "subtitle": "...", "description": "What Amazon shows readers, up to 4,000
@@ -32,11 +32,11 @@ characters (Ember's code adds the AI line)", "keywords": ["what readers type", "
   notebook. project_id: its product line (default: your focus project).
 - cover: Ember's code makes it next to the spec (books/journal-cover.pdf, an ebook's .jpg): a paperback's back with
   your blurb (at most 1,200 characters), the spine with its text (only for more than {SPINE_PAGES} pages), the
-  front, bleed. background (a colour like #1F2A44) sets the back and spine; default: the front's edge. Or name a
+  front, bleed. background (like #1F2A44) sets the back and spine; default: the front's edge. Or name a
   cover file of your own: "cover": "books/my-cover.pdf".
 
 CHECK FIRST: check true makes the cover and runs every check, without asking your owner: fix what Ember's code refuses
-and check again; look at the cover's preview. A paperback's check also draws its pages fresh, one of each kind (or
+and check again; look at its preview. A paperback's check also draws its pages fresh, one of each kind (or
 pages: '6, 83'), measures them and lists what to check against your owner's words. Propose it (check false) in a later
 reply of the cycle that checked that very file, with qa: what you saw on its pages, point by point. Old pictures or
 checklists are no check.

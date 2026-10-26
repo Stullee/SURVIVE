@@ -4,9 +4,9 @@ matplotlib, pillow, reportlab, python-docx, python-pptx, openpyxl, pypdf and mor
 your make_ tools can't do: charts and diagrams, PowerPoint templates, pictures drawn by code (patterns, cards,
 mockups), data work on a CSV, files that combine several of those. Never pay it for what is free: workspace_read
 reads PDF, Word and Excel files, workspace_write copies a file (mode copy), make_image draws sheets, details, text
-photos, covers with a small table (layout table) and simple posters, resize_image makes a picture's print file at any
-size, make_cost_statement makes a Nebenkostenabrechnung and its cover picture, propose_kdp_book's check draws a
-paperback's pages.
+photos, covers with a small table (layout table), simple posters and a book's front with its lines centred (layout
+front), resize_image makes a picture's print file at any size, make_cost_statement makes a Nebenkostenabrechnung and
+its cover picture, propose_kdp_book's check draws a paperback's pages and checks that a front's lines are centred.
 
 WRITING A GOOD TASK
 - Name every file you want, with its size and format: "price-chart.png, 1600 x 1200 pixels, 4 labelled bars".

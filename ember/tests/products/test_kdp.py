@@ -44,7 +44,8 @@ def journal(jail: Jail, path: str = "books/journal", days: int = 120, page: str 
 
 
 def front(jail: Jail, path: str = "books/front.png") -> str:
-    make.image(jail, path, "", "My Journal", "120 days of small joys", layout="poster", shape="pin")
+    """0.52.0: a front with its lines centred (layout front): propose_kdp_book refuses a poster's, flush left."""
+    make.image(jail, path, "", "My Journal", "120 days of small joys", layout="front", shape="pin")
     return path
 
 
@@ -365,7 +366,7 @@ def test_a_cover_s_front_keeps_its_words_inside_kdp_s_safe_zone(data_dir: Path) 
     jail = ctx.workspace
     letter = journal(jail, "books/letter", days=120, page="8.5x11")
     words = ("Haushaltsbuch 2027", "Wochen-Logs | Monatsübersicht")
-    make.image(jail, "books/front.png", "", *words, layout="poster", shape="pin")
+    make.image(jail, "books/front.png", "", *words, layout="front", shape="pin")
     refused = call(ctx, "propose_kdp_book", {"spec": spec(jail, letter), "check": True})
     assert not refused.ok
     assert refused.text.startswith("Error: books/journal-cover.pdf: the cover's front prints words or pictures 0.")
@@ -380,7 +381,7 @@ def test_a_cover_s_front_keeps_its_words_inside_kdp_s_safe_zone(data_dir: Path) 
     jail.write_bytes("books/own.pdf", jail.read_bytes("books/journal-cover.pdf"))
     own = call(ctx, "propose_kdp_book", {"spec": spec(jail, letter, cover="books/own.pdf"), "check": True})
     assert not own.ok and own.text.endswith("or the cut and the fold may take them: move them that far in.")
-    make.image(jail, "books/front.png", "", *words, layout="poster", shape="portrait")
+    make.image(jail, "books/front.png", "", *words, layout="front", shape="portrait")
     checked = call(ctx, "propose_kdp_book", {"spec": spec(jail, letter), "check": True})
     assert checked.ok and "KDP would take this paperback as it is" in checked.text, checked.text
     assert "keep its words 0.375 in (4% of its width) from them and 0.25 in from the spine." in checked.text
@@ -391,7 +392,10 @@ def test_a_cover_s_front_keeps_its_words_inside_kdp_s_safe_zone(data_dir: Path) 
     jail.write_bytes("books/art.png", out.getvalue())
     noted = call(ctx, "propose_kdp_book", {"spec": spec(jail, letter, cover={"front": "books/art.png"}), "check": True})
     assert noted.ok and "Note: the front's picture reaches its edges, so Ember's code can't tell" in noted.text
-    assert "its words keep 0.375 in from the cover's edges and 0.25 in from the spine's fold." in noted.text
+    assert (
+        "its words keep 0.375 in from the cover's edges and 0.25 in from the spine's fold, each line centred on the "
+        "front's trim." in noted.text
+    )
     assert "the back's picture" not in noted.text  # the back Ember's code made is one colour
     # the numbers: a 6x9 cover of 120 pages on white is 12.52 x 9.25 in, its trim 0.125 in inside, the back's fold
     # 6.125 in from its left edge and the front's 6.395 in
@@ -428,9 +432,10 @@ def test_words_0_2_in_inside_the_trim_are_refused_as_kdp_s_reviewers_refused_the
         corners = [round(value * per_inch) for value in box]
         ImageDraw.Draw(picture).rectangle([*corners[:2], corners[2] - 1, corners[3] - 1], fill=(0, 0, 0))
 
-    # a front picture in the front's proportions with its bleed (nothing cut off), its words 0.2 in inside the trim
-    picture = Image.new("RGB", (1225, 1850), (250, 246, 238))
-    block(picture, 200, (1.0, 0.125 + 0.2, 5.0, 3.0))
+    # a front picture in the front's proportions with its bleed (nothing cut off), its words 0.2 in inside the trim;
+    # 0.52.0: with as much bleed at the spine as at the outside edge (the spine's under the fold), its words centred
+    picture = Image.new("RGB", (1250, 1850), (250, 246, 238))
+    block(picture, 200, (1.125, 0.125 + 0.2, 5.125, 3.0))
     out = io.BytesIO()
     picture.save(out, "PNG")
     jail.write_bytes("books/close.png", out.getvalue())
@@ -444,8 +449,8 @@ def test_words_0_2_in_inside_the_trim_are_refused_as_kdp_s_reviewers_refused_the
     assert found and abs(float(found[1]) - 0.2) <= 0.015, close.text
     assert "with its words 0.375 in from its edges, then propose the book again" in close.text
     # 0.4 in inside the trim passes
-    picture = Image.new("RGB", (1225, 1850), (250, 246, 238))
-    block(picture, 200, (1.0, 0.125 + 0.4, 5.0, 3.0))
+    picture = Image.new("RGB", (1250, 1850), (250, 246, 238))
+    block(picture, 200, (1.125, 0.125 + 0.4, 5.125, 3.0))
     out = io.BytesIO()
     picture.save(out, "PNG")
     jail.write_bytes("books/far.png", out.getvalue())
