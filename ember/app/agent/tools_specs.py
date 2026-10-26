@@ -630,9 +630,11 @@ SPECS: dict[str, Spec] = {
         ),
         Spec(
             "make_image",
-            f"Make a PNG: a listing photo of 1 to {make.MAX_LISTING_PAGES} of your pages or pictures (or a part) "
-            "with a title, subtitle and badge; a text photo; a cover with a small table; or a print-size poster. "
-            "Read guide 'listing_photos' first.",
+            # 0.52.0: layout front, a book's front (upgrade request #14), in the room of "(or a part)" (pages says
+            # '@top' zooms in) and of background's "colour"
+            f"Make a PNG: a listing photo of 1 to {make.MAX_LISTING_PAGES} of your pages or pictures with a title, "
+            "subtitle and badge; a text photo; a cover with a small table; a print-size poster or book front. Read "
+            "guide 'listing_photos' first.",
             {
                 "output": _s("e.g. 'shop/cv-photo-1.png'.", 200),
                 "pages": _s(
@@ -654,7 +656,7 @@ SPECS: dict[str, Spec] = {
                 # 0.38.0: upgrade request #10 (tables.py says the rest: the prompt has little room)
                 "table": _s("Layout table's: a row a line, cells split by |, the header first.", 800, required=False),
                 "accent": _s("Title and badge colour, like #2C3E50.", 7, required=False),
-                "background": _s("Background colour (default: a light tint of accent).", 7, required=False),
+                "background": _s("Background (default: a light tint of accent).", 7, required=False),
             },
             per_cycle=etsy.MAX_PHOTOS,  # 0.15.0: a listing's photos in one cycle (4 was fewer than qa.MIN_PHOTOS)
         ),

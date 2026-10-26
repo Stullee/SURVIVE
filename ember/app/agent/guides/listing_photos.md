@@ -6,7 +6,8 @@ shows one of your pictures. Add a region to zoom in on a detail: 'shop/cv.pdf#1@
 right, center, top-left, top-right, bottom-left, bottom-right).
 - layout: photo (the default); text (no pages: the title, and the subtitle's lines split by '|' as a list, e.g.
   what is included); poster (no pages: a typographic poster at print size, 6000 pixels on its longer side); table
-  (no pages: a cover with a small table, see below).
+  (no pages: a cover with a small table, see below); front (no pages: a book's front, the poster with each line and
+  its rule centred by their ink, measured; a KDP book's cover.front, guide 'kdp').
 - shape: landscape (3000 x 2250 pixels, Etsy's 4:3 and the default), square (2400 x 2400), portrait (2000 x 2500)
   or pin (2000 x 3000, 2:3: the picture of a Pinterest pin).
 - title: what it is, in the words buyers search for (at most 80 characters; short titles look best).

@@ -20,7 +20,8 @@ for Ember) and the Etsy tools.
 
 The making tools (``make_document``, ``make_spreadsheet``, ``make_image``) turn
 the agent's text into PDF, Word, Excel and PNG files with Ember's own code
-(app.products; 0.38.0: ``make_image`` also a cover with a small table),
+(app.products; 0.38.0: ``make_image`` also a cover with a small table; 0.52.0: and a
+book's front with its lines centred, which ``propose_kdp_book`` checks on every cover),
 ``resize_image`` (0.17.0) makes print files of its pictures and
 ``make_cost_statement`` (0.20.0) a Nebenkostenabrechnung with its cover picture;
 ``look`` shows the model one of its pictures, and (0.40.0) ``propose_kdp_book``'s check

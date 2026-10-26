@@ -16,6 +16,11 @@ proportions at the centre and resized (a workshop script that proved itself, bui
 
 0.38.0 (upgrade request #10): ``table_photo`` draws a cover with a small table under a band with its title, as the
 workshop's create-a-single-png-41.py did (tables.py reads the agent's table and adds up its total rows).
+
+0.52.0 (upgrade request #14): ``front`` draws a book's front as the workshop's create-a-kdp-front-78.py did, the poster
+with every line and its rule centred, by the ink of its glyphs; ``ink_lines`` measures each line's margins on the
+pixels, and ``front_lines`` a paperback cover's front for propose_kdp_book. ``book_wrap`` centres the front picture
+on the trimmed front.
 """
 
 from __future__ import annotations
@@ -39,7 +44,7 @@ PREVIEW_DPI = 150
 SHAPES = {"landscape": (3000, 2250), "square": (2400, 2400), "portrait": (2000, 2500), "pin": (2000, 3000)}
 SHAPE_NAMES = tuple(SHAPES)
 MAX_PIXELS = 40_000_000  # 0.15.0: 12 MP until then
-LAYOUTS = ("photo", "text", "poster", "table")  # 0.38.0: table
+LAYOUTS = ("photo", "text", "poster", "table", "front")  # 0.38.0: table; 0.52.0: front
 POSTER_SIDE = 6_000  # a poster's longer side: 150 dpi or more on every poster Printify prints (A1, 24 x 36 in)
 # 0.45.3: a poster's margin, a share of its shorter side (9% until then). A KDP front keeps its words 0.375 in from the
 # cover's edges; a pin cut to a 5x8 front kept them 0.18 to 0.23 in inside the trim at 9%, 0.29 in at 11%
@@ -191,9 +196,21 @@ def cover_ink(pdf: bytes, folds: tuple[float, float], dpi: int, contrast: int) -
 def _panel_ink(panel: Image.Image, left: int, per_inch: float, contrast: int, outside_left: bool = False) -> Ink:
     """A cover panel's background (the median colour of its top, bottom and outside edge) and what it prints on it;
     ``left`` is where it begins on the cover, in pixels."""
+    background = _plain(panel, ("top", "bottom", "left" if outside_left else "right"), contrast)
+    if background is None:
+        return False, None
+    box = _off(panel, background, contrast).getbbox()
+    if box is None:
+        return True, None
+    return True, ((box[0] + left) / per_inch, box[1] / per_inch, (box[2] + left) / per_inch, box[3] / per_inch)
+
+
+def _plain(panel: Image.Image, edges: tuple[str, ...], contrast: int) -> RGB | None:
+    """A panel's background, the median colour of its ``edges`` (top, bottom, left, right), two pixels deep; None when
+    less than PLAIN_EDGE of them is that colour: its art reaches its edges."""
     w, h = panel.size
-    outside = (0, 0, 2, h) if outside_left else (w - 2, 0, w, h)
-    ring = [panel.crop(box) for box in ((0, 0, w, 2), (0, h - 2, w, h), outside)]
+    boxes = {"top": (0, 0, w, 2), "bottom": (0, h - 2, w, h), "left": (0, 0, 2, h), "right": (w - 2, 0, w, h)}
+    ring = [panel.crop(boxes[edge]) for edge in edges]
     counts = [sum(values) for values in zip(*(part.histogram() for part in ring), strict=True)]
     total = sum(part.width * part.height for part in ring)
 
@@ -205,18 +222,95 @@ def _panel_ink(panel: Image.Image, left: int, per_inch: float, contrast: int, ou
                 return value
         return 255
 
-    background = tuple(median(counts[256 * n : 256 * (n + 1)]) for n in range(3))
+    r, g, b = (median(counts[256 * n : 256 * (n + 1)]) for n in range(3))
+    if sum(_off(part, (r, g, b), contrast).histogram()[255] for part in ring) > (1 - PLAIN_EDGE) * total:
+        return None
+    return r, g, b
 
-    def off(part: Image.Image) -> Image.Image:
-        r, g, b = ImageChops.difference(part, Image.new("RGB", part.size, background)).split()
-        return ImageChops.lighter(ImageChops.lighter(r, g), b).point(lambda v: 255 if v > contrast else 0)
 
-    if sum(off(part).histogram()[255] for part in ring) > (1 - PLAIN_EDGE) * total:
-        return False, None
-    box = off(panel).getbbox()
-    if box is None:
-        return True, None
-    return True, ((box[0] + left) / per_inch, box[1] / per_inch, (box[2] + left) / per_inch, box[3] / per_inch)
+def _off(part: Image.Image, background: RGB, contrast: int) -> Image.Image:
+    """Where ``part`` prints on ``background``: 255 where a channel differs from it by more than ``contrast``."""
+    r, g, b = ImageChops.difference(part, Image.new("RGB", part.size, background)).split()
+    return ImageChops.lighter(ImageChops.lighter(r, g), b).point(lambda v: 255 if v > contrast else 0)
+
+
+Box = tuple[int, int, int, int]
+
+
+def ink_lines(picture: Image.Image, background: RGB, contrast: int) -> list[Box]:
+    """0.52.0 (upgrade request #14): each line ``picture`` prints on its background, top to bottom: rows that print,
+    apart from the next line by a row that doesn't, as the box around them in pixels (left, top, right, bottom). Its
+    left and right are what its margins are measured from; a line of words with a rule under it apart are two."""
+    mask = _off(picture.convert("RGB"), background, contrast)
+    width, height = mask.size
+    data = mask.tobytes()
+    lines: list[Box] = []
+    top, left, right = -1, 0, 0
+    for row in range(height):
+        start = row * width
+        first = data.find(255, start, start + width)
+        if first < 0:
+            if top >= 0:
+                lines.append((left, top, right, row))
+                top = -1
+            continue
+        first, last = first - start, data.rfind(255, start, start + width) - start + 1
+        if top < 0:
+            top, left, right = row, first, last
+        else:
+            left, right = min(left, first), max(right, last)
+    if top >= 0:
+        lines.append((left, top, right, height))
+    return lines
+
+
+def picture_lines(data: bytes, contrast: int) -> tuple[int, list[Box]] | None:
+    """0.52.0: a picture's width and its lines (``ink_lines``) on the colour of its four edges, but for a line that
+    reaches an edge (the picture cuts it); None when its art reaches its edges (an ebook's cover: KDP cuts nothing off
+    it)."""
+    picture = _flattened(data)
+    background = _plain(picture, ("top", "bottom", "left", "right"), contrast)
+    if background is None:
+        return None
+    lines = ink_lines(picture, background, contrast)
+    inside = [line for line in lines if line[0] > 0 and line[1] > 0 and line[2] < picture.width]
+    return picture.width, [line for line in inside if line[3] < picture.height]
+
+
+def front_lines(pdf: bytes, fold: float, dpi: int, contrast: int) -> list[tuple[float, float, float, float]] | None:
+    """0.52.0 (upgrade request #14): the lines a paperback cover's front prints on its background (``ink_lines``),
+    each in inches from the cover's top left corner (left, top, right, bottom), the cover's first page drawn right of
+    the spine's fold (``fold``, in inches from its left edge) at ``dpi``; None when the front's art reaches its edges.
+    As ``cover_ink``, it is read from past the fold: the pixels at a fold are partly the spine's; a line that reaches
+    it or the cover's edge has no margin to measure (KDP's safe zone refuses it).
+
+    pypdfium2 draws a page ceil(width x scale) pixels across, stretched to them: a 6x9 cover of 3756.07 pixels at
+    300 dpi was drawn 3757 across, and a centred line's right edge read a pixel further out than its left. So the
+    page is drawn in whole pixels of its own dpi (the cover's, at 300), from a pixel's edge two past the fold."""
+    document = _opened(pdf)
+    try:
+        page = document[0]
+        try:
+            width, height = page.get_width(), page.get_height()
+            dots = min(dpi, math.sqrt(MAX_PIXELS / max(1.0, width * height)) * 72)
+            across = max(2, round(width / 72 * dots))
+            scale = (across - 0.5) / width  # ceil(width * scale) is ``across``
+            start = min(across - 1, math.ceil(fold * across / (width / 72)) + 2)
+            picture = page.render(scale=scale, crop=((start - 0.5) / scale, 0, 0, 0)).to_pil().convert("RGB")
+            down = math.ceil(height * scale) / (height / 72)
+        finally:
+            page.close()
+    finally:
+        document.close()
+    background = _plain(picture, ("top", "bottom", "right"), contrast)
+    if background is None:
+        return None
+    per_inch = across / (width / 72)
+    return [
+        ((start + left) / per_inch, top / down, (start + right) / per_inch, bottom / down)
+        for left, top, right, bottom in ink_lines(picture, background, contrast)
+        if left > 0 and right < picture.width
+    ]
 
 
 def pdf_active(pdf: bytes) -> list[str]:
@@ -840,6 +934,59 @@ def poster(
 ) -> bytes:
     """0.15.0: a typographic poster at print size: a large title, an accent rule and lines of text, in the shape's
     proportions (drawn by Ember's code: a simple poster needs no workshop run)."""
+    return _saved(_poster(title, lines, background, accent, shape, centred=False)[0])
+
+
+@dataclass(frozen=True)
+class Front:
+    """0.52.0: a front ``front`` drew: its PNG, its width and each line's left and right margin, measured on its
+    pixels (``ink_lines``), top to bottom."""
+
+    data: bytes
+    width: int
+    margins: tuple[tuple[int, int], ...]
+
+
+def front(
+    title: str,
+    lines: list[str],
+    background: str | None = None,
+    accent: str | None = None,
+    shape: str = "pin",
+    contrast: int = 48,
+) -> Front:
+    """0.52.0 (upgrade request #14): a book's front at print size, the workshop's create-a-kdp-front-78.py built in:
+    the poster's title, rule and lines, each centred across by its ink, and their margins measured on the pixels
+    (where a channel differs from the background by more than ``contrast``)."""
+    canvas, bg = _poster(title, lines, background, accent, shape, centred=True)
+    margins = tuple((left, canvas.width - right) for left, _, right, _ in ink_lines(canvas, bg, contrast))
+    return Front(_saved(canvas), canvas.width, margins)
+
+
+def _saved(canvas: Image.Image) -> bytes:
+    out = io.BytesIO()
+    canvas.save(out, "PNG", compress_level=6)  # optimize would take seconds at this size
+    return out.getvalue()
+
+
+def _ink(text: str, font: ImageFont.FreeTypeFont) -> tuple[int, int]:
+    """0.52.0: where a line's ink begins and ends across, in pixels from the point it is drawn at: its glyphs' own
+    edges. The workshop's script centred a line by Pillow's textbbox, which begins at the pen, not at the ink: its
+    0.00 px came from the numbers it drew with, and on the pixels 'Ty' sat 11 pixels off the middle of 4000."""
+    left, top, right, bottom = font.getbbox(text)
+    pad = font.size  # room for a glyph that reaches beyond its box
+    mask = Image.new("L", (right - left + 2 * pad, bottom - top + 2 * pad))
+    ImageDraw.Draw(mask).text((pad - left, pad - top), text, font=font, fill=255)
+    box = mask.getbbox()
+    return (0, 0) if box is None else (box[0] - pad + left, box[2] - pad + left)
+
+
+def _poster(
+    title: str, lines: list[str], background: str | None, accent: str | None, shape: str, centred: bool
+) -> tuple[Image.Image, RGB]:
+    """A poster's picture and its background: its words from the margin, or (``centred``) each line and the rule in
+    the middle across, a line's ink as far from the left edge as from the right (Pillow draws at a fraction of a
+    pixel)."""
     if shape not in SHAPES:
         raise ImageError(f"shape must be one of {', '.join(SHAPES)}")
     title_family = _family("title", title, "display", "B")
@@ -863,19 +1010,29 @@ def poster(
         if _title_height(title_font, title_lines) <= room or title_font.size <= 24:
             break
         start = int(title_font.size * 0.92)
+
+    def at(text: str, line_font: ImageFont.FreeTypeFont) -> float:
+        if not centred:
+            return margin
+        left, right = _ink(text, line_font)
+        return (width - (right - left)) / 2 - left
+
+    title_ink = accent_rgb if _visible(accent_rgb, bg) else ink
     y = margin
     for line in title_lines:
-        draw.text((margin, y), line, font=title_font, fill=accent_rgb if _visible(accent_rgb, bg) else ink)
+        draw.text((at(line, title_font), y), line, font=title_font, fill=title_ink)
         y += int(title_font.size * 1.08)
     y += int(title_font.size * 0.25)
-    draw.rectangle([margin, y, margin + int(box_w * 0.3), y + rule], fill=accent_rgb)
+    rule_w = int(box_w * 0.3) + 1  # Pillow draws a rectangle's last pixel too
+    if centred:
+        rule_w -= (width - rule_w) % 2  # as much room on either side, to the pixel
+    rule_x = (width - rule_w) // 2 if centred else margin
+    draw.rectangle([rule_x, y, rule_x + rule_w - 1, y + rule], fill=accent_rgb)
     y = bottom
     for part in shown:
-        draw.text((margin, y), part, font=font, fill=ink)
+        draw.text((at(part, font), y), part, font=font, fill=ink)
         y += leading
-    out = io.BytesIO()
-    canvas.save(out, "PNG", compress_level=6)  # optimize would take seconds at this size
-    return out.getvalue()
+    return canvas, bg
 
 
 # --- KDP covers (0.25.0) ---
@@ -942,15 +1099,20 @@ def _fill(
 def book_wrap(front: bytes, panels: Panels, back: list[str], spine_text: str, background: str | None = None) -> Wrap:
     """A paperback's full cover: the front picture cut to the front's proportions at its centre (with its bleed), the
     back in ``background`` (default: the front's left edge) with the paragraphs ``back`` in the text space, and the
-    spine with ``spine_text`` (top to bottom) between its margins."""
+    spine with ``spine_text`` (top to bottom) between its margins. 0.52.0 (upgrade request #14): the picture's centre
+    is the trimmed front's: it is fitted to the front with as much bleed at the spine as at the outside edge, and the
+    spine's is left under the fold. Drawn from the fold, a title centred on its picture printed half the bleed
+    (0.0625 in) right of the middle of the front."""
     width, height = panels.size
     if too_large(width, height):
         raise ImageError(f"the cover would be {too_large(width, height)}")
     source = _flattened(front)
     fold_left, fold_right = panels.spine
     front_w = width - fold_right
-    kept = centre_part(source.width, source.height, front_w, height)
-    shown = _decoded(lambda: source.resize((front_w, height), Image.Resampling.LANCZOS, box=kept))
+    bleed = width - panels.trim[2]
+    kept = _centre_box(source.width, source.height, front_w + bleed, height)
+    drawn = _decoded(lambda: source.resize((front_w + bleed, height), Image.Resampling.LANCZOS, box=kept))
+    shown = drawn.crop((bleed, 0, drawn.width, height))
     bg: RGB = hex_rgb(background) if background else _edge_colour(source)
     ink = readable_on(bg)
     canvas = Image.new("RGB", (width, height), bg)
@@ -988,10 +1150,20 @@ def book_wrap(front: bytes, panels: Panels, back: list[str], spine_text: str, ba
             ((strip.width - text_w) / 2, (strip.height - ascent - descent) / 2), spine_text, font=font, fill=ink
         )
         canvas.paste(strip.rotate(-90, expand=True), (fold_left, panels.trim[1]))
-    return Wrap(canvas, _wrap_preview(canvas, panels), bg, front_w / (kept[2] - kept[0]), _cut(source, kept))
+    return Wrap(canvas, _wrap_preview(canvas, panels), bg, drawn.width / (kept[2] - kept[0]), _cut(source, kept))
 
 
-def _cut(source: Image.Image, kept: tuple[int, int, int, int]) -> float:
+def _centre_box(width: int, height: int, target_w: int, target_h: int) -> tuple[float, float, float, float]:
+    """0.52.0: ``centre_part`` to a fraction of a pixel (Pillow resizes from one): in whole pixels, a front's centre
+    moved by up to half a pixel of its picture, and a centred line printed 2 pixels off the front's middle."""
+    if width * target_h > height * target_w:  # wider than the target: cut the sides
+        kept = height * target_w / target_h
+        return (width - kept) / 2, 0.0, (width + kept) / 2, float(height)
+    kept = width * target_h / target_w
+    return 0.0, (height - kept) / 2, float(width), (height + kept) / 2
+
+
+def _cut(source: Image.Image, kept: tuple[float, float, float, float]) -> float:
     left, top, right, bottom = kept
     return 1 - (right - left) * (bottom - top) / (source.width * source.height)
 

@@ -742,6 +742,21 @@ the next generation.
 header ("Generation 2"), in the sensors JSON and on the live page ("Day 3 of
 generation 2").
 
+0.52.0: a KDP cover's words are centred by construction, and checked. Ember's
+upgrade request #14 asked for the workshop script that drew the centred fronts
+of "Haushaltsbuch 2027" and "Household Budget Book 2027" to be built in: you saw
+both titles off-centre before a buyer did (case #c414), flush left on the poster
+Ember's code had made. Now `make_image` draws a book's front (layout **front**):
+the title, a rule and the subtitle's lines, each centred by the ink of its
+letters and measured on the picture. The script's "0.00px" was its own
+arithmetic (Pillow's text box begins at the pen, not the ink); on the pixels a
+line sat up to 11 pixels off the middle of 4000. The paperback's wrap centres
+the front picture on the trimmed front (it had bleed at the outside edge only,
+so a centred title printed 0.0625 in right of the middle), and
+`propose_kdp_book` refuses a paperback or ebook cover whose lines' left and
+right margins differ by more than 0.2% of the front's width (0.012 in at 6x9),
+measured at the cover's 300 dpi.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

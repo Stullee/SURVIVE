@@ -95,6 +95,12 @@ SAFE_ZONE = Decimal("0.25")
 PANELS = ("back", "front")  # a cover's, left to right (the spine between them)
 FRONT_DPI = 100
 FRONT_CONTRAST = 48
+# 0.52.0 (upgrade request #14): the most a line on a cover's front may sit off its middle, the difference of its left
+# and right margins as a share of the front's width (0.012 in on a 6x9 front): about a pixel of the 667-pixel front the
+# workshop's create-a-kdp-front-78.py drew, and room for a pixel either side of the measure, the front drawn at its
+# own 300 dpi. The owner saw the title of two twin covers off-centre (case #c414) before a buyer did
+CENTRE_TOLERANCE = 0.002
+CENTRE_DPI = 300
 INK_DPI = 36  # pages drawn this coarsely to find what is printed in their margins (0.25 in is 9 pixels)
 INK_LEVEL = 245  # darker than this (0 to 255, any channel) counts as printed
 # An ebook's cover: KDP's proportions are 1.6 high to 1 wide; 2,560 x 1,600 is its ideal, 1,000 x 625 its least
@@ -584,6 +590,57 @@ def check_panel(
         f"trim ({inches(BLEED + SAFE_ZONE)} from the cover's edges) and Ember's code for {inches(SAFE_ZONE)} from the "
         "spine's fold, or the cut and the fold may take them"
     ]
+
+
+def check_centred(lines: list[tuple[float, float, float, float]], trim: str, pages: int, paper: str) -> list[str]:
+    """0.52.0 (upgrade request #14): a paperback cover's front centres each line it prints (``lines``: left, top,
+    right, bottom in inches from the cover's top left corner) on its trim: as far from the spine's fold as from the
+    trim at the outside edge, within CENTRE_TOLERANCE of the front's width. Live, the twin covers of "Haushaltsbuch
+    2027" and "Household Budget Book 2027" printed their titles off-centre, flush left on make_image's poster, and the
+    owner saw it before a buyer did (case #c414). A line the trim or the fold cuts is the safe zone's (check_panel):
+    the part of it left isn't the line."""
+    width, height = (float(v) for v in cover_size(trim, pages, paper))
+    trim_w, bleed = float(trim_size(trim)[0]), float(BLEED)
+    fold, edge = width - bleed - trim_w, width - bleed
+    margins = [
+        (top, left - fold, edge - right)
+        for left, top, right, bottom in lines
+        if left >= fold and right <= edge and top >= bleed and bottom <= height - bleed
+    ]
+    said = _uncentred(margins, CENTRE_TOLERANCE * trim_w, inches, ("the spine's fold", "the trim at the outside edge"))
+    return [f"the cover's front doesn't centre its words: {said}"] if said else []
+
+
+def check_ebook_centred(width: int, lines: list[tuple[int, int, int, int]]) -> list[str]:
+    """0.52.0 (upgrade request #14): an ebook's cover centres each line it prints (``lines``: boxes in pixels) on its
+    ``width``, as a paperback's front does on its trim (KDP cuts nothing off an ebook's cover)."""
+    margins = [(float(top), float(left), float(width - right)) for left, top, right, _ in lines]
+    said = _uncentred(margins, CENTRE_TOLERANCE * width, _pixels, ("the left edge", "the right"))
+    return [f"the cover doesn't centre its words: {said}"] if said else []
+
+
+def _pixels(value: float) -> str:
+    return f"{round(value):,} pixels"
+
+
+def _uncentred(
+    margins: list[tuple[float, float, float]], most: float, length: Callable[[float], str], sides: tuple[str, str]
+) -> str:
+    """The lines (their top, left and right margins, numbered from the top) whose margins differ by more than
+    ``most``, as a refusal names them (``length`` writes a length, ``sides`` names the edges); '' when none does."""
+    off = [(n, *line) for n, line in enumerate(margins, 1) if abs(line[1] - line[2]) > most]
+    said = [
+        f"line {n} ({length(top)} from the top) prints {length(left)} from {sides[0]} and {length(right)} from "
+        f"{sides[1]}, {length(abs(left - right))} apart"
+        for n, top, left, right in off[:3]
+    ]
+    if not said:
+        return ""
+    more = f" and {len(off) - 3} more line{'s' if len(off) > 4 else ''}" if len(off) > 3 else ""
+    return (
+        f"{'; '.join(said)}{more}: Ember's code takes {length(most)} apart at most ({CENTRE_TOLERANCE:.1%} of its "
+        "width)"
+    )
 
 
 # --- the spec: the agent's .json file ------------------------------------------------------------------------------

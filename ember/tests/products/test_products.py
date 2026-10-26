@@ -597,14 +597,17 @@ def test_the_self_test_makes_one_of_each() -> None:
     assert lines[4].startswith("Made out/poster.png: a poster, 6000 x 4500 pixels (landscape)")
     # 0.38.0: a cover with a small table
     assert lines[5].startswith("Made out/table.png: a landscape table cover, 3000 x 2250 pixels")
-    assert lines[6].startswith("Made out/print.png: 1200 x 900 pixels")
-    assert lines[7].startswith("Made out/statement.xlsx: a Nebenkostenabrechnung of 2 tenants")
+    # 0.52.0: a book's front, its lines centred
+    assert lines[6].startswith("Made out/front.png: a book's front, 4000 x 6000 pixels (pin)")
+    assert lines[7].startswith("Made out/print.png: 1200 x 900 pixels")
+    assert lines[8].startswith("Made out/statement.xlsx: a Nebenkostenabrechnung of 2 tenants")
     # 0.25.0: a book's interior at a KDP trim size, and its covers
-    assert lines[8].startswith("Made out/book.pdf: 24 pages (6x9in portrait)")
-    assert lines[9].startswith("Made out/book-cover.pdf: a paperback cover for 24 pages at 6x9 on cream paper")
-    assert lines[10].startswith("Made out/ebook-cover.jpg: an ebook cover, 1600 x 2560 pixels")
-    # 0.40.0: the book's page check (propose_kdp_book's)
-    assert lines[11] == "Checked out/book.pdf's pages: 24 measured, pages 1, 24 drawn." and len(lines) == 12
+    assert lines[9].startswith("Made out/book.pdf: 24 pages (6x9in portrait)")
+    assert lines[10].startswith("Made out/book-cover.pdf: a paperback cover for 24 pages at 6x9 on cream paper")
+    assert lines[11].startswith("Made out/ebook-cover.jpg: an ebook cover, 1600 x 2560 pixels")
+    # 0.40.0: the book's page check (propose_kdp_book's); 0.52.0: its cover's front measured
+    assert lines[12] == "Checked out/book.pdf's pages: 24 measured, pages 1, 24 drawn."
+    assert lines[13] == "Measured out/book-cover.pdf's front: 3 lines, each centred." and len(lines) == 14
 
 
 # --- From 0.19.2 (formerly test_fixes_0192.py) ---

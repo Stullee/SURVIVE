@@ -7,7 +7,8 @@
   ``shop/budget-preview.png`` (0.15.0: and ``shop/budget-sheet2.png`` for the second sheet, and so on).
 * ``image``: a listing photo made of pages of Ember's own PDFs, sheets of its Excel files or pictures (0.15.0: or a
   region of one, zoomed in), with a title, a subtitle and a badge; (0.15.0) a text photo, or a poster at print size;
-  (0.38.0, upgrade request #10) a cover with a small table, its total rows added up (tables.py).
+  (0.38.0, upgrade request #10) a cover with a small table, its total rows added up (tables.py); (0.52.0, upgrade
+  request #14) a book's front, the poster with its lines centred by their ink and measured.
 * ``resize`` (0.17.0, resize_image): one of the agent's pictures at an exact size for printing,
   ``shop/poster-a3.png``: cut to its proportions at the centre and resized, without paying for the picture to be made
   again.
@@ -313,7 +314,8 @@ def image(
     """Make ``output`` (a PNG listing photo) showing ``pages`` next to a title, a subtitle and a badge; 0.15.0: or,
     with layout 'text', the title and the subtitle's lines (separated by '|') as a list, or with layout 'poster', a
     poster at print size; 0.38.0: or, with layout 'table', a cover with ``table`` under its title (upgrade request #10:
-    the workshop's create-a-single-png-41.py, without a run)."""
+    the workshop's create-a-single-png-41.py, without a run); 0.52.0: or, with layout 'front', a book's front (upgrade
+    request #14: the workshop's create-a-kdp-front-78.py), each line centred and its margins measured."""
     _base(output, ".png", "output")
     for name, value in (("background", background), ("accent", accent)):
         if value is not None and not _COLOR.fullmatch(value):
@@ -328,6 +330,7 @@ def image(
     if layout != "table" and table.strip():
         raise ProductError("only layout table shows a table: give layout table, or leave table empty")
     checked: list[str] = []
+    centred: images.Front | None = None
     try:
         if layout == "table":
             if not table.strip():
@@ -343,9 +346,13 @@ def image(
         elif layout == "poster":
             data = images.poster(title.strip(), lines, background, accent, shape)
             shows = "poster:" + "|".join([title.strip(), *lines])
+        elif layout == "front":
+            centred = images.front(title.strip(), lines, background, accent, shape, kdp.FRONT_CONTRAST)
+            data = centred.data
+            shows = "front:" + "|".join([title.strip(), *lines])
         else:
             if not pages.strip():
-                raise ProductError("name the pages to show (or use layout text, table or poster)")
+                raise ProductError("name the pages to show (or use layout text, table, poster or front)")
             pictures, keys = _pictures(jail, pages, images.SHAPES[shape][1])
             # 0.19.2: each part of the subtitle on a line of its own ("|" splits lines; live, they ran together:
             # "Unlimited clients No resale of files Plain English")
@@ -364,6 +371,11 @@ def image(
             f"up to {width / 150 * 2.54:.0f} x {height / 150 * 2.54:.0f} cm."
         )
         return made
+    if centred is not None:
+        width, height = images.poster_size(shape)
+        made.report.append(f"Made {output}: a book's front, {width} x {height} pixels ({shape}), {_size(len(data))}.")
+        made.report.append(_centring(centred))
+        return made
     width, height = images.SHAPES[shape]
     what = {"text": "text listing photo", "table": "table cover"}.get(layout, "listing photo")
     made.report.append(f"Made {output}: a {shape} {what}, {width} x {height} pixels, {_size(len(data))}.")
@@ -378,6 +390,27 @@ def image(
             "or name a row that isn't their sum for what it is (e.g. 'Ganzes Haus')."
         )
     return made
+
+
+def _centring(front: images.Front) -> str:
+    """0.52.0 (upgrade request #14): how centred a front's lines are, measured on its pixels. The workshop's script
+    reported 0.00 px from the numbers it drew with; this reads what was drawn. A line that runs off both edges (a word
+    longer than the front is wide) is named too: its margins are equal, and nothing."""
+    if not front.margins:
+        return "It prints no words."
+    most = kdp.CENTRE_TOLERANCE * front.width
+    for line, (left, right) in enumerate(front.margins, 1):
+        if min(left, right) <= 0 or abs(left - right) > most:
+            return (
+                f"Check: measured on its pixels, line {line} from the top is {left:,} pixels from the left edge and "
+                f"{right:,} from the right: shorten its longest word, or the title."
+            )
+    worst = max(abs(left - right) for left, right in front.margins)
+    return (
+        f"Measured on its pixels, its title, rule and lines stand centred: the left and right margins of each of its "
+        f"{len(front.margins)} lines differ by at most {worst} pixel{'s' if worst != 1 else ''} of {front.width:,}. "
+        "As a KDP book's cover.front, its centre is the trimmed front's."
+    )
 
 
 # --- print files (0.17.0) ---
@@ -587,9 +620,10 @@ def _kept_share(result: images.Fitted) -> float:
 
 def front_shape(trim: str) -> str:
     """0.45.0 (evaluation 2026-10-22, C6): make_image's shape nearest a paperback's front with its bleed, which a
-    front picture fits with the least cut off (live, a pin's 2:3 lost 13% at 8.5x11, and its title's room with it)."""
+    front picture fits with the least cut off (live, a pin's 2:3 lost 13% at 8.5x11, and its title's room with it).
+    0.52.0: with as much bleed at the spine as at the outside edge, as images.book_wrap fits it (the same shapes)."""
     width, height = kdp.trim_size(trim)
-    ratio = float((width + kdp.BLEED) / (height + 2 * kdp.BLEED))
+    ratio = float((width + 2 * kdp.BLEED) / (height + 2 * kdp.BLEED))
     return min(images.SHAPES, key=lambda shape: abs(images.SHAPES[shape][0] / images.SHAPES[shape][1] - ratio))
 
 
@@ -601,12 +635,12 @@ def _fitting(scale: float, cut: float, front: str, trim: str = "") -> list[str]:
         notes.append(f"{cut:.0%} of {front} was cut off to fit the cover's proportions{nearest}.")
     if scale > SOFT_COVER:
         notes.append(
-            f"{front} is drawn {scale:.1f} times larger than it is: it may print soft (make_image's poster layout "
-            "makes a larger one)."
+            f"{front} is drawn {scale:.1f} times larger than it is: it may print soft (make_image's layout front "
+            "makes a larger one)."  # 0.52.0: front (the poster's, until then)
         )
     if trim:  # 0.45.3: a paperback's (KDP cuts no ebook cover), at KDP's reviewers' 0.375 in (it said 0.25 in)
         edge = kdp.BLEED + kdp.SAFE_ZONE
-        share = edge / (kdp.trim_size(trim)[0] + kdp.BLEED)
+        share = edge / (kdp.trim_size(trim)[0] + 2 * kdp.BLEED)
         notes.append(
             f"KDP cuts {kdp.inches(kdp.BLEED)} off the front's outer edges: keep its words {kdp.inches(edge)} "
             f"({share:.0%} of its width) from them and {kdp.inches(kdp.SAFE_ZONE)} from the spine."

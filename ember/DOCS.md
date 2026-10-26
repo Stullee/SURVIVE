@@ -640,7 +640,9 @@ agent's workspace:
   a cycle, a whole listing's photos. The table cover is built in from upgrade
   request #10 (the workshop script that drew the Nebenkostenabrechnung's v9 and
   v10 covers): a fix of a cover's words or numbers no longer needs a workshop
-  run against the daily cap.
+  run against the daily cap. Since 0.52.0 (layout **front**, upgrade request
+  #14) also a book's front: the poster's title, rule and lines, each centred by
+  its ink and measured; see [Amazon KDP](#amazon-kdp).
 - **Print files** (`resize_image`): one of the agent's pictures at exact pixels
   (a Printify print area, e.g. 3508 x 4961 for A3 at 300 dpi): the centre of
   the picture in the size's proportions, nothing stretched, resized and noted
@@ -3170,7 +3172,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.51.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.52.0 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3244,6 +3246,29 @@ own account. Ember never logs in to Amazon or reads its pages.
   Ember's keeps its words 0.375 in from the edges at every trim in the shape the
   refusal names.
   KDP's previewer checks the files again when you upload them.
+- **A centred front** (0.52.0, upgrade request #14): the front's words are
+  centred by construction, and checked. You saw the titles of "Haushaltsbuch
+  2027" and "Household Budget Book 2027" off-centre (case #c414): flush left,
+  on Ember's poster. The agent drew both fronts again with its workshop script
+  `create-a-kdp-front-78.py`, built in now as `make_image`'s layout **front**:
+  the title in the accent, a rule and the subtitle's lines, each centred by the
+  ink of its letters, at print size, and measured on the picture (each line's
+  margins within a pixel). The script centred Pillow's text box, which begins
+  at the pen rather than the ink: its report of 0.00 px was its own arithmetic,
+  and on the pixels a line sat up to 11 pixels off the middle of 4000. The
+  paperback's wrap now centres the front picture on the trimmed front: it drew
+  the picture from the spine's fold with bleed only at the outside edge, so a
+  title centred on its picture printed 0.0625 in right of the front's middle;
+  the picture now has as much bleed at the spine, under the fold. And the
+  check refuses a front whose lines' left and right margins (from the spine's
+  fold and from the trim at the outside edge) differ by more than 0.2% of the
+  front's width, 0.012 in at 6x9, about a pixel of the script's 667-pixel
+  front: the front is drawn at the cover's 300 dpi, a line is rows that print
+  apart from the next by a row that doesn't, and a line the trim or the fold
+  cuts is the safe zone's. A cover file of the agent's own is held to it, and
+  an ebook's cover (3 of its 1,600 pixels); a front whose art reaches its edges
+  is a note. A front of Ember's in the shape nearest its trim passes at every
+  KDP trim: its lines measure at most 0.007 in apart.
 - **Its pages, checked before you see them** (0.40.0, upgrade request #12): a
   paperback's `check` also draws its interior's pages fresh, 600 pixels wide,
   as the agent's workshop script `render-page-3-of-71.py` did for about $0.19 a

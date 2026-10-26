@@ -5,7 +5,8 @@ fails the build instead of the owner's first product. 0.23.0: every layout make_
 poster too), a print file of a photo (resize_image) and a Nebenkostenabrechnung (make_cost_statement: its formulas
 worked out and checked, its cover drawn). 0.25.0: a book's interior at a KDP trim size and its KDP covers (a JPEG in a
 PDF, and an ebook's JPEG). 0.38.0: a cover with a small table (make_image's layout table). 0.40.0: the book's page
-check (propose_kdp_book's: every page measured, its text read, pages drawn).
+check (propose_kdp_book's: every page measured, its text read, pages drawn). 0.52.0: a book's front (make_image's
+layout front), the book's covers made from it, and its paperback cover's front measured as propose_kdp_book does.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from pathlib import Path
 
 from ..agent import netguard
 from ..agent.sandbox import Jail
+from ..integrations import kdp
 from . import images, make, pagecheck
 
 DOCUMENT = """---
@@ -112,21 +114,28 @@ def run() -> list[str]:
                 make.image(jail, "out/text.png", "", "Self-test", "One line | Ωμέγα → Жизнь", "Badge", layout="text"),
                 make.image(jail, "out/poster.png", "", "Self-test", "A line", shape="landscape", layout="poster"),
                 make.image(jail, "out/table.png", "", "Self-test", "A line", "Badge", layout="table", table=TABLE),
+                make.image(jail, "out/front.png", "", "Self-test", "A line", shape="pin", layout="front"),
                 make.resize(jail, "out/photo.png", "out/print.png", 1200, 900),
                 make.cost_statement(jail, "statement.json", "out/statement.xlsx"),
                 make.document(jail, "book.md", "out/book.pdf", word_copy=False, previews=False),
-                make.kdp_cover(jail, "out/book-cover.pdf", "out/poster.png", "out/book.pdf", "cream", "A back | text"),
-                make.kdp_cover(jail, "out/ebook-cover.jpg", "out/poster.png"),
+                make.kdp_cover(jail, "out/book-cover.pdf", "out/front.png", "out/book.pdf", "cream", "A back | text"),
+                make.kdp_cover(jail, "out/ebook-cover.jpg", "out/front.png"),
             ]
             if images.page_count(jail.read_bytes("out/test.pdf")) != 2:
                 raise AssertionError("the test document should have two pages")
             checked = pagecheck.check(jail.read_bytes("out/book.pdf"))
             if len(checked.pages) != 24 or not checked.pictures or "Self-test book" not in checked.pages[0].text:
                 raise AssertionError("the book's page check should read its 24 pages and draw some")
+            fold = kdp.BLEED + kdp.trim_size("6x9")[0] + kdp.spine_width(24, "cream")
+            cover = jail.read_bytes("out/book-cover.pdf")
+            lines = images.front_lines(cover, float(fold), kdp.CENTRE_DPI, kdp.FRONT_CONTRAST)
+            if not lines or kdp.check_centred(lines, "6x9", 24, "cream"):
+                raise AssertionError("the book cover's front should print its lines centred")
         drawn = ", ".join(map(str, checked.shown))
         return [
             *(line for m in made for line in m.report[:1]),
             f"Checked out/book.pdf's pages: {len(checked.pages)} measured, pages {drawn} drawn.",
+            f"Measured out/book-cover.pdf's front: {len(lines)} lines, each centred.",
         ]
 
 

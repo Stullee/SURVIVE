@@ -706,6 +706,7 @@ def _book(ctx: ToolContext, spec: dict[str, Any], cover_path: str) -> tuple[kdp.
             except images.ImageError as exc:
                 raise ToolError(f"{cover.path}: {exc}") from None
             notes += kdp.check_ebook_cover(cover_data, width, height, cover.path)
+            notes += _ebook_centred(spec, cover.path, cover_data)
             price = kdp.check_price(spec["price"], form, file_bytes=text.bytes)
             return kdp.Book(format=form, **words, price=price, manuscript=text, cover=cover), notes
         try:
@@ -760,7 +761,9 @@ def _safe_zone(spec: dict[str, Any], path: str, data: bytes, trim: str, pages: i
     picture on an 8.5x11 front, 13% of it cut off) and the tool said KDP would take it. 0.45.3: its back too (in a
     cover file of the agent's own: Ember's code keeps a back's words make.BACK_MARGIN from its trim and fold), both
     also from the spine's fold, at a kdp.SAFE_ZONE of 0.25 in: KDP's reviewers asked for 0.375 in from the edges of two
-    live covers 0.125 in had passed."""
+    live covers 0.125 in had passed. 0.52.0 (upgrade request #14): and the front centres each line on its trim
+    (kdp.check_centred), measured at the cover's own 300 dpi, as the workshop's create-a-kdp-front-78.py was run to
+    check the twin covers' fronts by hand."""
     back_fold = kdp.BLEED + kdp.trim_size(trim)[0]
     folds = (float(back_fold), float(back_fold + kdp.spine_width(pages, paper)))
     try:
@@ -772,9 +775,11 @@ def _safe_zone(spec: dict[str, Any], path: str, data: bytes, trim: str, pages: i
     notes, refused = [], []
     for panel, (plain, box) in zip(kdp.PANELS, inks, strict=True):
         if not plain:
+            centred = ", each line centred on the front's trim" if panel == "front" else ""
             notes.append(
                 f"the {panel}'s picture reaches its edges, so Ember's code can't tell its words from it: look at the "
                 f"cover's preview, its words keep {edge} from the cover's edges and {room} from the spine's fold"
+                f"{centred}"
             )
             continue
         close = kdp.check_panel(panel, box, trim, pages, paper)
@@ -789,9 +794,44 @@ def _safe_zone(spec: dict[str, Any], path: str, data: bytes, trim: str, pages: i
         else:
             fix = "move them that far in"
         refused.append(f"{close[0]}: {fix}")
+    if inks[1][0]:  # 0.52.0: a plain front's lines (one whose art reaches its edges is the note above)
+        try:
+            lines = images.front_lines(data, folds[1], kdp.CENTRE_DPI, kdp.FRONT_CONTRAST)
+        except images.ImageError as exc:
+            raise ToolError(f"{path}: {exc}") from None
+        refused += [f"{off}: {_centre_fix(cover)}" for off in kdp.check_centred(lines or [], trim, pages, paper)]
     if refused:
         raise ToolError(f"{path}: {'; '.join(refused)}")
     return notes
+
+
+def _ebook_centred(spec: dict[str, Any], path: str, data: bytes) -> list[str]:
+    """0.52.0 (upgrade request #14): an ebook's cover centres each line it prints, as a paperback's front does, or the
+    book is refused with what to change; a cover whose art reaches its edges is a note."""
+    try:
+        measured = images.picture_lines(data, kdp.FRONT_CONTRAST)
+    except images.ImageError as exc:
+        raise ToolError(f"{path}: {exc}") from None
+    if measured is None:
+        return [
+            "the cover's picture reaches its edges, so Ember's code can't tell its words from it: look at it, each "
+            "line centred"
+        ]
+    off = kdp.check_ebook_centred(*measured)
+    if off:
+        raise ToolError(f"{path}: {off[0]}: {_centre_fix(spec['cover'])}")
+    return []
+
+
+def _centre_fix(cover: dict[str, Any] | str) -> str:
+    """0.52.0: how a front whose lines aren't centred is fixed: the front picture made again with make_image's layout
+    front, or the agent's own cover file's words moved."""
+    if isinstance(cover, dict):
+        return (
+            f"make {cover['front']} again with make_image's layout front (each line centred by its ink), then propose "
+            "the book again"
+        )
+    return "centre each line"
 
 
 def _propose_kdp_book(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
