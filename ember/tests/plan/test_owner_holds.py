@@ -259,6 +259,12 @@ def test_a_launch_step_waiting_on_a_channel_that_is_off_keeps_no_weekly_step_fro
     assert sorted(s["template"] for s in weekly(agent, line) if s["status"] == "open") == sorted(
         duties(agent, line, ALL)
     )
+    # 0.53.0 (evaluation 2026-10-27, C5): a month without a sale, its line waits for the owner's keep-or-drop, and its
+    # reach with it; once they keep it, its launch's pins are ready
+    assert waits(agent, line, ALL)[PINS] == "deciding"
+    [decision] = rows(agent, f"SELECT id FROM plan_nodes WHERE project_id = {line} AND template = 'decide/owner'")
+    with agent.db.transaction() as conn:
+        plan.owner_keep(conn, agent.scope(), decision["id"], "one more month", "Owner", now(agent))
     assert waits(agent, line, ALL)[PINS] is None
 
 

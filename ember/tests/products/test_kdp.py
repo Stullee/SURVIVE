@@ -317,7 +317,7 @@ def test_a_paperback_is_proposed_and_its_card_has_everything_to_publish_it(data_
         ]
         section = kdp.text(conn, agent.scope(), agent.clock.now(), "Jane Doe")
     assert f'#{request} paperback "My Gratitude Journal" (6x9, 120 pages, 9.99 USD): published at {link}' in section
-    assert "its week from Sunday 00:00 UTC; proposed this week: 0 ebooks, 1 paperback." in section
+    assert "New titles proposed this week: 0 ebooks, 1 paperback." in section
 
 
 def test_check_makes_the_cover_and_checks_without_asking(data_dir: Path) -> None:
