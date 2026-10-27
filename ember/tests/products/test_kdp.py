@@ -20,7 +20,7 @@ import pytest
 from PIL import Image, ImageDraw
 
 from app import web
-from app.agent import never, news, obligations, prompts, tools
+from app.agent import estate, never, news, obligations, preconditions, prompts, store, tools
 from app.agent.fake_llm import FakeTransport, request_kind
 from app.agent.sandbox import Jail
 from app.economy.clock import to_iso
@@ -606,6 +606,57 @@ def test_the_weekly_limit_ends_with_kdps_week(data_dir: Path) -> None:
     assert "proposed this week: 1 ebook, 0 paperbacks. Royalties" in section
 
 
+def test_new_files_for_a_published_book_are_no_new_title(data_dir: Path) -> None:
+    """0.53.0 (evaluation 2026-10-27, C1): live, #146 put #141's corrected cover up for the owner and took one of KDP's
+    two new paperbacks of the week, and #140's cover fix had to wait for the next week. At KDP, new files for a live
+    book are a change of that title (its "Edit paperback content"), no new title."""
+    agent, ctx = publishing(data_dir)
+    agent.clock.current = datetime(2026, 9, 5, 12, tzinfo=UTC)  # a Saturday
+    jail = ctx.workspace
+    manuscript = ebook(jail)
+    words = {"format": "ebook", "price": "2.99", "paper": None, "low_content": None, "subtitle": None,
+             "cover": {"front": "books/front.png"}, "project_id": project(agent)}  # fmt: skip
+    first = proposed(agent, ctx, spec(jail, manuscript, "books/guide-1.json", **{**words, "title": "Guide 1"}))
+    ctx.state = tools.CycleTools()
+    proposed(agent, ctx, spec(jail, manuscript, "books/guide-2.json", **{**words, "title": "Guide 2"}))
+    who = owner(agent)
+    assert who.decide(first, {"decision": "approve"}, "Owner").status == 200
+    assert who.close(first, {"outcome": "done", "result_note": "published"}, "Owner").status == 200
+    ctx.state = tools.CycleTools()
+    # the same format and title (case and spacing aside): a change of #first, in a week whose two ebooks are taken
+    fixed = call(ctx, "propose_kdp_book", {"spec": spec(jail, manuscript, "books/guide-1b.json", **{
+        **words, "title": "guide  1"})})  # fmt: skip
+    assert fixed.ok, fixed.text
+    change = rows(agent, "SELECT MAX(id) AS id FROM approvals WHERE executor = 'kdp_package'")[0]["id"]
+    assert f"new files for your published book (request #{first}), no new title" in fixed.text
+    payload = rows(agent, f"SELECT payload FROM approvals WHERE id = {change}")[0]["payload"]
+    assert f"A change of your published book (request #{first}), no new title" in payload
+    assert "Edit eBook content" in payload
+    ctx.state = tools.CycleTools()
+    new = call(ctx, "propose_kdp_book", {"spec": spec(jail, manuscript, "books/g3.json", **{**words, "title": "G 3"})})
+    assert not new.ok and "KDP lets an account create at most 2 new ebooks a week" in new.text
+    assert "are no new title and can go now" in new.text
+    with agent.db.connection() as conn:
+        scope, now = agent.scope(), agent.clock.now()
+        assert kdp.weekly(conn, scope, now) == {"ebook": 2, "paperback": 0}
+        assert kdp.changes(conn, scope) == {change: first}
+        assert kdp.published(conn, scope, "ebook", "GUIDE 1") == first
+        assert kdp.published(conn, scope, "ebook", "Guide 2") is None  # proposed, not published
+        assert kdp.published(conn, scope, "paperback", "Guide 1") is None  # another format is another title
+        section = kdp.text(conn, scope, now, "Jane Doe")
+        # the plan, which knows no title, still holds a new ebook while the week is full
+        facts = preconditions.Facts(conn, scope, now, to_iso(now), form="ebook")
+        assert preconditions.KDP_WEEK.check(facts) is not None
+    assert f"#{change} ebook" in section and f"(a change of #{first}: no new title)" in section
+    assert "New titles proposed this week: 2 ebooks, 0 paperbacks" in section
+    # once done, the change is the same book: the estate lists it once
+    assert who.decide(change, {"decision": "approve"}, "Owner").status == 200
+    assert who.close(change, {"outcome": "done", "result_note": "new cover up"}, "Owner").status == 200
+    with agent.db.connection() as conn:
+        books = [p for p in estate.inventory(conn, agent.scope(), agent.clock) if p.kind == "kdp_book"]
+    assert [p.ref for p in books] == [str(first)]
+
+
 # --- 8. a KDP book's link ---
 
 
@@ -645,3 +696,47 @@ def test_the_owner_adds_a_books_link_to_a_request_marked_done_without_one(data_d
     assert "/api/approvals/{approval_id}/link" in {getattr(r, "path", "") for r in web.router.routes}
     script = (Path(__file__).parents[2] / "app" / "web" / "static" / "js" / "app.js").read_text(encoding="utf-8")
     assert 'panelButton(it, "link", "Add its Amazon link")' in script and 'url: url + "link"' in script
+
+
+def test_a_book_is_judged_by_its_newest_change_carried_out(data_dir: Path) -> None:
+    """0.53.0 (C1): live, #146 corrected #141's "Designed by the author": once the owner uploads it, the book is the
+    change's words at KDP, and the estate's rule reads those (a rehearsal on a copy of the live database suggested
+    retiring #141 for the words #146 replaces)."""
+    agent, ctx = publishing(data_dir)
+    words = {"format": "ebook", "price": "2.99", "paper": None, "low_content": None, "subtitle": None,
+             "cover": {"front": "books/front.png"}, "project_id": project(agent)}  # fmt: skip
+    proposed(agent, ctx, spec(ctx.workspace, ebook(ctx.workspace), "books/guide.json", **words))
+    action = json.loads(rows(agent, "SELECT action FROM approvals WHERE executor = 'kdp_package'")[0]["action"])
+    who = owner(agent)
+    made = []
+    for description in ("Designed by the author with the help of an AI tool.", "A guide to budgeting."):
+        with agent.db.transaction() as conn:
+            made.append(
+                store.insert_approval(
+                    conn,
+                    agent.scope(),
+                    ctx.cycle_id,
+                    to_iso(agent.clock.now()),
+                    project_id=None,
+                    type="sell",
+                    title="KDP ebook: Old Guide",
+                    description="a book",
+                    payload="the book",
+                    expected_cost="none",
+                    expected_benefit="royalties",
+                    executor=kdp.EXECUTOR,
+                    action=json.dumps({**action, "title": "Old Guide", "description": description}),
+                )  # fmt: skip
+            )
+        assert who.decide(made[-1], {"decision": "approve"}, "Owner").status == 200
+    first, fixed = made
+    assert who.close(first, {"outcome": "done", "result_note": "published"}, "Owner").status == 200
+    with agent.db.connection() as conn:
+        [book] = [p for p in estate.inventory(conn, agent.scope(), agent.clock) if p.ref == str(first)]
+    assert "it says a person made it" in book.numbers["rule"]  # its change isn't up yet
+    link = "https://www.amazon.com/dp/B0OLDGUIDE"
+    closed = who.close(fixed, {"outcome": "done", "result_note": "new text up", "result_link": link}, "Owner")
+    assert closed.status == 200
+    with agent.db.connection() as conn:
+        books = [p for p in estate.inventory(conn, agent.scope(), agent.clock) if p.title == "Old Guide"]
+    assert [(p.ref, p.numbers["rule"], p.link) for p in books] == [(str(first), "", link)]

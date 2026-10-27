@@ -1046,10 +1046,13 @@ def changed_files(agent: Agent, approval_id: int) -> list[str]:
     return [u.path for u in _uploads(row["executor"], row["action"]) if not _unchanged(workspace, u, kept=False)]
 
 
-def _kdp_view(agent: Agent, r: sqlite3.Row, action: dict[str, Any]) -> dict[str, Any] | None:
+def _kdp_view(
+    agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope, r: sqlite3.Row, action: dict[str, Any]
+) -> dict[str, Any] | None:
     """0.25.0: what a KDP book's card adds: where the owner publishes it, how they answer KDP's question on AI, what
     one sale earns, and, while it is theirs to publish, whether each file in the workspace is still the one proposed
-    (they download it from there)."""
+    (they download it from there). 0.53.0 (evaluation 2026-10-27, C1): the published book it changes, if it is new
+    files for one (``changes``: they upload them on that book's page, no new title)."""
     try:
         book = kdp.book_from_action(action)
     except kdp.KdpError:
@@ -1063,6 +1066,7 @@ def _kdp_view(agent: Agent, r: sqlite3.Row, action: dict[str, Any]) -> dict[str,
         "print": kdp.print_line(book) if book.format == "paperback" else None,
         "description": kdp.with_disclosure(book.description),
         "files": files,
+        "changes": kdp.changes(conn, scope).get(int(r["id"])),
     }
 
 
@@ -1082,7 +1086,9 @@ def _carried_out(agent: Agent, conn: sqlite3.Connection, scope: store.AgentScope
         first_contact = not mailstore.has_written(conn, scope, str(action.get("to") or ""))
     if r["executor"] == "reddit_link" and action is not None:
         reddit_url = reddit.prefilled_url(action, r["final_payload"] or None)  # the owner's text, if they changed it
-    book = _kdp_view(agent, r, action) if r["executor"] == kdp.EXECUTOR and action is not None else None  # 0.25.0
+    book = (  # 0.25.0
+        _kdp_view(agent, conn, scope, r, action) if r["executor"] == kdp.EXECUTOR and action is not None else None
+    )
     editable = None
     shortfalls: list[str] = []  # 0.13.0: what the QA registry finds short in it
     kind = connectors.class_of(r["executor"], action, r["type"])

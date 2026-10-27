@@ -3,6 +3,37 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.53.0
+
+Fixes from your owner's evaluation of the week 2026-10-19 to 2026-10-25. Ember's code had several of these wrong for
+you.
+
+- New files for a book KDP published already are no new title. A propose_kdp_book of the same format and title as a
+  book your owner marked done is a change of that book: KDP's week of new titles doesn't count it or hold it, and its
+  request tells your owner to open the book on their KDP Bookshelf and upload the new files (Edit paperback content).
+  The week's count names it "(a change of #N: no new title)". Live, #146 (#141's corrected cover) took one of the
+  week's two new paperbacks, and #140's cover fix had to wait a week. A book's numbers and its live texts are judged
+  by the newest change your owner carried out.
+- A step that will propose or resubmit a KDP book waits for KDP's week, however it names the tool: "propose_kdp_book",
+  "resubmit", a promise on a line without a book. Before, promise #70 ("...with propose_kdp_book check:true and
+  resubmit if it passes") wasn't recognised, and promise #68 on line #4 was taken in a full week. A step that names a
+  published book's request ("#141") is a change of it and can go now.
+- The messages you answered lately reach your work steps whole. Your plan quotes 600 characters of each and says
+  "your work steps see it whole". Every plan and brief that showed message #205 cut its middle, where the third of its
+  three fixes was, and you asked your owner for it again (#209).
+- make_image never drops your words. A text photo's lines shrink together until each fits two lines; a line that
+  needs more even at the smallest size is refused with its words ("...needs more than 2 lines even at the smallest
+  size: shorten it"), and nothing is drawn. Before, the third line of "Für Vereine, Selbstständige & kleine
+  Unternehmen" was cut without a word.
+- A line waiting for your owner's keep-or-drop gets no reach: its pins, posts and blog posts wait ("your owner's
+  keep-or-drop of its line (no reach for a line they may drop), or your owner's pin"). Four cycles ($1.01) posted on
+  Bluesky for lines #3, #4 and #6 while your reviews said "passive, the owner decides".
+- Ember's code names the maker once. It adds its own line to every description; a sentence of yours that says the
+  same ("Made by Ember, an AI agent...", "von Ember, einem KI-Agenten, erstellt") is left out. #144 and #146 named it
+  twice.
+- For a later generation: your owner's tools reach an earlier generation's requests, messages and actions, and a new
+  mind's release notes begin at the version it is born on.
+
 ## 0.52.0
 
 Your front script is built in: make_image's layout front (your upgrade request #14). A book's front with every line

@@ -11,7 +11,7 @@ import tracemalloc
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from app.agent import tools
 from app.agent.sandbox import Jail
@@ -153,3 +153,19 @@ def test_a_subtitles_parts_begin_lines_of_their_own() -> None:
     assert lines == ["Unlimited clients", "No resale of files", "Plain English"]
     photo = images.listing([Image.new("RGB", (800, 1100), "white")], "Bundle", "One\nTwo\nThree\nFour\nFive")
     assert Image.open(io.BytesIO(photo)).size == images.SHAPES["landscape"]
+
+
+def test_a_text_photo_never_drops_a_word_of_its_lines() -> None:
+    """0.53.0 (evaluation 2026-10-27, C4): live, make_image's text layout cut each line at two lines without a word,
+    and the Kassenbuch's front printed "Für Vereine, Selbstständige &". Its lines shrink together until each fits two
+    lines and all fit the picture; one that can't fit even at the smallest size is refused, never cut."""
+    lines = ["Für Vereine, Selbstständige & kleine Unternehmen", "Einnahmen · Ausgaben · Bestand"]
+    draw = ImageDraw.Draw(Image.new("RGB", images.SHAPES["pin"], "white"))
+    font, _, parts = images._bullets(draw, lines, "sans", 180, 1680, 1800)
+    assert [" ".join(p) for p in parts] == lines  # every word, in order
+    assert all(len(p) <= images.BULLET_LINES for p in parts) and font.size < 180  # smaller, not shorter
+    assert images.text_photo("Kassenbuch 2027", lines, shape="pin").startswith(b"\x89PNG")
+    with pytest.raises(images.ImageError, match="needs more than 2 lines even at the smallest size: shorten it"):
+        images.text_photo("Kassenbuch 2027", ["Einnahmen " * 120], shape="pin")
+    with pytest.raises(images.ImageError, match="needs more than 3 lines even at the smallest size"):
+        images.text_photo("Kassenbuch " * 200, ["Einnahmen"], shape="pin")  # a title neither

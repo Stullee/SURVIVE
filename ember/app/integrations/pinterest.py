@@ -31,6 +31,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 from urllib.parse import parse_qs, urlencode, urlsplit
 
+from ..agent import claims
 from ..config import Settings
 from ..economy.clock import Clock, from_iso, to_iso
 from ..logging_setup import register_secret
@@ -97,7 +98,7 @@ class Pin:
 
     def full_description(self) -> str:
         """The description as Pinterest shows it: with the AI line."""
-        return f"{self.description.rstrip()}\n\n{DISCLOSURE}"
+        return f"{claims.without_maker(self.description.rstrip())}\n\n{DISCLOSURE}"  # 0.53.0 (C6): one maker line
 
 
 def one_line(text: str) -> str:

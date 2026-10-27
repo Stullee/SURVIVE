@@ -3016,8 +3016,11 @@
     var info = isObject(a.kdp) ? a.kdp : {};
     var paperback = action.format === "paperback";
     var files = arr(info.files);
+    // 0.53.0 (evaluation 2026-10-27, C1): new files for a book already published, which changes that title at KDP
+    var changes = num(info.changes);
     return h("div", { class: "draft" },
       h("p", { class: "payload-note" }, h("span", { "aria-hidden": "true", text: "! " }), "Written by the agent; check it before acting."),
+      changes ? h("p", { class: "send-note", text: "A change of your published book (request #" + changes + "), no new title: open it on your KDP Bookshelf, choose " + (paperback ? "Edit paperback content" : "Edit eBook content") + ", upload the new files and publish. KDP's limit of new titles a week doesn't count it." }) : null,
       h("dl", { class: "draft-grid" },
         h("dt", { text: "Format" }), h("dd", { text: paperback ? "Paperback" : "Kindle eBook" }),
         h("dt", { text: "Title" }), h("dd", { "data-copy": "kdp-title", text: asText(action.title) || "–" }),

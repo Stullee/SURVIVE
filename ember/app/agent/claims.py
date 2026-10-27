@@ -129,3 +129,26 @@ def refusal(words: Iterable[str]) -> str:
     if not said:
         return ""
     return "; ".join(said) + ". Nothing went to your owner: write it again without that, and propose it again"
+
+
+# 0.53.0 (evaluation 2026-10-27, C6): a sentence of the agent's own that names Ember as the maker ("Made by Ember, an AI
+# agent, and checked by the seller before publication.", "This listing was made by Ember, an AI agent, ...", "Vorlage
+# von Ember, einem KI-Agenten, erstellt."), which the line Ember's code adds to a description says already. Live, #144
+# and #146 named the maker twice, once in her words and once in the code's. Each repetition is bounded (a long run of
+# one character takes linear time, tests/products/test_regex_timing.py).
+_MAKER = re.compile(
+    r"(?:(?<=^)|(?<=[.!?]\s)|(?<=\n))[ \t]*"
+    r"(?:(?:this|the)\s+[\w-]{1,30}\s+(?:was|is|has\s+been)\s+|(?:design|vorlage|buch|dieses\s+buch)\s+(?:wurde\s+)?)?"
+    r"(?:(?:made|created|designed|written)\s+by\s+ember\b(?!['’])|von\s+ember,\s+einem\s+ki-agenten,)"
+    r"[^.!?\n]{0,240}[.!?]?[ \t]*",
+    re.IGNORECASE,
+)
+
+
+def without_maker(description: str) -> str:
+    """0.53.0 (C6): a description without the agent's own sentences that name Ember its maker (``_MAKER``): Ember's
+    code adds its own line, and one is enough. Her other words stay as they are."""
+    kept = _MAKER.sub("", description)
+    if kept == description:
+        return description
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(line.rstrip() for line in kept.splitlines())).strip()

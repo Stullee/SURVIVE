@@ -487,17 +487,60 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, wi
     return lines
 
 
+SMALLEST = 24  # the smallest font size (pixels) a picture's words shrink to
+BULLET_LINES = 2  # the lines a text photo's line may wrap into
+
+
 def _fit(draw: ImageDraw.ImageDraw, text: str, family: str, style: str, start: int, width: int, max_lines: int):  # noqa: ANN202
-    """The largest font (from ``start`` down) at which ``text`` wraps into ``max_lines`` lines of ``width``."""
+    """The largest font (from ``start`` down) at which ``text`` wraps into ``max_lines`` lines of ``width``.
+    0.53.0 (evaluation 2026-10-27, C4): never a line cut off: a text that needs more lines even at the smallest size is
+    refused (it was cut to ``max_lines`` without a word)."""
     size = start
-    while size > 24:
+    while size > SMALLEST:
         font = _font(family, style, size)
         lines = _wrap(draw, text, font, width)
         if len(lines) <= max_lines and all(draw.textlength(line, font=font) <= width for line in lines):
             return font, lines
         size = int(size * 0.92)
     font = _font(family, style, size)
-    return font, _wrap(draw, text, font, width)[:max_lines]
+    lines = _wrap(draw, text, font, width)
+    if len(lines) > max_lines:
+        raise ImageError(_too_long(text, max_lines))
+    return font, lines
+
+
+def _too_long(text: str, most: int) -> str:
+    words = " ".join(text.split())
+    shown = words if len(words) <= 80 else words[:79] + "…"
+    return (
+        f'"{shown}" needs more than {most} line{"s" if most != 1 else ""} even at the smallest size: shorten it'
+        " (nothing of it was drawn)"
+    )
+
+
+def _bullets(  # noqa: ANN202
+    draw: ImageDraw.ImageDraw, lines: list[str], family: str, start: int, width: int, room: int
+):
+    """0.53.0 (evaluation 2026-10-27, C4): a text photo's lines as a list: the largest font (from ``start`` down) at
+    which each wraps into BULLET_LINES lines of ``width`` beside its bullet, and all of them fit ``room`` pixels high;
+    the font, the bullet's size and each line's parts. A line that needs more lines even at the smallest size is
+    refused. Live, the bullet "Für Vereine, Selbstständige & kleine Unternehmen" printed "Für Vereine, Selbstständige &"
+    on a KDP front: its third line was dropped without a word."""
+    size = max(SMALLEST, start)
+    while True:
+        font = _font(family, "", size)
+        bullet = max(8, font.size // 3)
+        parts = [_wrap(draw, line, font, width - 2 * bullet) for line in lines]
+        high = sum(len(p) * int(font.size * 1.25) + int(font.size * 0.25) for p in parts)
+        if all(len(p) <= BULLET_LINES for p in parts) and high <= room:
+            return font, bullet, parts
+        if size <= SMALLEST:
+            break
+        size = max(SMALLEST, int(size * 0.92))
+    long = next((line for line, p in zip(lines, parts, strict=True) if len(p) > BULLET_LINES), None)
+    if long is not None:
+        raise ImageError(_too_long(long, BULLET_LINES))
+    raise ImageError(f"its {len(lines)} lines don't fit the picture even at the smallest size: give fewer or shorter")
 
 
 def _sheet(page: Image.Image, height: int, width: int, angle: float) -> tuple[Image.Image, Image.Image]:
@@ -662,10 +705,8 @@ def text_photo(
     y += int(title_font.size * 0.6)
     room = height - margin - y - (int(height * 0.12) if badge else 0)
     size = int(min(height * 0.06, room / max(1, len(lines)) / 1.5))
-    font = _font(lines_family, "", max(24, size))
-    bullet = max(8, font.size // 3)
-    for line in lines:
-        shown = _wrap(draw, line, font, box_w - 2 * bullet)[:2]
+    font, bullet, wrapped = _bullets(draw, lines, lines_family, size, box_w, room)
+    for shown in wrapped:
         top = y + font.size * 0.35
         draw.rectangle([margin, top, margin + bullet, top + bullet], fill=accent_rgb)
         for part in shown:
