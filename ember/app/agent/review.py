@@ -25,7 +25,7 @@ from ..economy.clock import Clock, from_iso, to_iso
 from ..economy.costs import micros_to_usd
 from ..economy.ledger import OWN_CORRECTIONS, SETTLED_COST, Books, Scope
 from ..economy.life import LifeStatus, Runway
-from ..integrations import etsy, etsy_publisher, retry
+from ..integrations import etsy, etsy_publisher, kdp, retry
 from ..version import app_version
 from . import estate, learning, plan, predictions, prompts, quality, reach, roadmap, ventures
 from .store import CLOSED_STATUSES, OPEN_STATUSES, AgentScope, open_projects
@@ -624,6 +624,7 @@ def _books(conn: sqlite3.Connection, scope: AgentScope) -> str:
     if not rows:
         return ""
     lines = ["AMAZON KDP (your books, the newest first)"]
+    changed = kdp.changes(conn, scope)  # 0.53.0 (evaluation 2026-10-27, C1)
     for r in rows:
         if r["status"] == "done":
             said = (
@@ -633,7 +634,8 @@ def _books(conn: sqlite3.Connection, scope: AgentScope) -> str:
             )
         else:
             said = "waiting for your owner" if r["status"] == "pending" else "approved, not published yet"
-        lines.append(f'- #{r["id"]} "{_one_line(r["title"], 80)}": {said}')
+        change = f" (new files for #{changed[int(r['id'])]}, no new title)" if int(r["id"]) in changed else ""
+        lines.append(f'- #{r["id"]} "{_one_line(r["title"], 80)}"{change}: {said}')
     return "\n".join(lines)
 
 

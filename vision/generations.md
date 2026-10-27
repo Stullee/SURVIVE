@@ -12,7 +12,11 @@ open: re-pinning lessons, the dress rehearsal on a copy of the live database, an
 by generation ("How we know she is smarter"): a generation's measures over its first 14 and 28 days and its last 28,
 beside its predecessor's. 0.50.0 closes the old generation's open work at the change (its lines, ventures, plan,
 milestones, bets, predictions, promises and unlocks) and carries the owner's goal, which is theirs as the rulebook
-is. 0.51.0 names her generation on the dashboard, in the sensors and on the live page. It answers the
+is. 0.51.0 names her generation on the dashboard, in the sensors and on the live page. 0.53.0 (the evaluation of
+2026-10-27, C7) lets the owner's tools reach every generation (deciding a request, Undo, removing a message's text),
+begins the new mind's release notes at its version, and adds the dress rehearsal on a copy of the live database:
+`dev/rehearse_generation.py`, run in live mode without an API key or any platform's credentials (no model is called,
+nothing leaves) rather than in dry run. Still open: re-pinning lessons and phase 2. It answers the
 owner's question: how can Ember evolve into a next generation that carries over the important learnings, starts with a
 clean mind, and is smarter for it, without holding on to the products her first generation failed with?*
 

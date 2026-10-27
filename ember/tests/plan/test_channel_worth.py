@@ -15,7 +15,7 @@ import pytest
 
 pytest.importorskip("httpx2")
 
-from app.agent import plan, store, weights  # noqa: E402
+from app.agent import plan, plan_keep, store, weights  # noqa: E402
 from app.agent.service import Agent  # noqa: E402
 from app.integrations import publish_queue  # noqa: E402
 from tests.agent_helpers import rows  # noqa: E402
@@ -246,3 +246,27 @@ def test_only_a_recurring_step_of_ember_s_code_is_skipped_and_never_a_pinned_one
     [own] = rows(agent, f"SELECT id FROM plan_nodes WHERE project_id = {line} AND title = 'Ask for a review'")
     refused = plan_step(agent, line, action="skip", step_id=own["id"])
     assert not refused.ok and "skip is for a recurring pin, post or blog post" in refused.text
+
+
+def test_a_line_waiting_for_the_owners_keep_or_drop_takes_no_reach(data_dir: Path) -> None:
+    """0.53.0 (evaluation 2026-10-27, C5): live, lines #3, #4 and #6 waited for the owner's keep-or-drop, and the
+    daily reviews said "passive at zero cost, the owner decides"; four cycles ($1.01) still posted on Bluesky for them.
+    Their weekly pins, posts and blog posts wait for the owner's decision ('deciding'), as their review's change does
+    (0.42.6); the owner's pin brings one back, and their keep ends the wait."""
+    agent, line = weekly_out(data_dir)
+    steps = by_channel(agent, line)
+    assert steps and set(waits(agent, line, ALL)[s["title"]] for s in steps.values()) <= {None, "floor"}
+    with agent.db.transaction() as conn:
+        [product] = plan.nodes(conn, agent.scope(), "level = 'product' AND project_id = ?", (line,))
+        assert plan_keep._owner_decides(conn, agent.scope(), product, now(agent), "day 14: 3 views")
+    waiting = waits(agent, line, ALL)
+    assert {waiting[s["title"]] for s in steps.values()} == {"deciding"}
+    assert "keep-or-drop of its line" in plan.WAITS["deciding"]
+    one = next(iter(steps.values()))
+    with agent.db.transaction() as conn:
+        plan.pin(conn, agent.scope(), one["id"], True, "Owner", now(agent))
+    assert waits(agent, line, ALL)[one["title"]] in (None, "floor")  # the owner wants it
+    [decision] = rows(agent, f"SELECT id FROM plan_nodes WHERE project_id = {line} AND template = 'decide/owner'")
+    with agent.db.transaction() as conn:
+        plan.owner_keep(conn, agent.scope(), decision["id"], "one more month", "Stefan", now(agent))
+    assert "deciding" not in waits(agent, line, ALL).values()

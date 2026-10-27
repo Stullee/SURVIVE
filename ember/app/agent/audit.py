@@ -145,9 +145,14 @@ def _changes(row: sqlite3.Row) -> list[dict[str, str]]:
 
 
 def _journal(
-    conn: sqlite3.Connection, scope: AgentScope, where_more: str = "", params_more: tuple[Any, ...] = ()
+    conn: sqlite3.Connection,
+    scope: AgentScope,
+    where_more: str = "",
+    params_more: tuple[Any, ...] = (),
+    minds: bool = False,
 ) -> Any:
-    where, params = scope.where("j")
+    # 0.53.0 (evaluation 2026-10-27, C7): ``minds``, an earlier generation's actions too (the owner's Undo by id)
+    where, params = scope.minds_where("j") if minds else scope.where("j")
     return conn.execute(
         "SELECT j.*, a.title AS request_title, a.decided_by, u.journal_id AS undoes FROM action_journal j"
         " LEFT JOIN approvals a ON a.id = j.approval_id LEFT JOIN action_undos u ON u.approval_id = j.approval_id"
@@ -365,7 +370,7 @@ def _latest_cycle(conn: sqlite3.Connection, scope: AgentScope) -> int | None:
 def undo(conn: sqlite3.Connection, scope: AgentScope, now: str, journal_id: int, by: str) -> tuple[int, str]:
     """The owner's Undo of an action: a request of theirs, approved at once, that Ember's code carries out in its next
     round. Returns the request and what it does. Raises Refused."""
-    row = _journal(conn, scope, " AND j.id = ?", (journal_id,)).fetchone()
+    row = _journal(conn, scope, " AND j.id = ?", (journal_id,), minds=True).fetchone()
     if row is None:
         raise Refused("no such action", 404)
     why = _why_not(conn, scope, row)
@@ -495,7 +500,9 @@ def _filed_under(conn: sqlite3.Connection, scope: AgentScope, row: sqlite3.Row) 
         if row["approval_id"] is not None
         else None
     )
-    cycle_id = original["cycle_id"] if original is not None else _latest_cycle(conn, scope)
+    # 0.53.0 (evaluation 2026-10-27, C7): an earlier generation's action is undone under the current mind's cycle
+    mine = original is not None and original["mode"] == scope.mode and original["session"] == scope.session
+    cycle_id = original["cycle_id"] if mine else _latest_cycle(conn, scope)
     if cycle_id is None:
         raise Refused("Ember has no cycle yet to file it under")
     return original, int(cycle_id)

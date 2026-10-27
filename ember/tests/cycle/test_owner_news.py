@@ -676,3 +676,24 @@ def test_an_answered_message_stays_in_the_owners_news_for_some_days(data_dir: Pa
     sent = len(fake.sent)
     agent.run_cycle("schedule")
     assert all(said not in first_text(r) for r in list(fake.sent)[sent:])
+
+
+def test_the_work_steps_see_an_answered_message_whole_and_the_plan_says_so() -> None:
+    """0.53.0 (evaluation 2026-10-27, C3): live, every plan and brief that showed message #205 after its answer cut its
+    middle ("663 more characters; your owner has the full text"), where the third of its three fixes was, and the
+    cycle that made the other two asked the owner for it (#209). The work steps' brief shows such a message whole, in
+    room of its own; a plan quotes its start and its end and says the work steps see it whole."""
+    fixes = " ".join(f"Fix {n}: replace the table on page {n} with three writing lines." for n in range(1, 40))[:1_990]
+    snap = snapshot_with([])
+    snap.owner_words = [  # type: ignore[assignment]
+        {"id": 205, "created_at": "2026-10-21T14:40:00Z", "answered_by": 206, "text": fixes},
+        {"id": 208, "created_at": "2026-10-22T15:02:00Z", "answered_by": 209, "text": "ä" * 1_263},
+    ]
+    _, briefed = context.brief(snap, False, {"goal": "g", "steps": ["s"]}, None, 12)
+    brief, _ = context.brief(snap, False, {"goal": "g", "steps": ["s"]}, None, 12)
+    owners = section(brief, "FROM YOUR OWNER") or ""
+    assert json.dumps(fixes) in owners and json.dumps("ä" * 1_263, ensure_ascii=False) in owners  # both whole
+    planner, _ = context.planner_context(snap, False)
+    since = section(planner, "SINCE YOUR LAST WAKE") or ""
+    assert f"more characters; {context.WORDS_WHOLE})" in since and json.dumps(fixes) not in since
+    assert context.WORDS_BUDGET >= 2 * (2_000 + 200)  # two at the owner's limit, with their heads

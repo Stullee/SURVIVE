@@ -54,6 +54,8 @@ WAITS = {
     "listing": "a listing of its own (one of your listings counted for another line moves with project_update's "
     "listing_id)",
     "floor": "its channel to bring more than next to nothing (it is at its floor), or your owner's pin",  # 0.39.8
+    # 0.53.0 (evaluation 2026-10-27, C5): a line's pins, posts and blog posts while its future is the owner's call
+    "deciding": "your owner's keep-or-drop of its line (no reach for a line they may drop), or your owner's pin",
     # 0.37.9: the owner's limits (``limits``)
     "queue": "room in the publishing queue (your owner decides a request, or one goes out)",
     "sales": "room for a sell request (your owner decides a listing, a change or a product that waits for them)",

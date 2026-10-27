@@ -757,6 +757,20 @@ so a centred title printed 0.0625 in right of the middle), and
 right margins differ by more than 0.2% of the front's width (0.012 in at 6x9),
 measured at the cover's 300 dpi.
 
+0.53.0 fixes what the evaluation of the week 2026-10-19 to 10-25
+(`evaluation/2026-10-27-0.52.0/`) found in Ember's code. New files for a book
+already published at KDP (a cover fix) are a change of that title, no new
+title: KDP's two new titles a week no longer count them, and the request tells
+the owner to use the Bookshelf's "Edit paperback content". A plan step that
+proposes or resubmits a book waits for KDP's week however it names the tool.
+The messages Ember answered lately reach her work steps whole (one had its
+middle cut, where the third of three fixes was). `make_image` refuses a line it
+can't fit instead of dropping its words. A line waiting for the owner's
+keep-or-drop gets no pins or posts. The maker line ("Made by Ember, an AI
+agent") appears once. And for the generation change: the owner's tools reach
+an earlier generation's records, and `dev/rehearse_generation.py` rehearses the
+change on a copy of the database, offline.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

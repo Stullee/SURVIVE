@@ -874,11 +874,14 @@ def _propose_kdp_book(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     noted = "".join(f" Note: {note}." for note in notes)  # 0.42.0: with a qa cut to its length
     with ctx.db.transaction() as conn:
         project_id = _product_line(ctx, conn, spec, "book")
-        _refuse(ctx, conn, preconditions.KDP_WEEK, form=book.format)  # 0.25.0; 0.42.0: the plan waits on it too
+        # 0.25.0; 0.42.0: the plan waits on it too; 0.53.0 (evaluation 2026-10-27, C1): a change of a published book
+        # (its format and title) creates no title at KDP, and the week doesn't hold it
+        _refuse(ctx, conn, preconditions.KDP_WEEK, form=book.format, title=book.title)
+        changes = kdp.published(conn, ctx.scope, book.format, book.title)
         made_request = _new_request(
             ctx,
             conn,
-            kdp.payload(book),
+            kdp.payload(book, changes),
             book.to_action(),
             project_id=project_id,
             type="sell",
@@ -890,11 +893,19 @@ def _propose_kdp_book(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
         )
     if isinstance(made_request, str):
         return Outcome(True, made_request, "duplicate book")
-    text = (
-        f"{cover}Approval request #{made_request} is waiting for your owner. Nothing is at Amazon yet. If they approve "
-        "it, they publish it at KDP from their own account and mark it done with the book's link; its royalties count "
-        f"once they record them. Price {book.price} {kdp.CURRENCY}: {kdp.royalty(book)}.{noted}"
-    )
+    if changes is not None:  # 0.53.0 (C1)
+        text = (
+            f"{cover}Approval request #{made_request} is waiting for your owner: new files for your published book "
+            f"(request #{changes}), no new title, so KDP's weekly limit doesn't count it. Nothing changed at Amazon "
+            "yet. If they approve it, they upload the files on the book's page at KDP and mark the request done. "
+            f"Price {book.price} {kdp.CURRENCY}: {kdp.royalty(book)}.{noted}"
+        )
+    else:
+        text = (
+            f"{cover}Approval request #{made_request} is waiting for your owner. Nothing is at Amazon yet. If they "
+            "approve it, they publish it at KDP from their own account and mark it done with the book's link; its "
+            f"royalties count once they record them. Price {book.price} {kdp.CURRENCY}: {kdp.royalty(book)}.{noted}"
+        )
     text += _unlocked(ctx)
     return Outcome(True, text, f"#{made_request} KDP {book.format}: {_cut(book.title, 60)}", project_id)
 

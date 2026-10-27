@@ -51,6 +51,9 @@ class Facts:
     links: tuple[str, ...] = ()  # what it links (publish_queue.keys: 'listing 123')
     replaced: tuple[int, ...] = ()  # the waiting requests it replaces (a pin of a listing in the same words)
     form: str | None = None  # a KDP book's format; None: not known (the week holds it while every format's is full)
+    # 0.53.0 (evaluation 2026-10-27, C1): a KDP book's title; one KDP already published in its format is a change of
+    # that title, which the week doesn't hold (kdp.published)
+    title: str | None = None
     # a message that answers one of the owner's, or reports a promise they heard nothing of since (``untold``): the
     # day's limit lets it through
     answers: bool = False
@@ -148,6 +151,8 @@ def _demand(facts: Facts) -> str | None:
 def _kdp_week(facts: Facts) -> str | None:
     """0.25.0: KDP lets an account create at most kdp.WEEKLY_TITLES new titles of a format a week (0.40.2: KDP's
     week, from Sunday 00:00 UTC). A book of no known format (``form`` None) is held while every format's is full."""
+    if facts.form and facts.title and kdp.published(facts.conn, facts.scope, facts.form, facts.title) is not None:
+        return None  # 0.53.0 (C1): new files for a published title
     counted = kdp.weekly(facts.conn, facts.scope, facts.now)
     forms = (facts.form,) if facts.form else kdp.FORMATS
     full = [f for f in forms if counted.get(f, 0) >= kdp.WEEKLY_TITLES]
@@ -157,7 +162,8 @@ def _kdp_week(facts: Facts) -> str | None:
     return (
         f"you proposed {counted[form]} {form}s this week (KDP's, from Sunday 00:00 UTC), and KDP lets an account"
         f" create at most {kdp.WEEKLY_TITLES} new {form}s a week: propose the next one from"
-        f" {kdp.next_week(facts.now, facts.tz)}"
+        f" {kdp.next_week(facts.now, facts.tz)} (new files for a book KDP published already, in its format and with"
+        " its title, are no new title and can go now)"
     )
 
 

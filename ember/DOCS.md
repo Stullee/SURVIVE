@@ -642,7 +642,11 @@ agent's workspace:
   v10 covers): a fix of a cover's words or numbers no longer needs a workshop
   run against the daily cap. Since 0.52.0 (layout **front**, upgrade request
   #14) also a book's front: the poster's title, rule and lines, each centred by
-  its ink and measured; see [Amazon KDP](#amazon-kdp).
+  its ink and measured; see [Amazon KDP](#amazon-kdp). Since 0.53.0 a picture
+  never drops the agent's words: a text photo's lines shrink together until
+  each fits two lines, and a line or title that needs more even at the smallest
+  size is refused with its words. Until then the third line of a bullet was cut
+  without a word ("Für Vereine, Selbstständige &" on a KDP front).
 - **Print files** (`resize_image`): one of the agent's pictures at exact pixels
   (a Printify print area, e.g. 3508 x 4961 for A3 at 300 dpi): the centre of
   the picture in the size's proportions, nothing stretched, resized and noted
@@ -729,6 +733,10 @@ check, these claims have no true form the agent could check itself, and a
 refusal costs it one rewrite in the same cycle. A format norm ("DIN
 5008-konform") passes, as does a request that corrects such a text (the old
 words a change replaces, or quotes in a request you carry out, aren't its own).
+Since 0.53.0 the line is there once: a sentence of the agent's own that names
+Ember as the maker ("Made by Ember, an AI agent, ...", "Vorlage von Ember,
+einem KI-Agenten, erstellt.") is left out of what goes public, as Ember's code
+adds its own (#144 and #146 had both).
 
 ## The workshop
 
@@ -3172,7 +3180,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.52.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.53.0 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3330,6 +3338,16 @@ own account. Ember never logs in to Amazon or reads its pages.
   it counted the last 7 days: the two books proposed on Monday 10-19 held the
   Kassenbuch until Monday 10-26, a day after KDP's week allowed it and past the
   day the agent had promised it for.
+- New files for a book you published are no new title (0.53.0, the evaluation
+  of 2026-10-27): a book of the same format and title as one you marked done
+  is a change of it. KDP's week doesn't count it or hold it, the plan's KDP
+  section marks it "(a change of #N: no new title)", and a book's numbers and
+  live texts are judged by the newest change you carried out. Until then a
+  cover fix counted: #146, #141's corrected cover, took one of the week's two
+  new paperbacks, and #140's fix had to wait a week. A plan step that will
+  propose or resubmit a book waits for KDP's week however it names the tool
+  (promise #70, "...resubmit if it passes", hadn't been recognised), unless it
+  names a published book's request ("#141"): that is a change.
 
 ### Publishing it
 
@@ -3346,6 +3364,10 @@ own account. Ember never logs in to Amazon or reads its pages.
   title there, enter the fields, upload the files, check KDP's previewer, and
   publish (KDP reviews a book for up to 72 hours). Then mark the request
   **done** with the book's link at Amazon, or **failed** with what went wrong.
+- A change of a published book (0.53.0) says so on its card, with the request
+  it changes: don't create a new title. Open that book on your Bookshelf,
+  choose **Edit paperback content** (an ebook: **Edit eBook content**), upload
+  the new files and publish.
 - A request marked done without the link has **Add its Amazon link** (0.40.2):
   until it has one, nothing of Ember's can link the book, and the agent's KDP
   section says so. Both Haushaltsbuch books were marked done with "published"
@@ -3831,6 +3853,22 @@ compares the generations over the same stretches of their lives (the first 14
 and 28 days, the last 28) and says which inherited principles her own cases
 established, disputed or retired. A change on a Sunday makes her first week a
 whole one.
+
+**The owner's tools reach every generation** (0.53.0). After a change, a
+request, message or action of an earlier generation is still yours to handle:
+add a book's link, remove a message, undo an action. The new mind's release
+notes begin at the version it is born on: the old mind's unread notes were
+about work that ended with it.
+
+**A dress rehearsal** (0.53.0). From the repository, before you begin one:
+`cd ember && python ../dev/rehearse_generation.py /path/to/ember.db --prepare`.
+It copies the database (an evaluation export's `ember.db`, or a copy of
+`/data/ember.db`) into a folder of its own, opens it without an API key or any
+platform's credentials, and reports what the change waits for. With
+`--prepare` it plays your part on the copy (waiting requests rejected, approved
+ones marked done, the suggested verdicts given, a retire as passive), begins
+the next generation and shows the new mind's first plan and whether the
+world's rows stayed as they were. The original is never written.
 
 **Going back.** The dashboard can't undo a generation change. To go back, stop
 the app, restore the `ember-generation…` copy as `/data/ember.db`, move the

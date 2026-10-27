@@ -72,9 +72,10 @@ LAST_WILL = CallProfile(input_tokens=6_600, max_tokens=1_000)  # 0.18.0: the con
 # and milestone_plan; the OBLIGATIONS and obligation_done; the reflection with the most tool calls its cycle didn't
 # do; the rules without what Ember's code enforces or another text already says; draft; the lessons the owner pinned;
 # demand_note and a listing's project_id; 0.13.0: a milestone's odds). 0.40.3 (analysis-0.40.1 codebase, C2): and the
-# brief's YOUR SOFTWARE (context.SOFTWARE_BRIEF_BUDGET), which the profiles' margin holds.
-WORK = CallProfile(input_tokens=36_500, max_tokens=2_000, cache_ttls=("5m",))
-REFLECT = CallProfile(input_tokens=48_200, max_tokens=2_000, cache_ttls=("5m",))
+# brief's YOUR SOFTWARE (context.SOFTWARE_BRIEF_BUDGET), which the profiles' margin holds. 0.53.0 (evaluation
+# 2026-10-27, C3): and the messages the agent answered lately, whole (context.WORDS_BUDGET).
+WORK = CallProfile(input_tokens=38_400, max_tokens=2_000, cache_ttls=("5m",))
+REFLECT = CallProfile(input_tokens=50_000, max_tokens=2_000, cache_ttls=("5m",))
 # The daily review (0.7.1), measured the same way: the constitution, the knowledge, the review rules (with the
 # venture tree's: 0.10.0, and the roadmap's: 0.11.0, with verdicts on milestones: 0.12.0, with bottlenecks and
 # retrospectives: 0.18.0)

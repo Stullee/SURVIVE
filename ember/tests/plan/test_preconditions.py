@@ -29,7 +29,7 @@ from app.agent import obligations, plan, preconditions, store, tools  # noqa: E4
 from app.agent.service import Agent  # noqa: E402
 from app.economy.clock import to_iso  # noqa: E402
 from app.integrations import etsy, etsy_publisher  # noqa: E402
-from tests.agent_helpers import rows  # noqa: E402
+from tests.agent_helpers import owner, rows  # noqa: E402
 from tests.etsy_helpers import call  # noqa: E402
 from tests.plan.test_cycle_line import cycle, lined, now, working  # noqa: E402
 from tests.plan.test_limit_waits import full_queue, launched, refused_by  # noqa: E402
@@ -269,7 +269,8 @@ def test_a_kdp_proposal_waits_in_a_full_kdp_week_with_the_tools_words(
     refused = call(ctx, "propose_kdp_book", {"spec": path, "qa": QA})
     said = (
         "you proposed 2 paperbacks this week (KDP's, from Sunday 00:00 UTC), and KDP lets an account create at most 2"
-        " new paperbacks a week: propose the next one from Sunday 09-06 at 00:00"
+        " new paperbacks a week: propose the next one from Sunday 09-06 at 00:00 (new files for a book KDP published"
+        " already, in its format and with its title, are no new title and can go now)"
     )
     assert not refused.ok and said in refused.text
     assert (book.waiting, book.refused) == ("blocked", said)
@@ -408,6 +409,71 @@ def test_a_promise_to_propose_a_kdp_book_waits_in_a_full_kdp_week_too(
     assert step.waiting == "blocked" and "KDP lets an account create at most 2 new paperbacks a week" in str(
         step.refused
     )
+
+
+def _two_paperbacks(agent: Agent) -> None:
+    """Two paperbacks of other books proposed in this KDP week: its paperbacks are taken."""
+    with agent.db.transaction() as conn:
+        for n in range(2):
+            store.insert_approval(
+                conn, agent.scope(), 1, now(agent), project_id=None, type="sell", title=f"KDP paperback: Book {n}",
+                description="a book", payload=f"book {n}", expected_cost="none", expected_benefit="royalties",
+                executor="kdp_package", action=json.dumps({"format": "paperback", "title": f"Book {n}"}),
+            )  # fmt: skip
+
+
+def test_a_kdp_promise_waits_however_it_names_the_tool_and_whatever_line_it_stands_on(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """0.53.0 (evaluation 2026-10-27, C2): live, promise #70 ("Verify #141's v2 cover with propose_kdp_book check:true
+    and resubmit if it passes") matched no "kdp" word, and promise #68's step stood on line #4, which has no book: a
+    book of no format waited only while both formats' weeks were full. Five cycles took them in a week whose paperbacks
+    were taken, and two proposals were refused."""
+    monkeypatch.delenv("TZ", raising=False)
+    agent, ctx = publishing(data_dir)
+    book = project(agent, *BOOK)
+    tracker = project(agent, *TRACKER)
+    keep(agent)
+    ctx.cycle_id = cycle(agent, book, status="running")
+    path = spec(ctx.workspace, paperback(ctx.workspace), project_id=book)
+    assert call(ctx, "propose_kdp_book", {"spec": path, "check": True}).ok  # the KDP line's books are paperbacks
+    worded = promise(agent, "Verify the v2 cover with propose_kdp_book check:true and resubmit if it passes", line=book)
+    elsewhere = promise(agent, "Propose Kassenbuch 2027 KDP listing once weekly slot resets", line=tracker)  # as live
+    keep(agent)
+    assert rows(agent, f"SELECT project_id FROM plan_nodes WHERE obligation_id = {elsewhere}") == [
+        {"project_id": tracker}
+    ]
+    assert the_step(agent, f"Keep promise #{worded}: ", book).waiting is None
+    assert the_step(agent, f"Keep promise #{elsewhere}: ", tracker).waiting is None
+    _two_paperbacks(agent)
+    for kept, line in ((worded, book), (elsewhere, tracker)):
+        step = the_step(agent, f"Keep promise #{kept}: ", line)
+        assert step.waiting == "blocked", kept
+        assert "KDP lets an account create at most 2 new paperbacks a week" in str(step.refused)
+
+
+def test_a_promise_to_change_a_published_book_is_not_held_by_kdp_s_week(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """0.53.0 (C1, C2): new files for a book KDP published (its request named, "#141") are no new title at KDP: the
+    week doesn't hold its promise, as it doesn't hold the tool (tests/products/test_kdp.py)."""
+    monkeypatch.delenv("TZ", raising=False)
+    agent, _ = publishing(data_dir)
+    book = project(agent, *BOOK)
+    keep(agent)
+    with agent.db.transaction() as conn:
+        live = store.insert_approval(
+            conn, agent.scope(), 1, now(agent), project_id=book, type="sell", title="KDP paperback: Haushaltsbuch",
+            description="a book", payload="the book", expected_cost="none", expected_benefit="royalties",
+            executor="kdp_package", action=json.dumps({"format": "paperback", "title": "Haushaltsbuch 2027"}),
+        )  # fmt: skip
+    who = owner(agent)
+    assert who.decide(live, {"decision": "approve"}, "Owner").status == 200
+    assert who.close(live, {"outcome": "done", "result_note": "published"}, "Owner").status == 200
+    kept = promise(agent, f"Resubmit #{live}'s fixed cover via propose_kdp_book", line=book)
+    keep(agent)
+    _two_paperbacks(agent)
+    assert the_step(agent, f"Keep promise #{kept}: ", book).waiting is None
 
 
 def test_a_kdp_promise_s_step_of_no_line_waits_on_the_line_its_obligation_names(

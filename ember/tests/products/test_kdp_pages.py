@@ -362,7 +362,7 @@ def test_the_tool_the_guide_and_the_fixed_prompt() -> None:
     assert len(manual) <= tools.MAX_RESULT_CHARS
     flat = " ".join(manual.split())
     assert "A paperback's check also draws its pages fresh, one of each kind (or pages: '6, 83')" in flat
-    assert "with qa: what you saw on its pages, point by point. Old pictures or checklists are no check." in flat
+    assert "with qa: what you saw on its pages, point by point. Old pictures are no check." in flat
     assert "propose_kdp_book's check draws a paperback's pages" in " ".join(tools.guide_text("workshop").split())
 
 

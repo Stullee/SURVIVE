@@ -40,7 +40,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 from urllib.parse import parse_qs, urlencode, urlsplit
 
-from ..agent import econ
+from ..agent import claims, econ
 from ..config import Settings
 from ..economy.clock import Clock, from_iso, to_iso
 from ..logging_setup import register_secret
@@ -173,6 +173,7 @@ def check_description(text: Any) -> str:
     for line in (DISCLOSURE, *EARLIER):  # Ember's code adds it; a copy the agent wrote (or a live one's) isn't doubled
         if text.endswith(line):
             text = text[: -len(line)].rstrip()
+    text = claims.without_maker(text)  # 0.53.0 (evaluation 2026-10-27, C6): nor one in her own words
     if len(text) > DESCRIPTION_CHARS:
         raise EtsyError(f"the description has more than {DESCRIPTION_CHARS:,} characters")
     if _CONTROL.search(text.replace("\n", "").replace("\t", "")):

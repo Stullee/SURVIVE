@@ -48,7 +48,7 @@ from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 from pathlib import PurePosixPath
 from typing import Any, Protocol
 
-from ..agent import econ
+from ..agent import claims, econ
 from ..config import Settings
 from ..economy.clock import Clock, to_iso
 from . import retry
@@ -146,7 +146,7 @@ class Product:
 
     def full_description(self) -> str:
         """The description as the Etsy listing shows it: with the AI line."""
-        return f"{self.description.rstrip()}\n\n{DISCLOSURE}"
+        return f"{claims.without_maker(self.description.rstrip())}\n\n{DISCLOSURE}"  # 0.53.0 (C6): one maker line
 
     def scale(self) -> float:
         """The picture's width on the print area (1: as wide as it), so that all of it fits: a picture taller than

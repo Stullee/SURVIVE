@@ -30,7 +30,8 @@ from ..db import MAX_BACKUPS
 from ..economy.clock import local_date, to_iso
 from ..economy.life import LIVE_SESSION_KEY, SESSION_NO_KEY, WORLD_KEY
 from ..integrations import etsy
-from . import estate, inheritance, learning, policy, roadmap, store
+from ..version import app_version
+from . import estate, inheritance, learning, news, policy, roadmap, store
 from .store import AgentScope
 
 if TYPE_CHECKING:
@@ -400,6 +401,10 @@ def begin(agent: Agent, by: str) -> dict[str, Any]:
                 agent.db.set_meta(SESSION_NO_KEY, str(new_session))
             for name in RESET:
                 conn.execute("DELETE FROM meta WHERE key = ?", (f"agent.{scope.mode}.{name}",))
+            # 0.53.0 (evaluation 2026-10-27, C7): her release notes begin at the version she is born on: the old mind's
+            # unread notes (0.52.0's on books #140 and #141, say) are about work that closed with it
+            agent.db.set_meta(news.changelog_key(scope.mode), app_version())
+            agent.db.set_meta(news.changelog_shown_key(scope.mode), "")
             carried: int | None = None
             if goal is not None:
                 new = AgentScope(scope.mode, new_session, born, scope.world)

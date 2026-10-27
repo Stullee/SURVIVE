@@ -136,6 +136,12 @@ OWNER_BUDGET = 2_300
 # answered it, and no cycle made them.
 WORDS_SHOWN = 2
 WORDS_CHARS = 600
+# 0.53.0 (evaluation 2026-10-27, C3): the work steps' brief shows them whole, in room of their own (two messages at the
+# owner's limit of 2,000 characters, with their lines' heads): a plan quotes WORDS_CHARS of each and says where the rest
+# is. Live, every plan and brief that showed message #205 cut its middle, where the third of its three fixes was, and
+# the cycle that made the other two asked the owner for it (#209).
+WORDS_BUDGET = 4_400
+WORDS_WHOLE = "your work steps see it whole"
 OPEN_UPGRADES = 5  # 0.15.0: the open upgrade requests WAITING FOR YOUR OWNER lists
 SHOWN_PROJECTS = 8  # open projects the plan shows in full, the ones updated last (0.19.1: the others by name)
 QUOTE_CAP = 300  # characters of each text quoted in a decision or upgrade line, when the owner's news is shortened
@@ -190,6 +196,7 @@ BRIEF_MAX = (
     + OBLIGATIONS_BRIEF_BUDGET
     + PINS_BUDGET
     + SOFTWARE_BRIEF_BUDGET  # 0.40.3 (analysis-0.40.1 codebase, C2)
+    + WORDS_BUDGET  # 0.53.0 (evaluation 2026-10-27, C3)
     + 360
 )
 WILL_BUDGET = 4_500 + OWNER_BUDGET + 100  # the largest will context: the LAST_WILL profile is measured on it
@@ -754,10 +761,11 @@ def owner_text(s: Snapshot, budget: int) -> str:
     return _owner(s, budget)[0]
 
 
-def _owner(s: Snapshot, budget: int) -> tuple[str, list[tuple[Item, str, bool]], Item | None]:
+def _owner(s: Snapshot, budget: int, words_room: int = 0) -> tuple[str, list[tuple[Item, str, bool]], Item | None]:
     """``owner_text``; every item with its line as that text holds it whole (unless it was cut) and whether the line
     shows it whole (a decision always, a message unshortened); and the oldest message if it was shortened only
-    because the section can't hold it whole."""
+    because the section can't hold it whole. 0.53.0 (C3): ``words_room``, the work steps' brief's room of its own for
+    the messages the agent answered lately, each whole (without it, each is quoted to WORDS_CHARS)."""
     decisions = [*s.news.approval_lines(), *s.news.upgrade_lines(), *s.news.venture_lines()]
     items: list[Item] = [*(("message", m["id"], None) for m in s.owner_messages), *s.news.items()]
     texts = [m["text"] for m in s.owner_messages]
@@ -797,18 +805,20 @@ def _owner(s: Snapshot, budget: int) -> tuple[str, list[tuple[Item, str, bool]],
 
             limits = [None if kept(None) else _largest(SHORTEST_QUOTE, len(texts[0]), kept)]
             chars, too_long = SHORTEST_QUOTE, None if limits[0] is None else items[0]
-    text = shortened(limits, chars)
-    for m in s.owner_words:  # 0.42.6: answered lately, what it asks still to do: last, each whole in the room left
+    full = shortened(limits, chars)
+    text = cut(full, budget) if words_room else full  # 0.53.0 (C3): then the messages answered lately in their room
+    shown = None if words_room else WORDS_CHARS
+    for m in s.owner_words:  # 0.42.6: answered lately, what it asks still to do: last, in the room left
         said = (
             f"Message #{m['id']} from your owner ({m['created_at']}, answered in your #{m['answered_by']}; any work it"
-            f" asks for stays yours until it is done): {_quote(str(m['text']), WORDS_CHARS)}"
+            f" asks for stays yours until it is done): {_quote(str(m['text']), shown, WORDS_WHOLE)}"
         )
-        if json_bytes(f"{text}\n{said}" if text else said) <= budget:
+        if json_bytes(f"{text}\n{said}" if text else said) <= budget + words_room:
             text = f"{text}\n{said}" if text else said
     limits += [chars] * (len(texts) - len(limits))
     whole = [n is None or len(t) <= n for t, n in zip(texts, limits, strict=True)] + [True] * len(decisions)
-    lines = list(zip(items, text.split("\n")[: len(items)], whole, strict=True)) if items else []
-    return cut(text, budget), lines, too_long
+    lines = list(zip(items, full.split("\n")[: len(items)], whole, strict=True)) if items else []
+    return cut(text, budget + words_room), lines, too_long
 
 
 def _holds(text: str, line: str) -> bool:
@@ -829,17 +839,18 @@ def _held(text: str, before: str, lines: list[tuple[Item, str, bool]]) -> dict[I
     return held
 
 
-def _quote(text: str, chars: int | None = None) -> str:
+def _quote(text: str, chars: int | None = None, whole: str = "your owner has the full text") -> str:
     """``text`` JSON-quoted (so it can't pose as a heading), cut to ``chars`` characters with a note.
 
-    A cut text keeps its start and its end (where a question often is): the note on what is left out goes between.
+    A cut text keeps its start and its end (where a question often is): the note on what is left out goes between,
+    with where the text is whole (``whole``; 0.53.0: a message the agent answered lately, in the work steps' brief).
     """
     if chars is None or len(text) <= chars:
         return json.dumps(text, ensure_ascii=False)
     tail = chars * 2 // 5
     start = json.dumps(text[: chars - tail] + "…", ensure_ascii=False)
     end = json.dumps("…" + text[len(text) - tail :], ensure_ascii=False)
-    return f"{start} ({len(text) - chars:,} more characters; your owner has the full text) {end}"
+    return f"{start} ({len(text) - chars:,} more characters; {whole}) {end}"
 
 
 def _shorten(line: str, chars: int) -> str:
@@ -1141,7 +1152,7 @@ def brief(
     why = f"Why: {flat(plan['assessment'])}\n" if plan.get("assessment") else ""
     head = [("STATUS", status_text(s, dry_run)), ("PLAN", f"{why}Goal: {flat(plan.get('goal'))}{money}\n{steps}")]
     standing = rules_section(s)
-    owner, lines, too_long = _owner(s, OWNER_BUDGET)
+    owner, lines, too_long = _owner(s, OWNER_BUDGET, WORDS_BUDGET)  # 0.53.0 (C3): what they asked lately, whole
     owners = [("FROM YOUR OWNER", owner)] if owner else []
     mailed = mail_section(s)
     research = cut(research_text(s), RESEARCH_BUDGET)

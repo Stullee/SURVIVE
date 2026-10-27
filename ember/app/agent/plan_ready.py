@@ -19,7 +19,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from ..economy.clock import from_iso, local_date, to_iso
-from ..integrations import publish_queue
+from ..integrations import kdp, publish_queue
 from . import desk, obligations, preconditions, reach, store, templates, ventures, weights
 from .plan_model import (
     CHANNEL_EXECUTORS,
@@ -246,6 +246,7 @@ def candidates(
         )
         verdict = facts.verdict(pid)
         live = facts.live(pid) > 0  # its maintain steps (the critic's fix, a decide-by's) are ready once it is live
+        deciding = _deciding(conn, scope, pid)  # 0.53.0 (evaluation 2026-10-27, C5)
         rows = [
             (stage, step)
             for stage in _stages(conn, scope, product["id"])
@@ -279,6 +280,8 @@ def candidates(
                     reason = "listing"  # 0.39.8: its check counts what links the line's own listings, and it has none
                 if reason is None and _at_floor(step, factors):
                     reason = "floor"  # 0.39.8: its channel brings next to nothing; the owner's pin brings it back
+                if reason is None and deciding and _reach(step):
+                    reason = "deciding"  # 0.53.0 (C5): no reach on a line whose future is the owner's to decide
                 # 0.39.8 (analysis-0.39.6, 3.2): what the owner rejected and waits for gets a second cycle a day: live,
                 # the cycle that took the KDP book at 01:09 ran out of room, and the brake held it for the whole day
                 second = rework[step["id"]] and taken_today.get(int(step["id"]), 0) < weights.REWORK_TRIES
@@ -557,6 +560,22 @@ def _recurring_market(step: Mapping[str, Any]) -> bool:
     return str(step["template"] or "").startswith("recurring/") and step["kind"] == "market"
 
 
+def _reach(step: Mapping[str, Any]) -> bool:
+    """0.53.0 (evaluation 2026-10-27, C5): whether a step is reach for its line's listings: a pin, a post or a blog post
+    of its recurring marketing or its launch, not one the owner pinned or one keeping a promise."""
+    launch = step["kind"] == "market" and step["stage"] == "launch"
+    return (_recurring_market(step) or launch) and not step["pinned"] and step["obligation_id"] is None
+
+
+def _deciding(conn: sqlite3.Connection, scope: AgentScope, line: int) -> bool:
+    """0.53.0 (evaluation 2026-10-27, C5): whether line ``line`` waits for the owner's keep-or-drop (an open
+    decide/owner step): its reach waits too ('deciding'), as its review's change does (0.42.6). Live, the reviews of
+    10-21 to 10-25 said "passive at zero cost, the owner decides" of lines #3, #4 and #6 while they waited for it,
+    and four cycles ($1.01) posted on Bluesky for them, against the reviews and the weekly look's stop of Bluesky."""
+    asked = "project_id = ? AND level = 'step' AND template = 'decide/owner' AND status = 'open'"
+    return bool(nodes(conn, scope, asked, (line,)))
+
+
 def _at_floor(step: Mapping[str, Any], factors: Mapping[str, float]) -> bool:
     """0.39.8 (analysis-0.39.6, 3.4): whether a recurring marketing step's channel is worth less than
     weights.CHANNEL_WORKS (twice its floor) and the owner didn't pin it: it waits ('floor'). Live, the code's weekly
@@ -820,9 +839,13 @@ CALLED = {
 }
 PUBLISHES = {channel: CALLED[executor] for channel, executor in CHANNEL_EXECUTORS.items()}
 EDITS = (CALLED["etsy_edit"], CALLED["printify_edit"])  # 0.42.1: a change of one of the line's listings (``_calls``)
-# 0.42.6 (analysis-0.42.3, 3.1): a promise whose words propose a KDP book is propose_kdp_book's work (``_calls``)
-KDP_PROMISE = re.compile(r"\bkdp\b", re.IGNORECASE)
-PROPOSES = re.compile(r"\b(?:propos|submit)", re.IGNORECASE)
+# 0.42.6 (analysis-0.42.3, 3.1): a promise whose words propose a KDP book is propose_kdp_book's work (``_calls``).
+# 0.53.0 (evaluation 2026-10-27, C2): "kdp" inside a tool's name too, and "resubmit": live, promise #70 ("Verify #141's
+# v2 cover with propose_kdp_book check:true and resubmit if it passes") matched neither \bkdp\b nor the wait, and two
+# cycles took it in a week KDP held full
+KDP_PROMISE = re.compile(r"(?<![a-z])kdp(?![a-z])", re.IGNORECASE)
+PROPOSES = re.compile(r"\b(?:propos|(?:re)?submit)", re.IGNORECASE)
+_NAMED = re.compile(r"#(\d{1,9})\b")  # a request a step's words name
 _CHECKED_BOOK = re.compile(r"KDP would take this (ebook|paperback) ")  # a propose_kdp_book check's result
 # the waits the tools' preconditions set: each carries the tool's words (Candidate.refused)
 REFUSED = frozenset(rule.wait for rules in preconditions.TOOLS.values() for rule in rules)
@@ -954,7 +977,7 @@ def _calls(facts: Facts, row: Mapping[str, Any], found: OwnerLimits) -> list[tup
             links = [(f"listing {n}",) for n in funnel.listings] if funnel is not None and funnel.listings else [()]
             calls += [(tool, {"channel": channel, "links": these}) for these in links]
         elif tool == "propose_kdp_book":
-            calls.append((tool, {"line": line, "form": _book_format(facts, line) if line is not None else None}))
+            calls.append((tool, _kdp_call(facts, row, line)))
         elif tool in EDITS:
             funnel = facts.funnel(line) if line is not None else None
             listings = funnel.listings if funnel is not None and funnel.listings else [None]
@@ -962,6 +985,37 @@ def _calls(facts: Facts, row: Mapping[str, Any], found: OwnerLimits) -> list[tup
         else:
             calls.append((tool, {"line": line}))
     return calls
+
+
+def _kdp_call(facts: Facts, row: Mapping[str, Any], line: int | None) -> dict[str, Any]:
+    """0.53.0 (evaluation 2026-10-27, C2): what a step's book is, as KDP's week reads it (preconditions.Facts). A step
+    whose words name a book KDP published (its request, "#141") changes that book: its format and title, which the week
+    doesn't hold (kdp.published, C1). Else the format of its line's books; of the line its promise names (``_promised``)
+    when its own has none; and of the newest book proposed when neither has one. Live, promise #68's step stood on line
+    #4, which has no book, and a book of no format was held only while both formats' weeks were full: three cycles took
+    it in a week whose paperbacks were taken."""
+    minds, params = facts.scope.minds_where()
+    for named in _NAMED.findall(str(row["title"] or "")):
+        found = facts.conn.execute(
+            f"SELECT action FROM approvals WHERE id = ? AND {minds} AND executor = ? AND status = 'done'",
+            (int(named), *params, kdp.EXECUTOR),
+        ).fetchone()
+        data = json.loads(found["action"] or "{}") if found is not None else {}
+        if isinstance(data, dict) and data.get("format") in kdp.FORMATS and data.get("title"):
+            return {"line": line, "form": str(data["format"]), "title": str(data["title"])}
+    form = _book_format(facts, line) if line is not None else None
+    if form is None and row["kind"] == "promise":
+        promised = _promised(facts, row)
+        form = _book_format(facts, promised) if promised is not None and promised != line else None
+    if form is None:
+        where, params = facts.scope.where()
+        newest = facts.conn.execute(
+            f"SELECT action FROM approvals WHERE {where} AND executor = ? ORDER BY id DESC LIMIT 1",
+            (*params, kdp.EXECUTOR),
+        ).fetchone()
+        guessed = json.loads(newest["action"] or "{}").get("format") if newest is not None else None
+        form = str(guessed) if guessed in kdp.FORMATS else None
+    return {"line": line, "form": form}
 
 
 def _promised(facts: Facts, row: Mapping[str, Any]) -> int | None:

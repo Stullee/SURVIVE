@@ -189,7 +189,9 @@ class Owner:
         return to_iso(self.clock.now())
 
     def _approval(self, conn: sqlite3.Connection, approval_id: int) -> sqlite3.Row:
-        where, params = self.scope.where()
+        # 0.53.0 (evaluation 2026-10-27, C7): a request of an earlier generation's too (vision/generations.md, "The
+        # owner's tools reach every generation"): the link of a book the first generation proposed, say
+        where, params = self.scope.minds_where()
         row = conn.execute(f"SELECT * FROM approvals WHERE id = ? AND {where}", (approval_id, *params)).fetchone()
         if row is None:
             raise OwnerError("id", "no such approval request", 404)
@@ -549,7 +551,7 @@ class Owner:
         caller has the agent scrub them (Agent.scrub_removed)."""
 
         def run() -> Reply:
-            where, params = self.scope.where()
+            where, params = self.scope.minds_where()  # 0.53.0 (C7): an earlier generation's message too
             with self.db.transaction() as conn:
                 row = conn.execute(
                     f"SELECT sender, removed_at, text FROM messages WHERE id = ? AND {where}", (message_id, *params)

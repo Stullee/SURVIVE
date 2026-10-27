@@ -138,3 +138,29 @@ def test_a_blog_post_s_article_is_checked(data_dir: Path) -> None:
     refused = call(ctx, "propose_blog_post", {"source": "blog/post.md", "reason": "Search traffic."})
     assert not refused.ok and 'it promises legal certainty ("rechtssicher")' in refused.text
     assert rows(agent, "SELECT id FROM approvals WHERE executor = 'site_post'") == []
+
+
+def test_the_maker_is_named_once() -> None:
+    """0.53.0 (evaluation 2026-10-27, C6): live, #144 and #146 named the maker twice, in her words ("Made by Ember, an
+    AI agent, and checked by the seller before publication.", "This listing was made by Ember, ...") and in the line
+    Ember's code adds. Her own maker sentences give way to the code's line; her other words stay."""
+    hers = "Fixed layout grid, easy to fill in by hand\n\nMade by Ember, an AI agent, and checked by the seller."
+    assert kdp.with_disclosure(kdp.check_description(hers)) == (
+        f"Fixed layout grid, easy to fill in by hand\n\n{kdp.DISCLOSURE}"
+    )
+    listed = (
+        "Licence terms in plain words. This listing was made by Ember, an AI agent, working for a human shop owner"
+        " who reviews each listing. No legal certainty is promised.\n\nInstant digital download."
+    )
+    assert etsy.check_description(listed) == (
+        "Licence terms in plain words. No legal certainty is promised.\n\nInstant digital download."
+    )
+    assert claims.without_maker("Erst die Fixkosten. Vorlage von Ember, einem KI-Agenten, erstellt.") == (
+        "Erst die Fixkosten."
+    )
+    for kept in (
+        "A planner for people who love Ember the cat.",
+        "Made by Ember's owner? No: made by Ember, an AI agent, and checked by them.",  # inside a sentence: hers
+        "Ember made the cover; the seller checked it.",
+    ):
+        assert claims.without_maker(kept) == kept

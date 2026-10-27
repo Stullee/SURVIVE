@@ -32,6 +32,7 @@ from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import PurePosixPath
 from typing import Any
 
+from ..agent import claims
 from ..agent.store import AgentScope
 from ..economy.clock import to_iso
 from .etsy import Upload
@@ -258,6 +259,7 @@ def check_description(text: Any, limit: int = DESCRIPTION_CHARS) -> str:
     for line in (DISCLOSURE, *EARLIER):  # Ember's code adds it; a copy the agent wrote isn't doubled
         if text.endswith(line):
             text = text[: -len(line)].rstrip()
+    text = claims.without_maker(text)  # 0.53.0 (evaluation 2026-10-27, C6): nor one in her own words
     if len(text) > limit:
         raise KdpError(f"the description has more than {limit:,} characters")
     if _CONTROL.search(text.replace("\n", "").replace("\t", "")):
@@ -783,10 +785,12 @@ def print_line(book: Book) -> str:
     )
 
 
-def payload(book: Book) -> str:
-    """The request as the owner reads and approves it."""
+def payload(book: Book, changes: int | None = None) -> str:
+    """The request as the owner reads and approves it. 0.53.0 (C1): ``changes``, the request of the published book it
+    changes: new files for that title at KDP, no new title."""
     lines = [
         f"Amazon KDP {book.format}: {book.title}",
+        *([_change_line(book, changes)] if changes is not None else []),
         *([f"Subtitle: {book.subtitle}"] if book.subtitle else []),
         f"Author: {book.author or 'yours to enter at KDP (set kdp_author to have it filled in)'}",
         f"Language: {book.language}",
@@ -806,6 +810,14 @@ def payload(book: Book) -> str:
         with_disclosure(book.description),
     ]
     return "\n".join(lines)
+
+
+def _change_line(book: Book, changes: int) -> str:
+    content = "Edit paperback content" if book.format == "paperback" else "Edit eBook content"
+    return (
+        f"A change of your published book (request #{changes}), no new title: open it on your KDP Bookshelf, choose"
+        f" {content}, upload the new files and publish. KDP's limit of new titles a week doesn't count it."
+    )
 
 
 def trim_of(size: tuple[float, float]) -> tuple[str, bool] | None:
@@ -884,20 +896,74 @@ def next_week(now: datetime, tz: tzinfo = UTC) -> str:
     return f"Sunday {begins:%m-%d} at {begins:%H:%M}"
 
 
+def _key(action: Any) -> tuple[str, str] | None:
+    """A request's book as KDP tells its titles apart: its format and its title (case and spacing aside)."""
+    try:
+        data = json.loads(action or "{}") if isinstance(action, str) else action
+    except ValueError:
+        return None
+    if not isinstance(data, dict) or data.get("format") not in FORMATS or not str(data.get("title") or "").strip():
+        return None
+    return str(data["format"]), " ".join(str(data["title"]).casefold().split())
+
+
+def changes(conn: sqlite3.Connection, scope: AgentScope) -> dict[int, int]:
+    """0.53.0 (evaluation 2026-10-27, C1): each request that changes a book KDP already published, by the request it
+    changes: the first of its format and title the owner marked done, proposed before it. At KDP it is new files for a
+    live title (its Bookshelf's "Edit paperback content"), no new title. Live, #146 put #141's corrected cover up for
+    the owner and took one of the week's two new paperbacks, and #140's cover fix had to wait for the next week. Every
+    generation's (AgentScope.minds_where): a book is the account's."""
+    where, params = scope.minds_where()
+    rows = conn.execute(
+        f"SELECT id, status, action FROM approvals WHERE {where} AND executor = ? ORDER BY id", (*params, EXECUTOR)
+    ).fetchall()
+    published: dict[tuple[str, str], int] = {}
+    found: dict[int, int] = {}
+    for r in rows:
+        key = _key(r["action"])
+        if key is None:
+            continue
+        if key in published:
+            found[int(r["id"])] = published[key]
+        elif r["status"] == "done":
+            published[key] = int(r["id"])
+    return found
+
+
+def published(conn: sqlite3.Connection, scope: AgentScope, form: str, title: str) -> int | None:
+    """0.53.0 (C1): the request of the book KDP already published in ``form`` with ``title`` (the first marked done),
+    which a new proposal of it would change; None: it would be a new title."""
+    want = _key({"format": form, "title": title})
+    if want is None:
+        return None
+    where, params = scope.minds_where()
+    for r in conn.execute(
+        f"SELECT id, action FROM approvals WHERE {where} AND executor = ? AND status = 'done' ORDER BY id",
+        (*params, EXECUTOR),
+    ).fetchall():
+        if _key(r["action"]) == want:
+            return int(r["id"])
+    return None
+
+
 def weekly(conn: sqlite3.Connection, scope: AgentScope, now: datetime) -> dict[str, int]:
     """The books of each format proposed in KDP's week holding ``now`` (``week_start``) that KDP may still count (not
     rejected, withdrawn, expired or failed): what WEEKLY_TITLES holds. 0.42.0 (analysis-0.40.1 codebase, 6.2.1): one
     count, which propose_kdp_book refuses by and the plan waits on (agent/preconditions.py) and the KDP section shows
     (``text``); each counted them on its own. 0.46.0: the books of every generation of hers (AgentScope.minds_where):
-    KDP's limit is the account's, which a generation change doesn't reset."""
+    KDP's limit is the account's, which a generation change doesn't reset. 0.53.0 (C1): a change of a published book
+    (``changes``) creates no title, and isn't counted."""
     where, params = scope.minds_where()
     rows = conn.execute(
-        f"SELECT action FROM approvals WHERE {where} AND executor = ? AND created_at >= ?"
+        f"SELECT id, action FROM approvals WHERE {where} AND executor = ? AND created_at >= ?"
         " AND status NOT IN ('rejected', 'withdrawn', 'expired', 'failed')",
         (*params, EXECUTOR, to_iso(week_start(now))),
     ).fetchall()
+    changed = changes(conn, scope) if rows else {}
     counted = dict.fromkeys(FORMATS, 0)
     for r in rows:
+        if int(r["id"]) in changed:
+            continue
         form = json.loads(r["action"] or "{}").get("format")
         if form in counted:
             counted[form] += 1
@@ -914,6 +980,7 @@ def text(conn: sqlite3.Connection, scope: AgentScope, now: datetime, author: str
         (*params, EXECUTOR),
     ).fetchall()
     counted = weekly(conn, scope, now)
+    changed = changes(conn, scope)
     lines = []
     for r in rows:
         if len(lines) >= SHOWN:
@@ -925,6 +992,8 @@ def text(conn: sqlite3.Connection, scope: AgentScope, now: datetime, author: str
         what = f"{book.trim}, {book.pages} pages, " if book.format == "paperback" else ""
         line = f"#{r['id']} {book.format} {_quoted(book.title, 80)} ({what}{book.price} {CURRENCY}): "
         line += _STATES.get(str(r["status"]), str(r["status"]))
+        if int(r["id"]) in changed:  # 0.53.0 (C1)
+            line += f" (a change of #{changed[int(r['id'])]}: no new title)"
         if r["status"] == "done" and r["result_link"]:
             line += f" at {r['result_link']}"
         elif r["status"] == "done":  # 0.40.2 (analysis-0.40.1, 3.1): nothing can link it, nor plan to
@@ -938,7 +1007,8 @@ def text(conn: sqlite3.Connection, scope: AgentScope, now: datetime, author: str
     head = (
         "Your owner publishes your books at KDP by hand (Amazon has no API): propose one with propose_kdp_book from "
         f"its .json spec (guide 'kdp'). KDP lets them create at most {WEEKLY_TITLES} new titles of each format a "
-        f"week, its week from Sunday 00:00 UTC; proposed this week: {room}"
+        "week, its week from Sunday 00:00 UTC; a book of a published book's format and title is a change of it (new "
+        f"files for that title), no new title, and isn't counted. New titles proposed this week: {room}"
         + (f" (the next week begins {next_week(now, tz)})" if full else "")
         + ". Royalties count once your owner records them. Author name: "
         f"{'set by your owner' if author else 'your owner enters it at KDP'}."

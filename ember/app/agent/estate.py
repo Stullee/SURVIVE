@@ -157,11 +157,19 @@ def inventory(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> list
             )
         )
     minds, params = scope.minds_where()
-    for r in conn.execute(
+    changed = kdp.changes(conn, scope)  # 0.53.0 (evaluation 2026-10-27, C1): new files for a book are that book
+    done = conn.execute(
         f"SELECT id, project_id, action, closed_at, result_link FROM approvals WHERE {minds} AND executor = ?"
         " AND status = 'done' ORDER BY id",
         (*params, kdp.EXECUTOR),
-    ).fetchall():
+    ).fetchall()
+    # a book as it is at KDP now: the words and link of its newest change carried out (live, #146 corrected #141's
+    # "Designed by the author"; the rule read #141's own words and suggested retire)
+    newest = {changed[int(r["id"])]: r for r in done if int(r["id"]) in changed}
+    for r in done:
+        if int(r["id"]) in changed:
+            continue
+        now = newest.get(int(r["id"]), r)
         try:
             book = kdp.book_from_action(r["action"])
         except kdp.KdpError:
@@ -175,16 +183,17 @@ def inventory(conn: sqlite3.Connection, scope: AgentScope, clock: Clock) -> list
             if r["project_id"]
             else (0, 0)
         )
+        link = now["result_link"] or r["result_link"]
         numbers = {
             "format": book.format,
             "since": _day(r["closed_at"], clock),
             "days": _days(r["closed_at"], clock),
-            "linked": bool(r["result_link"]),
+            "linked": bool(link),
             "royalties": int(royalties[0]),
             "royalties_usd": round(int(royalties[1]) / 1_000_000, 2),
-            "rule": _rule(claims.texts(json.loads(r["action"] or "null"))),
+            "rule": _rule(claims.texts(json.loads(now["action"] or "null"))),
         }
-        found.append(Product("kdp_book", str(r["id"]), None, int(r["id"]), book.title, r["result_link"], numbers))
+        found.append(Product("kdp_book", str(r["id"]), None, int(r["id"]), book.title, link, numbers))
     return found
 
 

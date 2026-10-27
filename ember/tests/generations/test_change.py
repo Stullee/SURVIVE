@@ -16,7 +16,9 @@ import pytest
 pytest.importorskip("httpx2")
 
 from app import paths  # noqa: E402
-from app.agent import estate, generation, memory, store, ventures  # noqa: E402
+from app.agent import estate, generation, memory, news, store, ventures  # noqa: E402
+from app.economy.clock import to_iso  # noqa: E402
+from app.version import app_version  # noqa: E402
 from tests.agent_helpers import owner, rows  # noqa: E402
 from tests.etsy_helpers import listed, proposed  # noqa: E402
 from tests.generation_helpers import decide_all, files_in, settled  # noqa: E402
@@ -211,3 +213,34 @@ def etsy_listing_row_exists(conn: Any, scope: Any, listing: int) -> bool:
     from app.integrations import etsy_publisher
 
     return etsy_publisher.listing_row(conn, scope, listing) is not None
+
+
+def test_the_owners_tools_reach_the_last_generations_records_and_her_notes_begin_fresh(data_dir: Path) -> None:
+    """0.53.0 (evaluation 2026-10-27, C7): the owner's decide, link and remove-text read the mind's scope only, so after
+    the change a book of the first generation's couldn't take its Amazon link (#140 and #141 had none) and a message of
+    theirs couldn't lose its text; and the new mind was shown the old one's unread release notes."""
+    agent, _ = settled(data_dir)
+    who = owner(agent)
+    assert who.send_message({"text": "My password is correct-horse-battery"}, "Owner").status == 201
+    [said] = rows(agent, "SELECT id FROM messages WHERE sender = 'owner' ORDER BY id DESC LIMIT 1")
+    with agent.db.transaction() as conn:
+        book = store.insert_approval(
+            conn, agent.scope(), 1, to_iso(agent.clock.now()), project_id=None, type="sell",
+            title="KDP paperback: Haushaltsbuch", description="a book", payload="the book", expected_cost="none",
+            expected_benefit="royalties", executor="kdp_package",
+            action=json.dumps({"format": "paperback", "title": "Haushaltsbuch 2027"}),
+        )  # fmt: skip
+    assert who.decide(book, {"decision": "approve"}, "Owner").status == 200
+    assert who.close(book, {"outcome": "done", "result_note": "published"}, "Owner").status == 200
+    agent.db.set_meta(news.changelog_key(agent.scope().mode), "0.1.0")  # notes she hasn't read
+    decide_all(agent, "passive")
+    before = agent.scope().session
+    agent.begin_generation("Owner")
+    assert agent.scope().session == before + 1
+    who = owner(agent)
+    link = "https://www.amazon.de/dp/B0TESTBOOK"
+    added = who.add_link(book, {"result_link": link}, "Owner")
+    assert added.status == 200 and added.body["approval"]["result_link"] == link
+    assert who.remove_message(said["id"], "Owner").status == 200
+    assert rows(agent, f"SELECT removed_by FROM messages WHERE id = {said['id']}") == [{"removed_by": "Owner"}]
+    assert agent.db.get_meta(news.changelog_key(agent.scope().mode)) == app_version()
