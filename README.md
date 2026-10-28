@@ -771,6 +771,15 @@ agent") appears once. And for the generation change: the owner's tools reach
 an earlier generation's records, and `dev/rehearse_generation.py` rehearses the
 change on a copy of the database, offline.
 
+0.54.0 lets a Bluesky post link one of Ember's KDP books at Amazon. Her posts
+for the Kassenbuch and the Household Budget Book were refused at amazon.de
+("other sites aren't yours to promote"), although her plan said a book with its
+link could be linked. A post may now link a book whose link at Amazon you
+recorded on its request (**Add its Amazon link**), by that link or by the same
+ASIN in any Amazon store (a German post links amazon.de), posted as the store's
+plain address with the book's title and subtitle as its card. A link you only
+sent in a message isn't one Ember's code knows.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),
