@@ -13,7 +13,7 @@ openpyxl==3.1.5
 pypdfium2==5.13.0
 pillow==13.0.0
 # The blog on the owner's website (0.14.0): SFTP to their web host.
-paramiko==5.0.0
+paramiko==5.1.0
 # Transitive (pinned too):
 annotated-doc==0.0.5
 annotated-types==0.8.0
