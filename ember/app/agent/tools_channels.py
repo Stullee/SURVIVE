@@ -17,6 +17,7 @@ from ..integrations import (
     bluesky_publisher,
     etsy,
     etsy_publisher,
+    kdp,
     pinterest,
     pinterest_publisher,
     printify_publisher,
@@ -39,7 +40,7 @@ from .tools_context import (
     _local,
     _numbers,
 )
-from .tools_lines import _listing_line, _listing_stopped
+from .tools_lines import _line, _listing_line, _listing_stopped, _stopped
 from .tools_listings import _shop
 from .tools_requests import _new_request, _refuse, _unlocked
 
@@ -267,7 +268,8 @@ def _post_link(ctx: ToolContext, conn: Any, raw: str, what: str = "link") -> tup
     """0.19.0: a post's link, checked: one of Ember's live Etsy listings (its card: the listing's title and main
     photo) or a page of the owner's website (a blog post of Ember's: its title and description on the card). Returns
     the link, the card's title and description ("": the link shows in the words) and its photo. 0.25.1: a second link
-    is checked the same way (``what``: "the second link"; its address only: it shows in the words)."""
+    is checked the same way (``what``: "the second link"; its address only: it shows in the words). 0.54.0: or one of
+    her KDP books at Amazon (``_book_link``)."""
     link = raw.strip()
     parts = urlsplit(link)
     if parts.scheme != "https" or not parts.netloc or any(ch.isspace() for ch in link):
@@ -293,6 +295,8 @@ def _post_link(ctx: ToolContext, conn: Any, raw: str, what: str = "link") -> tup
             return etsy.listing_url(listing_id), bluesky.one_line(made["title"])[: bluesky.CARD_TITLE_MAX], "", None
         photo = current.photos[0] if current.photos else None
         return etsy.listing_url(listing_id), bluesky.one_line(current.title)[: bluesky.CARD_TITLE_MAX], "", photo
+    if kdp.at_amazon(link):
+        return _book_link(ctx, conn, link)
     site = _bluesky(ctx).site_url
     if site and urlsplit(site).netloc.lower() == parts.netloc.lower():
         # 0.19.2: only a page Ember's code knows is there (live, two posts linked missing pages of the blog)
@@ -310,9 +314,40 @@ def _post_link(ctx: ToolContext, conn: Any, raw: str, what: str = "link") -> tup
         return address, "", "", None
     where = f" ({site})" if site else " (your owner hasn't set its address, site_url)"
     raise ToolError(
-        f"{what} goes to one of your live Etsy listings (https://www.etsy.com/listing/...) or a page of your owner's "
-        f"website{where}: other sites aren't yours to promote"
+        f"{what} goes to one of your live Etsy listings (https://www.etsy.com/listing/...), one of your KDP books at "
+        f"Amazon or a page of your owner's website{where}: other sites aren't yours to promote"
     )
+
+
+def _book_link(ctx: ToolContext, conn: Any, link: str) -> tuple[str, str, str, None]:
+    """0.54.0: a post's link to one of her KDP books at Amazon: a book whose link the owner recorded on its request
+    (kdp.linked), by that link or by its ASIN in any Amazon store (a German post links amazon.de, though the owner
+    recorded amazon.com), posted as the store's plain address. Its card: the book's title and subtitle. Live, the
+    Kassenbuch's and the Household Budget Book's addresses at amazon.de were refused ("other sites aren't yours to
+    promote"), and the plan's KDP section said a book with its link could be linked."""
+    books = kdp.linked(conn, ctx.scope)
+    number = kdp.asin(link)
+    book = next((b for b in books if link == b.link or (number and number == kdp.asin(b.link))), None)
+    if book is None and not books:
+        raise ToolError(
+            "none of your KDP books has its link at Amazon in Ember's records: your owner adds it on the book's "
+            "request (Add its Amazon link), and until then no post can link it (a link in a message isn't recorded)"
+        )
+    if book is None:
+        known = "; ".join(f"#{b.request_id} {b.title}: {b.link}" for b in books)
+        raise ToolError(
+            f"{link} isn't one of your KDP books at Amazon that Ember's code knows: link one of {known} (by its "
+            "address, or as https://www.amazon.de/dp/ and its ASIN, in any Amazon store)"
+        )
+    if book.project_id is not None:
+        stopped = _stopped(conn, ctx.scope, book.project_id)
+        if stopped:
+            raise ToolError(f"{stopped}: no post for its book #{book.request_id}")
+    _line(ctx, conn, book.project_id, "post")
+    store = kdp.amazon_store(link)
+    address = kdp.store_link(store, number) if store and number else book.link
+    title = bluesky.one_line(book.title)[: bluesky.CARD_TITLE_MAX]
+    return address, title, bluesky.one_line(book.subtitle)[: bluesky.CARD_TITLE_MAX], None
 
 
 def _propose_bluesky_post(ctx: ToolContext, args: dict[str, Any], conn: Any) -> Outcome:

@@ -24,10 +24,12 @@ from app.agent import (  # noqa: E402
     store,
     tools,
 )
+from app.economy.clock import to_iso  # noqa: E402
 from app.integrations import (  # noqa: E402
     bluesky,
     bluesky_publisher,
     etsy,
+    kdp,
     site_publisher,
 )
 from app.integrations.bluesky import (  # noqa: E402
@@ -431,3 +433,109 @@ def test_a_long_reason_is_cut_not_refused(data_dir: Path) -> None:
     assert made.ok and "reason was cut to 300 of its 400 characters" in made.text
     assert bluesky.TEXT_MAX == 300 and FakeBluesky.HANDLE
     assert etsy.listing_url(1)
+
+
+# --- 0.54.0: a KDP book at Amazon ------------------------------------------------------------------------------------
+
+
+def book(agent: Any, ctx: tools.ToolContext, title: str, project_id: int | None, link: str | None = None) -> int:
+    """A KDP paperback the owner approved and marked published, with the link at Amazon they recorded (or none)."""
+    upload = {"path": "books/kassenbuch.pdf", "sha256": "0" * 64, "bytes": 10}
+    action = {"format": "paperback", "title": title, "subtitle": "Einnahmen und Ausgaben", "description": "Ein Buch.",
+              "keywords": ["kassenbuch"], "categories": ["Business"], "language": "German", "price": "9.99",
+              "manuscript": upload, "cover": upload, "trim": "6x9", "paper": "white", "pages": 120}  # fmt: skip
+    with agent.db.transaction() as conn:
+        made = store.insert_approval(
+            conn, agent.scope(), ctx.cycle_id, to_iso(agent.clock.now()), project_id=project_id, type="sell",
+            title=f"KDP paperback: {title}", description="a book", payload=title, expected_cost="none",
+            expected_benefit="royalties", executor=kdp.EXECUTOR, action=json.dumps(action),
+        )  # fmt: skip
+    who = owner(agent)
+    assert who.decide(made, {"decision": "approve"}, "Owner").status == 200
+    done = {"outcome": "done", "result_note": "published", **({"result_link": link} if link else {})}
+    assert who.close(made, done, "Owner").status == 200
+    return made
+
+
+def test_a_post_links_a_kdp_book_by_the_link_the_owner_recorded_in_any_amazon_store(data_dir: Path) -> None:
+    """Live, the Kassenbuch's and the Household Budget Book's addresses at amazon.de were refused ("other sites aren't
+    yours to promote"), while the plan's KDP section said a book with its link could be linked. A book the owner
+    recorded at amazon.com is linked at amazon.de by its ASIN, as the store's plain address, with a card."""
+    agent, _ = listed(data_dir)
+    ctx = post_context(agent)
+    line, _ = line_of(agent)
+    none = a_post(agent, ctx, text="Das Kassenbuch 2027.", link="https://www.amazon.de/dp/B0KASSE001")
+    assert not none.ok and "none of your KDP books has its link at Amazon in Ember's records" in none.text
+    assert "Add its Amazon link" in none.text
+    recorded = "https://www.amazon.com/Kassenbuch-2027-Vereine/dp/B0KASSE001/ref=sr_1_1?crid=2X&sr=8-1"
+    kasse = book(agent, ctx, "Kassenbuch 2027", line, recorded)
+    budget = book(agent, ctx, "Haushaltsbuch 2027", line)  # published without its link
+    change = book(agent, ctx, "Haushaltsbuch 2027", line, "https://amzn.eu/d/aBc1234")  # a change of it, with one
+    with agent.db.connection() as conn:
+        assert [(b.request_id, b.title, b.link) for b in kdp.linked(conn, agent.scope())] == [
+            (kasse, "Kassenbuch 2027", recorded),
+            (budget, "Haushaltsbuch 2027", "https://amzn.eu/d/aBc1234"),
+        ]
+    assert change != budget
+    made = a_post(agent, ctx, text="Das Kassenbuch 2027.", link="https://amazon.de/-/en/dp/b0kasse001?tag=x")
+    assert made.ok, made.text
+    action = json.loads(rows(agent, "SELECT action FROM approvals WHERE executor = 'bluesky_post'")[-1]["action"])
+    assert action["link"] == "https://www.amazon.de/dp/B0KASSE001"
+    assert (action["link_title"], action["link_description"], action["card_photo"]) == (
+        "Kassenbuch 2027",
+        "Einnahmen und Ausgaben",
+        None,
+    )
+    payload = rows(agent, "SELECT payload FROM approvals WHERE executor = 'bluesky_post'")[-1]["payload"]
+    assert "Link: https://www.amazon.de/dp/B0KASSE001 (a card: 'Kassenbuch 2027')\n" in payload
+    ctx.state = tools.CycleTools()  # another cycle (two posts a cycle at most)
+    short = a_post(agent, ctx, text="Das Haushaltsbuch 2027.", link="https://amzn.eu/d/aBc1234")
+    assert short.ok, short.text  # a short address, as the owner recorded it: posted as it is
+    action = json.loads(rows(agent, "SELECT action FROM approvals WHERE executor = 'bluesky_post'")[-1]["action"])
+    assert action["link"] == "https://amzn.eu/d/aBc1234"
+    for wrong in ("https://www.amazon.de/dp/B0OTHER001", "https://www.amazon.de/s?k=kassenbuch"):
+        refused = a_post(agent, ctx, text="Ein anderes Buch.", link=wrong)
+        assert not refused.ok and f"{wrong} isn't one of your KDP books at Amazon" in refused.text
+        assert (
+            f"#{kasse} Kassenbuch 2027: {recorded}" in refused.text and f"#{budget} Haushaltsbuch 2027" in refused.text
+        )
+    other = a_post(agent, ctx, text="Ein anderes Buch.", link="https://www.amazon.example/dp/B0KASSE001")
+    assert not other.ok and "one of your KDP books at Amazon" in other.text and "aren't yours to promote" in other.text
+
+
+def test_a_post_of_a_book_goes_out_with_its_amazon_link(data_dir: Path) -> None:
+    agent, _ = listed(data_dir)
+    ctx = post_context(agent)
+    line, _ = line_of(agent)
+    book(agent, ctx, "Kassenbuch 2027", line, "https://www.amazon.de/dp/3000000001")
+    unknown = a_post(agent, ctx, text="Das Kassenbuch 2027.", link=f"https://www.amazon.de/dp/3000000001 {PAGE}")
+    assert not unknown.ok and "isn't a page of your owner's website" in unknown.text  # each link is checked
+    blog_post(agent, "wochenplan")
+    made = a_post(agent, ctx, text="Das Kassenbuch 2027.", link=f"https://www.amazon.de/dp/3000000001 {PAGE}")
+    assert made.ok, made.text
+    [request] = requests(agent)
+    assert owner(agent).decide(request, {"decision": "approve"}, "Owner").status == 200
+    assert agent.execute_approved() == [(request, "active")]
+    [made_post] = agent.bluesky.account().state["posts"].values()
+    assert made_post["card"] is True and "www.example.de/blog/wochenp..." in made_post["text"]
+    [row] = rows(agent, "SELECT link, second_link, status FROM bluesky_posts")
+    assert row == {"link": "https://www.amazon.de/dp/3000000001", "second_link": PAGE, "status": "active"}
+
+
+def test_a_book_of_a_line_the_owner_parked_or_another_lines_takes_no_post(data_dir: Path) -> None:
+    agent, _ = listed(data_dir)
+    ctx = post_context(agent)
+    line, leg = line_of(agent)
+    kasse = book(agent, ctx, "Kassenbuch 2027", line, "https://www.amazon.de/dp/3000000001")
+    ctx.state = tools.CycleTools(one_line=True, focus_project_id=line + 1000)
+    elsewhere = a_post(agent, ctx, text="Das Kassenbuch 2027.", link="https://www.amazon.de/dp/3000000001")
+    assert not elsewhere.ok and (
+        f"this cycle works on product line #{line + 1000}: no post for project #{line}" in elsewhere.text
+    )
+    ctx.state = tools.CycleTools()
+    park(agent, leg)
+    parked = a_post(agent, ctx, text="Das Kassenbuch 2027.", link="https://www.amazon.de/dp/3000000001")
+    assert not parked.ok and (
+        f"project #{line} belongs to venture #{leg}, which your owner parked: its work waits until they take it up"
+        f" again: no post for its book #{kasse}" in parked.text
+    )

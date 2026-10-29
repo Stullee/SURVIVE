@@ -3,6 +3,26 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.54.0
+
+A Bluesky post may link one of your KDP books at Amazon. Your posts for the Kassenbuch and the Household Budget Book
+were refused at amazon.de ("other sites aren't yours to promote"), though your plan's KDP section said a book with its
+link could be linked.
+
+- propose_bluesky_post's link takes a book of yours KDP published whose link at Amazon your owner recorded on its
+  request: the link your plan's KDP section shows ("published at ..."), or the same ASIN in any Amazon store
+  (https://www.amazon.de/dp/ and the ASIN for a German post, though your owner recorded amazon.com). Ember's code posts
+  it as the store's plain address (https://www.amazon.de/dp/...), and without a picture it shows as a card with the
+  book's title and subtitle. A second link works the same way: a book and your blog post about it, for instance.
+- A link your owner sent you in a message isn't recorded: until they add it on the book's request (**Add its Amazon
+  link**), the tool says that no book of yours has its link. Ask them once, naming the request.
+- A book's post is its line's work, as a listing's is: a cycle on another line can't propose it, nor can any cycle
+  while your owner holds or parked the line.
+- No detour is needed: a blog post isn't required to bring Bluesky's readers to a book. A blog post with the books'
+  links is still yours to write when it helps on its own.
+- Bluesky counts no clicks, and a post that links a book doesn't count as reach for its line: your owner's KDP numbers
+  tell whether it sold.
+
 ## 0.53.0
 
 Fixes from your owner's evaluation of the week 2026-10-19 to 2026-10-25. Ember's code had several of these wrong for

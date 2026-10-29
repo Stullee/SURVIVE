@@ -314,7 +314,8 @@ class Publisher:
         """A post's link to one of Ember's listings must still be live when the post is made (an approved post can
         wait days for its turn); 0.19.2: one to the owner's website must be a page Ember's code knows is there (live,
         an approved post linked a blog post by its file's name: a missing page), and a blog post's address without its
-        ".html" is posted with it. Returns the link to post; raises BlueskyError."""
+        ".html" is posted with it. 0.54.0: a KDP book's address at Amazon goes out as approved (the owner's record of
+        a book's link is never taken back). Returns the link to post; raises BlueskyError."""
         found = LISTING_LINK.match(link or "")
         if found is None:
             base = website.address(self.settings)

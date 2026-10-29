@@ -920,8 +920,8 @@ SPECS: dict[str, Spec] = {
                 ),
                 "language": _s("The post's language.", 2, enum=bluesky.LANGUAGES),
                 "link": _s(
-                    "One or two, space-separated: a live Etsy listing's address or a page of your owner's website "
-                    "that Ember's code knows (a blog post's address as BLOG gives it, ending in .html).",
+                    "One or two, space-separated: a live Etsy listing's address, a KDP book's at Amazon, or a page "
+                    "of your owner's website Ember's code knows (a blog post's ends in .html, as in BLOG).",
                     2 * bluesky.LINK_MAX + 1,
                     required=False,
                 ),

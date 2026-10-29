@@ -1133,7 +1133,8 @@ def _recurring(
     # 0.39.8 (analysis-0.39.6, 3.3): nor can a line with no listing of its own: what its steps count links its listings.
     # Live, line #12 reached its maintain stage on the agent's words ("Listing #4587912058 already live"), a listing
     # line #4's request had made, and its weekly pin and post could never pass.
-    if launched and kind != "kdp_book" and facts.live(product["project_id"]) > 0:  # a book can't be linked yet
+    # a book has no weekly duty: no pin can link it (since 0.54.0 a post she plans can, at Amazon)
+    if launched and kind != "kdp_book" and facts.live(product["project_id"]) > 0:
         funnel = facts.funnel(product["project_id"])
         for channel in _audience_channels(product):
             if not channels.get(channel, False):

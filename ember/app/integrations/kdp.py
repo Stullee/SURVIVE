@@ -4,9 +4,9 @@ Amazon offers no API for Kindle Direct Publishing: nothing that creates a book, 
 Amazon's terms forbid robots on its pages. So the agent describes a book in a JSON spec (its words, the manuscript or
 interior, its front picture and back text), Ember's code makes its cover and checks the package against KDP's rules,
 and after the owner approves it, the owner enters it at kdp.amazon.com from their own account: the approval card holds
-every field to copy and the files to download. They mark it done with the book's link at Amazon, and record its
-royalties in the ledger. (One tool reads the spec, as propose_blog_post reads its Markdown: the work step's fixed
-prompt has no room for a tool with a field for each part.)
+every field to copy and the files to download. They mark it done with the book's link at Amazon (since 0.54.0 a
+Bluesky post may link it, ``linked``), and record its royalties in the ledger. (One tool reads the spec, as
+propose_blog_post reads its Markdown: the work step's fixed prompt has no room for a tool with a field for each part.)
 
 What Ember's code checks: the words (title and subtitle together, the description, 7 keywords, 3 categories), the
 price within KDP's bands, and the files. A paperback's interior is a PDF whose pages are the trim size (with bleed:
@@ -31,6 +31,7 @@ from datetime import UTC, datetime, timedelta, tzinfo
 from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import PurePosixPath
 from typing import Any
+from urllib.parse import urlsplit
 
 from ..agent import claims
 from ..agent.store import AgentScope
@@ -944,6 +945,98 @@ def published(conn: sqlite3.Connection, scope: AgentScope, form: str, title: str
         if _key(r["action"]) == want:
             return int(r["id"])
     return None
+
+
+@dataclass(frozen=True)
+class Linked:
+    """0.54.0: a book of hers KDP published, by the link at Amazon the owner recorded for it."""
+
+    request_id: int  # the book's request (a change's is the book it changes)
+    project_id: int | None
+    title: str
+    subtitle: str
+    link: str  # as the owner recorded it
+
+
+def linked(conn: sqlite3.Connection, scope: AgentScope) -> list[Linked]:
+    """0.54.0: her books KDP published that have their link at Amazon, each link the owner recorded on the book's
+    request or on a change of it carried out (``changes``), oldest first: what a Bluesky post may link. Her mind's, as
+    the plan's KDP section (``text``) shows them with their links. Live, propose_bluesky_post refused the Kassenbuch's
+    and the Household Budget Book's addresses at amazon.de: "other sites aren't yours to promote"."""
+    where, params = scope.where()
+    done = {
+        int(r["id"]): r
+        for r in conn.execute(
+            f"SELECT id, project_id, action, result_link FROM approvals WHERE {where} AND executor = ?"
+            " AND status = 'done' ORDER BY id",
+            (*params, EXECUTOR),
+        ).fetchall()
+    }
+    changed = changes(conn, scope)
+    found = []
+    for request_id, r in done.items():
+        if not r["result_link"]:
+            continue
+        try:
+            book = book_from_action(r["action"])
+        except KdpError:
+            continue
+        first = changed.get(request_id, request_id)
+        project_id = (done.get(first) or r)["project_id"]
+        found.append(Linked(first, project_id, book.title, book.subtitle, str(r["result_link"])))
+    return found
+
+
+# 0.54.0: the Amazon stores KDP sells in, and the short addresses Amazon's share button gives
+AMAZON_STORES = frozenset(
+    {
+        "amazon.com",
+        "amazon.co.uk",
+        "amazon.de",
+        "amazon.fr",
+        "amazon.es",
+        "amazon.it",
+        "amazon.nl",
+        "amazon.pl",
+        "amazon.se",
+        "amazon.com.be",
+        "amazon.ie",
+        "amazon.co.jp",
+        "amazon.ca",
+        "amazon.com.au",
+        "amazon.com.br",
+        "amazon.com.mx",
+        "amazon.in",
+    }
+)
+AMAZON_SHORT = frozenset({"amzn.eu", "amzn.to", "a.co"})
+_ASIN = re.compile(r"/(?:dp|gp/product|gp/aw/d)/([A-Z0-9]{10})(?=[/?#]|$)", re.IGNORECASE)
+
+
+def amazon_store(link: str) -> str | None:
+    """0.54.0: the Amazon store an address is at ("amazon.de"), or None."""
+    host = (urlsplit(link).hostname or "").lower().removeprefix("www.")
+    return host if host in AMAZON_STORES else None
+
+
+def at_amazon(link: str) -> bool:
+    """0.54.0: whether an address is Amazon's: a store's, or a short one."""
+    host = (urlsplit(link).hostname or "").lower().removeprefix("www.")
+    return amazon_store(link) is not None or host in AMAZON_SHORT
+
+
+def asin(link: str) -> str | None:
+    """0.54.0: the ASIN a book's address at an Amazon store names (an ebook's B0..., a paperback's ISBN-10), whatever
+    else its path holds (the title, ref=...): the same book in every store. None for any other address."""
+    if amazon_store(link) is None:
+        return None
+    found = _ASIN.search(urlsplit(link).path)
+    return found.group(1).upper() if found else None
+
+
+def store_link(store: str, number: str) -> str:
+    """0.54.0: a book's plain address in an Amazon store."""
+    return f"https://www.{store}/dp/{number}"
 
 
 def weekly(conn: sqlite3.Connection, scope: AgentScope, now: datetime) -> dict[str, int]:

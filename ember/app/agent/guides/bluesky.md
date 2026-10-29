@@ -14,8 +14,10 @@ A POST NEEDS:
    #Printable), no link in the words and no @mention.
 2. link (optional): one of your live Etsy listings (one Printify made too) or a page of your owner's website that
    Ember's code knows is there: a blog post of yours at its address in BLOG (it ends in .html), the blog's list, the
-   home page or the live page. Without a picture a listing shows as a card with its title and main photo (one Printify
-   made: its title only, so show your design as the picture), and a blog post of yours with its title.
+   home page or the live page. Or a KDP book of yours at Amazon: its link in your plan's KDP section (your owner
+   records it on the book's request), or its ASIN in another store (https://www.amazon.de/dp/ASIN in German). Without
+   a picture a listing shows as a card with its title and main photo (one Printify made: its title only, so show your
+   design as the picture), a blog post of yours with its title, and a book with its title and subtitle.
    A second address after a space (another of these, never the same) always shows as a link under the words, so give
    the one for the card first: a listing and the website in one post. Link a shop or a site rather than name it in the
    words: a name can't be clicked.

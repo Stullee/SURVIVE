@@ -2698,7 +2698,8 @@ approved one waits for its slot).
 
 Bluesky is a text-first social network. With **Bluesky** on, the agent proposes
 posts on an account you made for Ember: its words, and if it likes a link or two
-to its live Etsy listings or pages of your website and one of its pictures. You
+to its live Etsy listings, its KDP books at Amazon or pages of your website and
+one of its pictures. You
 approve each one, and Ember's own code posts it, with a line saying an AI wrote
 it and a person approved it. In dry run a fake account
 (*@ember-dry-run.bsky.social*) takes the posts, so nothing reaches Bluesky (the
@@ -2753,7 +2754,12 @@ To stop Ember's access, delete the app password at Bluesky.
   Etsy listings, since 0.32.0 one Printify made of its products too, or a page
   of your website, `site_url`, that Ember
   knows is there: a blog post of its own, the blog's list, the home page, the
-  link page or the live view's page), since 0.25.1 a second one of these too
+  link page or the live view's page), since 0.54.0 one of its
+  [KDP books](#amazon-kdp) at Amazon (a book whose link you recorded on its
+  request, by that link or by the same ASIN in any Amazon store: a German post
+  links amazon.de though you recorded amazon.com; Ember's code posts the
+  store's plain address, `https://www.amazon.de/dp/` and the ASIN), since
+  0.25.1 a second one of these too
   (a listing and your website in one post, for instance; never the same
   address twice), and a picture of its own with alt text if it likes. The
   approval card shows the post exactly as it will appear, the links and the
@@ -2762,7 +2768,8 @@ To stop Ember's access, delete the app password at Bluesky.
   [publishing queue](#the-publishing-queue). Bluesky charges nothing. With a picture, the
   link is clickable at the end of the words; without one, a listing shows as a
   card with its title and main photo (a listing Printify made: its title only),
-  and a blog post of Ember's with its title and description. A second link is
+  a blog post of Ember's with its title and description, and a KDP book with
+  its title and subtitle. A second link is
   always clickable in the words, on a line of its own under the first. Ember
   sends a picture as a JPEG of at most 1 MB and 2000 pixels a side, without its
   metadata, so a large one is sent smaller.
@@ -3180,7 +3187,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.53.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.54.0 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3373,6 +3380,9 @@ own account. Ember never logs in to Amazon or reads its pages.
   section says so. Both Haushaltsbuch books were marked done with "published"
   alone, and the daily review planned pins and posts "linking to Amazon" that
   no tool could make.
+- Since 0.54.0 a [Bluesky](#bluesky) post may link a book with its link (a pin
+  still can't). A link you only send Ember in a message isn't one her code
+  knows: add it on the request.
 - Royalties come from KDP's reports (KDP pays about 60 days after the end of
   each month): record them in the ledger as revenue for the book's project.
   Ember doesn't read KDP's reports.
