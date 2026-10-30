@@ -1039,9 +1039,10 @@ def store_link(store: str, number: str) -> str:
     return f"https://www.{store}/dp/{number}"
 
 
-# 0.55.0: an address as the owner writes it in a message: with or without https://, the punctuation after it aside
+# 0.55.0: an address as the owner writes it in a message: with or without https:// and www., the punctuation after it
+# aside (no repeated subdomain: that backtracks on "a.a.a.a..." in quadratic time, tests/products/test_regex_timing.py)
 _ADDRESS = re.compile(
-    r"\b(?:https?://)?(?:[a-z0-9-]+\.)*(?:amazon\.[a-z.]{2,6}|amzn\.eu|amzn\.to|a\.co)/[^\s<>\"']*", re.IGNORECASE
+    r"\b(?:https?://)?(?:www\.|smile\.)?(?:amazon\.[a-z.]{2,6}|amzn\.eu|amzn\.to|a\.co)/[^\s<>\"']*", re.IGNORECASE
 )
 
 
