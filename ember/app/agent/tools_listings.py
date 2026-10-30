@@ -12,7 +12,9 @@ import hashlib
 import html
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
+from .. import events
 from ..integrations import etsy, etsy_publisher, kdp, printify, printify_publisher, qa
 
 # Imported here, at startup: the PDF page renderer loads a native library, which a sealed tool call may not do.
@@ -20,7 +22,18 @@ from ..products import images, make, pagecheck
 from . import claims, demand, estate, plan, preconditions, store, ventures
 from .sandbox import SandboxError
 from .store import AgentScope
-from .tools_context import Drawn, EtsyAccess, KdpAccess, Outcome, PrintifyAccess, ToolContext, ToolError, _cut, _local
+from .tools_context import (
+    Drawn,
+    EtsyAccess,
+    KdpAccess,
+    Outcome,
+    PrintifyAccess,
+    ToolContext,
+    ToolError,
+    _cut,
+    _local,
+    _quoted,
+)
 from .tools_files import _mtime
 from .tools_limits import (
     CATEGORIES_SHOWN,
@@ -837,8 +850,11 @@ def _centre_fix(cover: dict[str, Any] | str) -> str:
 def _propose_kdp_book(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
     """0.25.0: a book for Amazon KDP from the agent's .json spec: Ember's code makes its cover, checks the package and
     (without check) asks the owner, who publishes it at kdp.amazon.com from their own account (Amazon has no API for
-    KDP). Its files are made, read and drawn outside the database transaction."""
+    KDP). Its files are made, read and drawn outside the database transaction. 0.55.0: with link, it records a
+    published book's link at Amazon instead (``_book_link``)."""
     _kdp(ctx)
+    if args.get("link"):
+        return _book_link(ctx, args["spec"], args["link"])
     path = args["spec"]
     if not path.lower().endswith(".json"):
         raise ToolError("spec must be your book's .json file in your workspace (guide 'kdp')")
@@ -908,6 +924,65 @@ def _propose_kdp_book(ctx: ToolContext, args: dict[str, Any]) -> Outcome:
         )
     text += _unlocked(ctx)
     return Outcome(True, text, f"#{made_request} KDP {book.format}: {_cut(book.title, 60)}", project_id)
+
+
+_REQUEST = re.compile(r"^#?(\d{1,9})$")
+
+
+def _book_link(ctx: ToolContext, spec: str, raw: str) -> Outcome:
+    """0.55.0: propose_kdp_book with link records a published book's link at Amazon on its request (spec: '#147'),
+    when the address is in one of the owner's messages (kdp.owner_sent): its address, or the same ASIN in any store,
+    recorded as the store's plain address. A change of a published book records it on the book. The owner sees it on
+    the request and may replace it there. Live, the owner sent the Kassenbuch's and the Household Budget Book's links
+    in messages; no tool could put them on the requests, so every Bluesky post linking the books was refused (#237)."""
+    found = _REQUEST.match(spec.strip())
+    if found is None:
+        raise ToolError("with link, spec names the published book's request, like '#147' (your plan's KDP section)")
+    link = raw.strip()
+    if urlsplit(link).scheme != "https" or any(ch.isspace() for ch in link) or not kdp.at_amazon(link):
+        raise ToolError("link is the book's https address at Amazon, as your owner sent it (amazon.de/dp/..., amzn.eu)")
+    named = int(found.group(1))
+    with ctx.db.transaction() as conn:
+        where, params = ctx.scope.where()
+        row = conn.execute(
+            f"SELECT id, status, action, result_link, link_by FROM approvals WHERE id = ? AND {where} AND executor = ?",
+            (named, *params, kdp.EXECUTOR),
+        ).fetchone()
+        if row is None:
+            raise ToolError(f"#{named} isn't a KDP book of yours: your plan's KDP section lists them")
+        if row["status"] != "done":
+            raise ToolError(f"#{named} isn't published: your owner marks it done once KDP published it")
+        book = kdp.changes(conn, ctx.scope).get(named, named)  # a change's link is its book's
+        if book != named:
+            row = conn.execute(
+                "SELECT id, status, action, result_link, link_by FROM approvals WHERE id = ?", (book,)
+            ).fetchone()
+        if row["result_link"]:
+            by = "you recorded" if row["link_by"] else "your owner recorded"
+            raise ToolError(f"#{book} has its link at Amazon already, which {by}: {row['result_link']}")
+        message = kdp.owner_sent(conn, ctx.scope, link)
+        if message is None:
+            raise ToolError(
+                f"{link} isn't in a message from your owner: you record only a link they sent you (the address, or "
+                "its ASIN). Ask them once for the book's link, naming its request"
+            )
+        number, store_name = kdp.asin(link), kdp.amazon_store(link)
+        address = kdp.store_link(store_name, number) if number and store_name else link
+        kdp.record_link(conn, book, address)
+        try:
+            title = kdp.book_from_action(row["action"]).title
+        except kdp.KdpError:
+            title = f"request #{book}"
+        events.record(
+            ctx.db, "info", "agent", f"Ember recorded the Amazon link of request #{book} from your message #{message}"
+        )
+    via = f" (the book #{named} changes)" if book != named else ""
+    text = (
+        f"Recorded {address} as the link at Amazon of #{book}{via}, {_quoted(title)}, from your owner's message "
+        f"#{message}. Your posts can link it now (propose_bluesky_post), and your owner sees it on the request, where "
+        "they can replace it if it belongs to another book."
+    )
+    return Outcome(True, text, f"#{book} linked at Amazon")
 
 
 def _draw_pages(ctx: ToolContext, spec: dict[str, Any], book: kdp.Book, pages: str) -> tuple[str, tuple[bytes, ...]]:

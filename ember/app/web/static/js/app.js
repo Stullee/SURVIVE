@@ -3383,7 +3383,7 @@
       parts.push(h("p", null, h("strong", { text: a.status === "failed" ? "Marked failed" : "Marked done" }),
         a.closed_by ? " by " + String(a.closed_by) : "", " · ", timeEl(a.closed_at)));
       if (a.result_note) parts.push(h("p", { class: "pre-line" }, h("strong", { text: "Result: " }), String(a.result_note)));
-      if (a.result_link) parts.push(h("p", { class: "result-line" }, h("strong", { text: "Link: " }), ownerLink(a.result_link)));
+      if (a.result_link) parts.push(h("p", { class: "result-line" }, h("strong", { text: "Link: " }), ownerLink(a.result_link), a.link_by === "Ember" ? " (" + agentName() + " recorded it from your message)" : null));
     }
     if (!parts.length) return null;
     parts.push(seenLine(!!a.seen_by_agent));
@@ -3432,8 +3432,10 @@
       }
       return tools.concat([panelButton(it, "done", "Mark done"), panelButton(it, "failed", "Mark failed")]);
     }
-    // 0.40.2: a KDP book marked done without its link at Amazon takes it later
+    // 0.40.2: a KDP book marked done without its link at Amazon takes it later; 0.55.0: or yours in place of the one
+    // the agent recorded from your message
     if (a.status === "done" && executor === "kdp_package" && !a.result_link) return [panelButton(it, "link", "Add its Amazon link")];
+    if (a.status === "done" && executor === "kdp_package" && a.link_by === "Ember") return [panelButton(it, "link", "Change its Amazon link")];
     return [];
   }
 
@@ -3539,7 +3541,7 @@
     }
     if (mode === "link") {
       return {
-        mode: mode, title: "Add the book's link at Amazon", submit: "Add link",
+        mode: mode, title: a.result_link ? "Change the book's link at Amazon" : "Add the book's link at Amazon", submit: a.result_link ? "Change link" : "Add link",
         intro: [h("p", { text: name + " names the book by this link (its posts and pins can then link it); it reads it on its next wake." })],
         fields: [{ name: "result_link", label: "Link to the book at Amazon", inputmode: "url", check: linkProblem, required: true, missing: "Paste the book's link." }],
         url: url + "link",

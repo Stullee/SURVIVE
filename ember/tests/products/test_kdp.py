@@ -10,6 +10,7 @@ from __future__ import annotations
 import io
 import json
 import re
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -20,7 +21,7 @@ import pytest
 from PIL import Image, ImageDraw
 
 from app import web
-from app.agent import estate, never, news, obligations, preconditions, prompts, store, tools
+from app.agent import estate, never, news, obligations, preconditions, prompts, store, tools, views
 from app.agent.fake_llm import FakeTransport, request_kind
 from app.agent.sandbox import Jail
 from app.economy.clock import to_iso
@@ -674,9 +675,9 @@ def test_the_owner_adds_a_books_link_to_a_request_marked_done_without_one(data_d
     with agent.db.connection() as conn:
         section = kdp.text(conn, agent.scope(), agent.clock.now(), "Jane Doe")
     assert (
-        "published (no link at Amazon yet: your owner can add it on the request; until then nothing can link it)"
-        in (section)
-    )
+        f"published (no link at Amazon yet: one your owner sent you, record with propose_kdp_book, spec '#{asked}' and "
+        "link; until then nothing can link it)"
+    ) in section
     bad = who.add_link(asked, {"result_link": "amazon dot com"}, "Owner")
     assert bad.status == 422 and "plain http(s) link" in bad.body["error"]
     link = "https://www.amazon.com/dp/B0TESTBOOK"
@@ -696,6 +697,7 @@ def test_the_owner_adds_a_books_link_to_a_request_marked_done_without_one(data_d
     assert "/api/approvals/{approval_id}/link" in {getattr(r, "path", "") for r in web.router.routes}
     script = (Path(__file__).parents[2] / "app" / "web" / "static" / "js" / "app.js").read_text(encoding="utf-8")
     assert 'panelButton(it, "link", "Add its Amazon link")' in script and 'url: url + "link"' in script
+    assert 'a.link_by === "Ember") return [panelButton(it, "link", "Change its Amazon link")]' in script  # 0.55.0
 
 
 def test_a_book_is_judged_by_its_newest_change_carried_out(data_dir: Path) -> None:
@@ -740,3 +742,106 @@ def test_a_book_is_judged_by_its_newest_change_carried_out(data_dir: Path) -> No
     with agent.db.connection() as conn:
         books = [p for p in estate.inventory(conn, agent.scope(), agent.clock) if p.title == "Old Guide"]
     assert [(p.ref, p.numbers["rule"], p.link) for p in books] == [(str(first), "", link)]
+
+
+# --- 0.55.0: a link the owner sent in a message, recorded by Ember ---
+
+
+def published_guide(agent: Any, ctx: tools.ToolContext) -> int:
+    """An ebook the owner approved and marked published without its link."""
+    words = {"format": "ebook", "price": "2.99", "paper": None, "low_content": None, "subtitle": None,
+             "cover": {"front": "books/front.png"}, "project_id": project(agent)}  # fmt: skip
+    asked = proposed(agent, ctx, spec(ctx.workspace, ebook(ctx.workspace), "books/guide.json", **words))
+    who = owner(agent)
+    assert who.decide(asked, {"decision": "approve"}, "Owner").status == 200
+    assert who.close(asked, {"outcome": "done", "result_note": "published"}, "Owner").status == 200
+    ctx.state = tools.CycleTools()
+    return asked
+
+
+def linked_row(agent: Any, request_id: int) -> dict[str, Any]:
+    return rows(agent, f"SELECT result_link, link_by FROM approvals WHERE id = {request_id}")[0]
+
+
+def test_ember_records_a_books_link_her_owner_sent_in_a_message(data_dir: Path) -> None:
+    """Live, the owner sent the Kassenbuch's and the Household Budget Book's links in messages (#237: "I gave her the
+    links via message and she still didn't add them"): no tool of hers could put them on the requests, so every
+    Bluesky post linking the books was refused. propose_kdp_book with link records one, only from the owner's words."""
+    agent, ctx = publishing(data_dir)
+    asked = published_guide(agent, ctx)
+    link = "https://www.amazon.de/dp/B0GUIDE001"
+    for args, why in (
+        ({"spec": "books/guide.json"}, "with link, spec names the published book's request, like '#147'"),
+        ({"spec": f"#{asked}", "link": "https://example.com/dp/B0GUIDE001"}, "link is the book's https address"),
+        ({"spec": f"#{asked}", "link": "http://www.amazon.de/dp/B0GUIDE001"}, "link is the book's https address"),
+        ({"spec": "#99999"}, "#99999 isn't a KDP book of yours"),
+        ({"spec": f"#{asked}"}, f"{link} isn't in a message from your owner: you record only a link they sent you"),
+    ):
+        refused = call(ctx, "propose_kdp_book", {"link": link, **args})
+        assert not refused.ok and why in refused.text, (args, refused.text)
+    who = owner(agent)
+    sent = who.send_message(
+        {"text": "Der Guide ist live: <https://www.amazon.com/A-Small-Guide/dp/b0guide001/ref=sr_1_1>."}, "Owner"
+    )
+    assert sent.status == 201
+    message = rows(agent, "SELECT MAX(id) AS id FROM messages WHERE sender = 'owner'")[0]["id"]
+    made = call(ctx, "propose_kdp_book", {"spec": str(asked), "link": f"{link}?tag=x"})  # the same ASIN, at amazon.de
+    assert made.ok, made.text
+    assert made.text.startswith(f'Recorded {link} as the link at Amazon of #{asked}, "My Gratitude Journal", from your')
+    assert f"message #{message}" in made.text and "can replace it if it belongs to another book" in made.text
+    assert linked_row(agent, asked) == {"result_link": link, "link_by": "Ember"}
+    assert any(
+        f"Ember recorded the Amazon link of request #{asked} from your message #{message}" in e["message"]
+        for e in agent.db.recent_events(5)
+    )
+    with agent.db.connection() as conn:
+        section = kdp.text(conn, agent.scope(), agent.clock.now(), "Jane Doe")
+        assert [(b.request_id, b.link) for b in kdp.linked(conn, agent.scope())] == [(asked, link)]  # posts link it
+    assert f"published at {link} (you recorded it from your owner's message)" in section
+    again = call(ctx, "propose_kdp_book", {"spec": f"#{asked}", "link": link})
+    assert not again.ok and f"#{asked} has its link at Amazon already, which you recorded: {link}" in again.text
+    # the owner sees it on the request, and may put theirs in its place (Ember may have named the wrong book); theirs
+    # is final, also against the database's own trigger
+    card = next(a for a in views.dashboard(agent)["approvals"] if a["id"] == asked)
+    assert (card["result_link"], card["link_by"]) == (link, "Ember")
+    theirs = "https://www.amazon.de/dp/B0GUIDE002"
+    replaced = who.add_link(asked, {"result_link": theirs}, "Owner")
+    assert replaced.status == 200 and linked_row(agent, asked) == {"result_link": theirs, "link_by": None}
+    assert any(
+        f"replaced the link Ember recorded on request #{asked}" in e["message"] for e in agent.db.recent_events(5)
+    )
+    assert who.add_link(asked, {"result_link": link}, "Owner").status == 409
+    refused = call(ctx, "propose_kdp_book", {"spec": f"#{asked}", "link": link})
+    assert not refused.ok and f"which your owner recorded: {theirs}" in refused.text
+    with agent.db.transaction() as conn, pytest.raises(sqlite3.IntegrityError, match="a decision is final"):
+        conn.execute("UPDATE approvals SET result_link = ?, link_by = 'Ember' WHERE id = ?", (link, asked))
+
+
+def test_a_short_link_and_a_change_of_a_published_book(data_dir: Path) -> None:
+    """A short address as the owner wrote it (without https://) is recorded as it is; a change of a published book
+    records its link on the book, which the KDP section lists without a note on the change."""
+    agent, ctx = publishing(data_dir)
+    asked = published_guide(agent, ctx)
+    action = json.loads(rows(agent, f"SELECT action FROM approvals WHERE id = {asked}")[0]["action"])
+    with agent.db.transaction() as conn:
+        change = store.insert_approval(
+            conn, agent.scope(), ctx.cycle_id, to_iso(agent.clock.now()), project_id=project(agent), type="sell",
+            title="KDP ebook: My Gratitude Journal", description="new files", payload="the book", expected_cost="none",
+            expected_benefit="royalties", executor=kdp.EXECUTOR, action=json.dumps(action),
+        )  # fmt: skip
+    who = owner(agent)
+    assert who.decide(change, {"decision": "approve"}, "Owner").status == 200
+    assert who.close(change, {"outcome": "done", "result_note": "new cover up"}, "Owner").status == 200
+    with agent.db.connection() as conn:
+        section = kdp.text(conn, agent.scope(), agent.clock.now(), "Jane Doe")
+    assert section.count("no link at Amazon yet") == 1 and f"spec '#{asked}'" in section
+    assert who.send_message({"text": "Link: amzn.eu/d/aBc1234, viel Erfolg!"}, "Owner").status == 201
+    wrong = call(ctx, "propose_kdp_book", {"spec": f"#{change}", "link": "https://amzn.eu/d/aBc1235"})
+    assert not wrong.ok and "isn't in a message from your owner" in wrong.text
+    made = call(ctx, "propose_kdp_book", {"spec": f"#{change}", "link": "https://amzn.eu/d/aBc1234"})
+    assert made.ok and f"of #{asked} (the book #{change} changes)" in made.text, made.text
+    assert linked_row(agent, asked) == {"result_link": "https://amzn.eu/d/aBc1234", "link_by": "Ember"}
+    assert linked_row(agent, change) == {"result_link": None, "link_by": None}
+    with agent.db.connection() as conn:
+        section = kdp.text(conn, agent.scope(), agent.clock.now(), "Jane Doe")
+    assert "no link at Amazon yet" not in section

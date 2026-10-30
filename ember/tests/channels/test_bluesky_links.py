@@ -172,7 +172,7 @@ def test_the_second_link_is_checked_as_the_link_is(data_dir: Path) -> None:
 def test_the_tool_says_link_takes_a_second_address() -> None:
     [spec] = [d for d in tools.definitions(bluesky=True) if d["name"] == "propose_bluesky_post"]
     field = spec["input_schema"]["properties"]["link"]
-    assert field["description"].startswith("One or two, space-separated: a live Etsy listing's address")
+    assert field["description"].startswith("One or two, space-separated: a live Etsy listing, a KDP book at Amazon")
     assert field["maxLength"] == 2 * bluesky.LINK_MAX + 1
 
 
@@ -466,7 +466,7 @@ def test_a_post_links_a_kdp_book_by_the_link_the_owner_recorded_in_any_amazon_st
     line, _ = line_of(agent)
     none = a_post(agent, ctx, text="Das Kassenbuch 2027.", link="https://www.amazon.de/dp/B0KASSE001")
     assert not none.ok and "none of your KDP books has its link at Amazon in Ember's records" in none.text
-    assert "Add its Amazon link" in none.text
+    assert "record the one your owner sent you in a message first (propose_kdp_book" in none.text
     recorded = "https://www.amazon.com/Kassenbuch-2027-Vereine/dp/B0KASSE001/ref=sr_1_1?crid=2X&sr=8-1"
     kasse = book(agent, ctx, "Kassenbuch 2027", line, recorded)
     budget = book(agent, ctx, "Haushaltsbuch 2027", line)  # published without its link

@@ -353,7 +353,9 @@ class Owner:
     def add_link(self, approval_id: int, body: Any, who: str | None) -> Reply:
         """0.40.2 (analysis-0.40.1, 3.1): the link of a KDP book at Amazon, for a request marked done without one.
         Live, both Haushaltsbuch books were marked done with "published" alone, and the daily review planned pins and
-        posts "linking to Amazon" that nothing could make. Ember sees it on its next wake (the KDP section names it)."""
+        posts "linking to Amazon" that nothing could make. Ember sees it on its next wake (the KDP section names it).
+        0.55.0: or in place of a link Ember recorded from the owner's message (link_by), which may be another book's;
+        the owner's link is final."""
 
         def run() -> Reply:
             data = _body(body, {"result_link", "expected_version"})
@@ -365,14 +367,15 @@ class Owner:
                 self._check_version(row, data)
                 if row["executor"] != "kdp_package" or row["status"] != "done":
                     raise OwnerError("id", "only a KDP book you marked done takes its link here", 409)
-                if row["result_link"]:
+                if row["result_link"] and not row["link_by"]:
                     raise OwnerError("result_link", "this book has its link already", 409)
                 conn.execute(
-                    "UPDATE approvals SET result_link = ?, version = version + 1, seen_cycle_id = NULL"
+                    "UPDATE approvals SET result_link = ?, link_by = NULL, version = version + 1, seen_cycle_id = NULL"
                     " WHERE id = ? AND version = ?",
                     (link, approval_id, row["version"]),
                 )
-                said = f"{who or 'The owner'} added the link of request #{approval_id}"
+                did = "replaced the link Ember recorded on" if row["result_link"] else "added the link of"
+                said = f"{who or 'The owner'} {did} request #{approval_id}"
                 events.record(self.db, "info", "owner", said)
                 return Reply(200, {"approval": self._approval_json(self._approval(conn, approval_id))})
 

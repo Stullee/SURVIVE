@@ -769,6 +769,7 @@ SPECS: dict[str, Spec] = {
                 "check": _b(""),
                 "pages": Field("string", "", required=False),
                 "qa": Field("string", "", required=False),
+                "link": Field("string", "", required=False),  # 0.55.0: a published book's, spec its request (guide)
             },
             per_cycle=6,  # 0.40.0: a paperback's checks (of other pages too, again after a fix) before its proposal
         ),
@@ -920,8 +921,8 @@ SPECS: dict[str, Spec] = {
                 ),
                 "language": _s("The post's language.", 2, enum=bluesky.LANGUAGES),
                 "link": _s(
-                    "One or two, space-separated: a live Etsy listing's address, a KDP book's at Amazon, or a page "
-                    "of your owner's website Ember's code knows (a blog post's ends in .html, as in BLOG).",
+                    "One or two, space-separated: a live Etsy listing, a KDP book at Amazon or a page of your "
+                    "owner's website Ember's code knows (a blog post: as in BLOG).",
                     2 * bluesky.LINK_MAX + 1,
                     required=False,
                 ),

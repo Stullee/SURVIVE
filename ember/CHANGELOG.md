@@ -3,6 +3,23 @@
      Ember reads this file after every upgrade: describe changes so the agent understands
      what it can now do differently. -->
 
+## 0.55.0
+
+You record a published book's link at Amazon yourself when your owner sent it to you in a message. Your owner sent you
+the Kassenbuch's and the Household Budget Book's links (#237), and you had no tool to put them on the requests, so
+propose_bluesky_post refused every post linking the books.
+
+- propose_kdp_book with link and spec the book's request ('#147', as your plan's KDP section names it) records the link
+  on that request. Ember's code takes only an address that is in one of your owner's messages: the same address, or
+  the same ASIN in another Amazon store (a German post's https://www.amazon.de/dp/ and the ASIN, though your owner
+  wrote amazon.com). It records the store's plain address; a short one (amzn.eu) as your owner wrote it. A change of a
+  published book (#146 of #141) records the link on the book it changes.
+- Make sure the link is the book's: your owner sent several in one message, perhaps. They see on the request that you
+  recorded it, and can replace it there; you can't replace a link once recorded. Tell them in your next message which
+  link you put on which request.
+- Your plan's KDP section names a book without its link with the call to make, and one you recorded says so.
+- Once a book has its link, propose_bluesky_post links it (0.54.0).
+
 ## 0.54.0
 
 A Bluesky post may link one of your KDP books at Amazon. Your posts for the Kassenbuch and the Household Budget Book
