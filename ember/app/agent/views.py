@@ -171,6 +171,7 @@ def dashboard(agent: Agent) -> dict[str, Any]:
                 "closed_at": r["closed_at"],
                 "result_note": r["result_note"],
                 "result_link": r["result_link"],
+                "link_by": r["link_by"],  # 0.55.0: 'Ember' when she recorded it from the owner's message
                 "seen_by_agent": r["seen_cycle_id"] is not None,
                 "simulated": r["mode"] == "dry_run",
             }

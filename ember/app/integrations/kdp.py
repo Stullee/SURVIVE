@@ -1039,6 +1039,42 @@ def store_link(store: str, number: str) -> str:
     return f"https://www.{store}/dp/{number}"
 
 
+# 0.55.0: an address as the owner writes it in a message: with or without https:// and www., the punctuation after it
+# aside (no repeated subdomain: that backtracks on "a.a.a.a..." in quadratic time, tests/products/test_regex_timing.py)
+_ADDRESS = re.compile(
+    r"\b(?:https?://)?(?:www\.|smile\.)?(?:amazon\.[a-z.]{2,6}|amzn\.eu|amzn\.to|a\.co)/[^\s<>\"']*", re.IGNORECASE
+)
+
+
+def owner_sent(conn: sqlite3.Connection, scope: AgentScope, link: str) -> int | None:
+    """0.55.0: the newest of the owner's messages that holds ``link`` (the same address, or the same ASIN at an Amazon
+    store), or None: the only links Ember may record on a book's request herself (``record_link``). Live, the owner
+    sent the Kassenbuch's and the Household Budget Book's links in messages, and no tool could put them on the
+    requests."""
+    number = asin(link)
+    where, params = scope.where()
+    for r in conn.execute(
+        f"SELECT id, text FROM messages WHERE {where} AND sender = 'owner' AND removed_at IS NULL ORDER BY id DESC",
+        params,
+    ).fetchall():
+        for found in _ADDRESS.finditer(str(r["text"])):
+            address = found.group(0).rstrip(".,;:!?)]}*_")
+            address = address if address.lower().startswith("http") else f"https://{address}"
+            if address == link or (number and asin(address) == number):
+                return int(r["id"])
+    return None
+
+
+def record_link(conn: sqlite3.Connection, request_id: int, link: str) -> None:
+    """0.55.0: Ember records a published book's link at Amazon on its request (``link_by`` 'Ember': the owner may
+    replace it, migration 0105). The caller checks the request and ``owner_sent``."""
+    conn.execute(
+        "UPDATE approvals SET result_link = ?, link_by = 'Ember', version = version + 1 WHERE id = ? AND executor = ?"
+        " AND status = 'done' AND result_link IS NULL",
+        (link, request_id, EXECUTOR),
+    )
+
+
 def weekly(conn: sqlite3.Connection, scope: AgentScope, now: datetime) -> dict[str, int]:
     """The books of each format proposed in KDP's week holding ``now`` (``week_start``) that KDP may still count (not
     rejected, withdrawn, expired or failed): what WEEKLY_TITLES holds. 0.42.0 (analysis-0.40.1 codebase, 6.2.1): one
@@ -1068,7 +1104,7 @@ def text(conn: sqlite3.Connection, scope: AgentScope, now: datetime, author: str
     Sunday 00:00 UTC; ``tz``: the owner's, for when the next one begins), and the newest books."""
     where, params = scope.where()
     rows = conn.execute(
-        f"SELECT id, status, action, decision_comment, result_note, result_link FROM approvals"
+        f"SELECT id, status, action, decision_comment, result_note, result_link, link_by FROM approvals"
         f" WHERE {where} AND executor = ? ORDER BY id DESC",
         (*params, EXECUTOR),
     ).fetchall()
@@ -1088,9 +1124,13 @@ def text(conn: sqlite3.Connection, scope: AgentScope, now: datetime, author: str
         if int(r["id"]) in changed:  # 0.53.0 (C1)
             line += f" (a change of #{changed[int(r['id'])]}: no new title)"
         if r["status"] == "done" and r["result_link"]:
-            line += f" at {r['result_link']}"
-        elif r["status"] == "done":  # 0.40.2 (analysis-0.40.1, 3.1): nothing can link it, nor plan to
-            line += " (no link at Amazon yet: your owner can add it on the request; until then nothing can link it)"
+            line += f" at {r['result_link']}" + (" (you recorded it from your owner's message)" if r["link_by"] else "")
+        elif r["status"] == "done" and int(r["id"]) not in changed:  # 0.40.2 (analysis-0.40.1, 3.1): nothing links it
+            # 0.55.0: one the owner sent in a message she records (propose_kdp_book with link); a change's is its book's
+            line += (
+                f" (no link at Amazon yet: one your owner sent you, record with propose_kdp_book, spec '#{r['id']}' and"
+                " link; until then nothing can link it)"
+            )
         why = r["decision_comment"] if r["status"] == "rejected" else r["result_note"]
         if why and r["status"] in ("rejected", "done", "failed"):
             line += f" ({_quoted(why, 120)})"

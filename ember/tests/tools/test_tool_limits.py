@@ -252,8 +252,11 @@ VALUES = frozenset(
     }
 )
 # No maxLength: an edit's find (a call's texts together hold CALL_CHARS), a KDP check's pages and qa (lengths their
-# code keeps, out of the fixed prompt: qa is cut to QA_CHARS, below).
-UNBOUNDED = frozenset({"workspace_write.find", "propose_kdp_book.pages", "propose_kdp_book.qa"})
+# code keeps, out of the fixed prompt: qa is cut to QA_CHARS, below), and 0.55.0 a published book's link (refused
+# unless it is an address at Amazon from one of the owner's messages, which hold at most 2,000 characters).
+UNBOUNDED = frozenset(
+    {"workspace_write.find", "propose_kdp_book.pages", "propose_kdp_book.qa", "propose_kdp_book.link"}
+)
 REFUSED = PUBLIC | WHOLE | ACTED_ON | NAMES | VALUES
 
 

@@ -3187,7 +3187,7 @@ misstate it, and Ember's first rule is honesty.
 > from my account, each with a line saying it was written by an AI agent and
 > posted after human review; a post may mention my products only where a
 > subreddit's rules allow it. No voting, no direct messages, no automated
-> posting. User-Agent: `linux:ember-homeassistant:v0.54.0 (by /u/your name)`.
+> posting. User-Agent: `linux:ember-homeassistant:v0.55.0 (by /u/your name)`.
 
 ## Amazon KDP
 
@@ -3381,8 +3381,15 @@ own account. Ember never logs in to Amazon or reads its pages.
   alone, and the daily review planned pins and posts "linking to Amazon" that
   no tool could make.
 - Since 0.54.0 a [Bluesky](#bluesky) post may link a book with its link (a pin
-  still can't). A link you only send Ember in a message isn't one her code
-  knows: add it on the request.
+  still can't).
+- **A link you send Ember in a message** (0.55.0): she records it on the
+  book's request herself (`propose_kdp_book` with the request's number and
+  the link). Ember's code takes only an address that is in one of your
+  messages (the same address, or the same ASIN in another Amazon store), and
+  a change of a published book's link goes on the book. The request shows
+  "Ember recorded it from your message", and the event log names the message.
+  If she put it on the wrong book, **Change its Amazon link** on the request
+  replaces it with yours; a link you recorded yourself stays final.
 - Royalties come from KDP's reports (KDP pays about 60 days after the end of
   each month): record them in the ledger as revenue for the book's project.
   Ember doesn't read KDP's reports.

@@ -780,6 +780,14 @@ ASIN in any Amazon store (a German post links amazon.de), posted as the store's
 plain address with the book's title and subtitle as its card. A link you only
 sent in a message isn't one Ember's code knows.
 
+0.55.0 lets Ember record such a link herself. You sent her the books' links in
+messages, and she had no tool to put them on the requests. Now
+`propose_kdp_book` with a book's request number and a link records it, but only
+an address that is in one of your messages (the same address, or the same ASIN
+in another Amazon store). The request shows that she recorded it, and if it is
+on the wrong book, **Change its Amazon link** replaces it with yours; a link you
+recorded stays final, as before. A database trigger keeps both rules.
+
 ## Install in Home Assistant
 
 1. In Home Assistant open **Settings → Apps** (called *Add-ons* before HA 2026.2),

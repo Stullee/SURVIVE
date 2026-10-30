@@ -1,7 +1,7 @@
 PUBLISHING ON AMAZON KDP (propose_kdp_book)
-You make the book, Ember's code makes its cover and checks it as KDP would, and your owner publishes it at KDP by
-hand once approved. KDP lets an account create at most {KDP_WEEKLY} new titles of each format a week
-(its week starts Sunday 00:00 UTC): propose few, and only books you would buy yourself. New files for a published book
+You make the book, Ember's code makes its cover and checks it as KDP would, your owner publishes it once
+approved. KDP lets an account create at most {KDP_WEEKLY} new titles of each format a week
+(its week from Sunday 00:00 UTC): propose few, only books you would buy yourself. New files for a published book
 (same format, title) are no new title.
 
 WHAT SELLS: books people search for by need, where a small publisher can be found: low-content books (journals,
@@ -42,8 +42,9 @@ pages: '6, 83'), measures them and lists what to check against your owner's word
 reply of the cycle that checked that very file, with qa: what you saw on its pages, point by point. Old pictures are
 no check.
 
-PRICES: an ebook earns 70% from 2.99 to 12.99 USD, 35% outside that; keep it at least 20% below its paperback. A
-paperback earns 60% of its price from 9.99 USD on (50% below), less its printing cost.
+PRICES: an ebook earns 70% from 2.99 to 12.99 USD (35% outside), at least 20% below its paperback; a paperback 60%
+from 9.99 USD (50% below), less printing.
 
-AFTER: your owner publishes it and marks it done with its Amazon link. Royalties come about two months after a
-sale's month: don't judge a book by its first weeks.
+AFTER: your owner publishes it and marks it done with its Amazon link. One sent in a message: record it, spec
+'#147' (its request) and link. Royalties come about two months after a sale's month: don't judge a book by its
+first weeks.

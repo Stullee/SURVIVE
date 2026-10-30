@@ -329,9 +329,9 @@ def _book_link(ctx: ToolContext, conn: Any, link: str) -> tuple[str, str, str, N
     number = kdp.asin(link)
     book = next((b for b in books if link == b.link or (number and number == kdp.asin(b.link))), None)
     if book is None and not books:
-        raise ToolError(
-            "none of your KDP books has its link at Amazon in Ember's records: your owner adds it on the book's "
-            "request (Add its Amazon link), and until then no post can link it (a link in a message isn't recorded)"
+        raise ToolError(  # 0.55.0: a link the owner sent in a message, she records herself
+            "none of your KDP books has its link at Amazon in Ember's records: record the one your owner sent you in "
+            "a message first (propose_kdp_book with spec '#' and the book's request number, and link)"
         )
     if book is None:
         known = "; ".join(f"#{b.request_id} {b.title}: {b.link}" for b in books)
